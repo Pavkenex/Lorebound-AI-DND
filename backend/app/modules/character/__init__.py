@@ -1,0 +1,1 @@
+"""character bounded context."""

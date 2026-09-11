@@ -1,0 +1,1 @@
+"""campaign bounded context."""
