@@ -143,3 +143,41 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
   .shell > aside.left { order: 2; } .shell > aside.right { order: 3; }
   .grid2 { grid-template-columns: 1fr; }
 }
+
+/* collapsible nav (t_87bd1163) */
+.nav-toggle { display: none; margin-left: 4px; }
+.nav-links { display: contents; }
+@media (max-width: 720px) {
+  .nav-toggle { display: inline-block; }
+  .topnav .nav-links { display: none; width: 100%; flex-direction: column; }
+  .topnav.open .nav-links { display: flex; }
+  .topnav .nav-links a { display: block; padding: 10px 12px; }
+}
+
+/* inventory quality + slots */
+.q-common { color: var(--parch-1); }
+.q-fine { color: #93a86f; }
+.q-rare { color: #7fa8c9; }
+.q-heirloom { color: var(--gold-hi); }
+.tag.q-fine { border-color: #5c6e46; color: #93a86f; }
+.tag.q-heirloom { border-color: var(--gold); color: var(--gold-hi); }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.slot { min-height: 76px; }
+.enc { height: 12px; border: 1px solid var(--gold); border-radius: 6px; background: #100c06; overflow: hidden; }
+.enc > i { display: block; height: 100%; background: linear-gradient(90deg, #5c6e46, #93a86f); }
+.enc > i.enc-heavy { background: linear-gradient(90deg, #7a5c3e, var(--gold-hi)); }
+.enc > i.enc-over { background: linear-gradient(90deg, #7e2a2a, #b05252); }
+
+/* journal tabs */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.tab { background: transparent; border: 1px solid var(--line); color: var(--parch-1); border-radius: 6px 6px 0 0; padding: 8px 14px; cursor: pointer; font-variant: small-caps; letter-spacing: 0.05em; }
+.tab.active { color: var(--gold-hi); border-color: var(--gold); background: #241c10; }
+.tab:hover { color: #fff; }
+
+/* toasts */
+.toast-stack { position: sticky; bottom: 12px; margin-top: 12px; }
+.toast-stack .lead-toast { display: flex; align-items: center; justify-content: space-between; }
+.level-toast {
+  border: 1px solid var(--gold); background: #1d1607; color: var(--gold-hi);
+  border-radius: 6px; padding: 8px 14px; margin: 8px 0; font-variant: small-caps; letter-spacing: 0.06em;
+}
