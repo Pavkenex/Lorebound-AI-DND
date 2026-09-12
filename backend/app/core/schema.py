@@ -42,8 +42,8 @@ _MODEL_MODULES: tuple[str, ...] = (
 def ensure_schema() -> None:
     """Import all model modules and create any missing tables."""
     for module in _MODEL_MODULES:
-        try:  # noqa: S112 - optional stream boundary; a mid-edit stream must not block boot
+        try:
             importlib.import_module(module)
-        except Exception:  # noqa: BLE001 - optional stream boundary, by design
+        except Exception:  # noqa: BLE001, S112 - optional stream boundary, by design
             continue
     Base.metadata.create_all(bind=engine)
