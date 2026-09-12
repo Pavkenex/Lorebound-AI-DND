@@ -72,6 +72,7 @@ app.include_router(combat_router)
 
 # Optional streams, one line each (append-only).
 include_optional("app.modules.auth.router")  # Stream A: register / login / me
+include_optional("app.modules.ai.router")  # bring-your-own AI provider settings
 include_optional("app.content.router")  # Stream G: read-only content screens
 include_optional("app.modules.campaign.saves_api")  # save slots (list/create/fetch)
 include_optional("app.modules.campaign.api")  # campaign lifecycle (create/list)

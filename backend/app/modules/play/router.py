@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.modules.ai.settings_store import resolve_provider
 from app.modules.auth.deps import require_user, scope_campaign
 from app.modules.auth.models import User
 from app.modules.campaign.models import Campaign
@@ -223,7 +224,11 @@ def act(
         response.headers["x-cache"] = "hit"
         return cached
 
-    engine = ActEngine(session, prefs=_parse_prefs(request.headers.get("X-Content-Prefs")))
+    engine = ActEngine(
+        session,
+        prefs=_parse_prefs(request.headers.get("X-Content-Prefs")),
+        provider=resolve_provider(db, user.id),
+    )
     payload, checkpoint = engine.act(body.text, seed_roll=body.seed_roll)
 
     # Resolved state is committed (and checkpointed) before the response leaves,

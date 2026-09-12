@@ -6,8 +6,9 @@ import os
 import sys
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -15,7 +16,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from app.core.database import Base  # noqa: E402
+from app.core.database import Base
 
 # Every models module, so Base.metadata is complete. Sibling streams are
 # optional: env must keep working even if one is mid-edit.
@@ -43,7 +44,7 @@ for _mod in (
 ):
     try:
         __import__(_mod)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - optional stream boundary, by design
         pass
 
 target_metadata = Base.metadata

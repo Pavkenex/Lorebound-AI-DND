@@ -13,14 +13,14 @@ branch_labels = None
 depends_on = None
 
 # Import side effects register all models on Base.metadata.
-import app.modules.auth.models  # noqa: F401,E402
-import app.modules.campaign.models  # noqa: F401,E402
-import app.modules.campaign.npc  # noqa: F401,E402
-import app.modules.campaign.story  # noqa: F401,E402
-import app.modules.campaign.world  # noqa: F401,E402
-import app.modules.character.models  # noqa: F401,E402
-import app.modules.inventory.models  # noqa: F401,E402
-from app.core.database import Base  # noqa: E402
+import app.modules.auth.models
+import app.modules.campaign.models
+import app.modules.campaign.npc
+import app.modules.campaign.story
+import app.modules.campaign.world
+import app.modules.character.models
+import app.modules.inventory.models  # noqa: F401
+from app.core.database import Base
 
 
 def upgrade() -> None:

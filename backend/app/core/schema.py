@@ -16,6 +16,7 @@ from app.core.database import Base, engine
 
 _MODEL_MODULES: tuple[str, ...] = (
     "app.modules.auth.models",
+    "app.modules.ai.settings_store",
     "app.modules.campaign.models",
     "app.modules.campaign.npc",
     "app.modules.campaign.story",
