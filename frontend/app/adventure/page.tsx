@@ -2,7 +2,7 @@
 // Adventure screen: three-column layout (t_87bd1163), visual hierarchy (t_43e37b1e),
 // optimistic ack + streaming + error recovery (t_18510814), tutorial (t_d2dd38a0).
 import { useEffect, useRef, useState } from "react";
-import { api, streamNarration, submitAction, LAST_SAVE_KEY, getToken, ensureCampaign, type LiveGameState } from "../../lib/api";
+import { api, streamNarration, submitAction, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState } from "../../lib/api";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
@@ -48,11 +48,13 @@ export default function AdventurePage() {
         const cid = await ensureCampaign();
         if (cid) {
           const again = await api.gameState(content);
+          if (again.data.campaign_id) setCampaignId(again.data.campaign_id);
           setGs(again.data); setEvents(again.data.feed); setLive(!again.fromFixture); addCost(again.cost);
           setLoading(false);
           return;
         }
       }
+      if (r.data.campaign_id) setCampaignId(r.data.campaign_id);
       setGs(r.data); setEvents(r.data.feed); setLive(!r.fromFixture); addCost(r.cost);
       setLoading(false);
     }
@@ -106,7 +108,10 @@ export default function AdventurePage() {
       // Refresh the surrounding panels (location, clock, NPCs, leads, sheet) from
       // the authoritative state — the local feed already shows what happened.
       api.gameState(content).then((r2) => {
-        if (!r2.fromFixture) { setGs(r2.data); addCost(r2.cost); }
+        if (!r2.fromFixture) {
+          if (r2.data.campaign_id) setCampaignId(r2.data.campaign_id);
+          setGs(r2.data); addCost(r2.cost);
+        }
       });
       if (text.toLowerCase().match(/road|hollow|forest|wreck|travel|leave|north/)) setScene("forest road");
       else if (text.toLowerCase().match(/monastery|chapel|beacon|monk/)) setScene("monastery");

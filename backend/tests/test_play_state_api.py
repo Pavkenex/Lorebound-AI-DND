@@ -60,10 +60,11 @@ def test_state_requires_auth(client: TestClient):
 
 
 def test_fresh_campaign_state_shape(client: TestClient):
-    h, _cid = _setup(client, "shape@example.com")
+    h, cid = _setup(client, "shape@example.com")
     r = client.get("/state", headers=h)
     assert r.status_code == 200, r.text
     s = r.json()
+    assert s["campaign_id"] == cid  # the client stores this for saves/act
     assert s["location"] == "The Lantern Inn, Ravenford"
     assert s["time"] == "Day 1 · 19:00 · rain"
     assert [n["name"] for n in s["npcs"]] == ["Marla Voss", "Borin"]

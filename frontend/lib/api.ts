@@ -170,6 +170,7 @@ export interface SaveRow {
 
 /** Live game state (GET /state): the fixture shape plus live-only fields. */
 export type LiveGameState = typeof fixtures.gameState & {
+  campaign_id?: string | null;
   character?: typeof fixtures.character;
   completed?: boolean;
   lead_stage?: string;

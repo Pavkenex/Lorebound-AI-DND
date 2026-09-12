@@ -88,8 +88,9 @@ def character_block(state: PlayState) -> dict:
     return dict(state.pc)
 
 
-def game_state_payload(state: PlayState) -> dict:
+def game_state_payload(state: PlayState, campaign_id: str | None = None) -> dict:
     return {
+        "campaign_id": campaign_id,
         "location": location_name(state),
         "time": time_label(state),
         "npcs": npcs_present(state),

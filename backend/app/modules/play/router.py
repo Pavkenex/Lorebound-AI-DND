@@ -83,7 +83,7 @@ def game_state(
     """Live game state for the adventure screen (campaign-scoped, read-only)."""
     campaign = _resolve_campaign(db, user, campaign_id)
     session = PlaySession.load(db, campaign.id)
-    return game_state_payload(session.state)
+    return game_state_payload(session.state, campaign.id)
 
 
 @router.get("/character")
