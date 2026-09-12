@@ -46,13 +46,23 @@ Then in the browser: **Sign in → register** (any email, password 8+), hit
   key dialogue) round-trip the whole live state; **Load** restores it server-side.
 - Screens: character, skills (mastery XP earned in play), journal (lead graph
   reveals with progress), map, inventory, companions — all live.
-- Character creation: **Forge your own hero** (6 stages) replaces the default
-  protagonist on the live sheet.
-- Real dice: checks roll the 3D d20 in the feed (see *The dice* below).
+- Character creation: at the start of a campaign, **choose a standard prebuilt
+  hero** (Knight / Rogue / Wizard / Cleric / Ranger / Bard) or **forge your own**
+  in the six-stage ledger; either replaces the default protagonist on the live sheet.
+- Real dice: checks roll the 3D d20 in the feed, and the **Dice tray** beside
+  your sheet lets you throw the d20 yourself any time.
+- Bring your own AI: **Settings → Tale-spinner** points narration at any
+  OpenAI-compatible endpoint (per account; the API key is stored server-side and
+  never echoed; *Test connection* checks it live). Unset, the built-in
+  storyteller keeps the game free and offline.
+- Content boundaries: per-axis story limits plus a single **NSFW** switch —
+  when enabled every limit is lifted (explicit adult content, no fade-to-black).
 
-To use a real model instead of the stub, set `AI_PROVIDER=openai-compatible`
-plus `OPENAI_COMPAT_BASE_URL` / `OPENAI_COMPAT_MODEL` (see `.env.example`).
-Optional: `AI_COST_PROMPT_PER_1K` / `AI_COST_COMPLETION_PER_1K` make the cost
+To use a real model instead of the stub via environment config, set
+`AI_PROVIDER=openai-compatible` plus `OPENAI_COMPAT_BASE_URL` /
+`OPENAI_COMPAT_MODEL` (see `.env.example`) — or skip the env entirely and
+configure it in **Settings** per account. Optional:
+`AI_COST_PROMPT_PER_1K` / `AI_COST_COMPLETION_PER_1K` make the cost
 meter report real USD; the stub honestly reports 0.
 
 When the backend is unreachable the UI degrades to local fixture pages (every
