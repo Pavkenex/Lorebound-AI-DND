@@ -11,9 +11,14 @@ except `backend/app/main.py` router registration (append-only, one line per rout
 | D systems | `backend/app/modules/progression/**`, `backend/app/modules/exploration/**`, `backend/app/modules/combat/**`, `backend/app/modules/economy/**`, `backend/app/modules/history/**`, `backend/app/content/**`, `backend/tests/test_skill*`, `test_progression*`, `test_travel*`, `test_combat*`, `test_economy*`, `test_clock*`, `test_rest*` |
 | E frontend | `frontend/**` only (+ `backend/tests/test_frontend_contract.py` if needed) |
 | F slice/ship | `backend/app/content/ravenford.py`, `backend/app/content/fixtures.py`, `backend/tests/test_slice*`, `test_playtest*`, `docker-compose.yml`, `Dockerfile`, `backend/Dockerfile`, `frontend/Dockerfile`, `docs/**` |
+| G live play | `backend/app/modules/play/**` (session/state/engine/router/view/screens/creation), `backend/tests/test_play_*` |
 
 Shared contracts (do not change signatures without updating all callers):
 - `EngineProposal` in `backend/app/modules/narrator/authority.py`
 - `CheckRequest/CheckResult` in `backend/app/modules/rules/checks.py`
 - `WorldFact` in `backend/app/modules/world/facts.py`
 - `GameEvent` in `backend/app/core/events.py`
+- HTTP play contracts (frontend depends on exact shapes): `POST /act`, `GET /state`,
+  the six screen endpoints, campaign lifecycle, and `POST /saves/{id}/load` — all
+  served by `backend/app/modules/play/**` and `backend/app/modules/campaign/**`.
+
