@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -156,6 +156,7 @@ def companions_view(
 def act(
     body: ActIn,
     request: Request,
+    response: Response,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -165,10 +166,14 @@ def act(
     session = PlaySession.load(db, campaign.id)
     cached = session.recall_action(db, key)
     if cached is not None:
+        # A replayed action costs nothing and is served from the ledger.
+        response.headers["x-ai-calls"] = "0"
+        response.headers["x-ai-cost-usd"] = "0.000000"
+        response.headers["x-cache"] = "hit"
         return cached
 
     engine = ActEngine(session, prefs=_parse_prefs(request.headers.get("X-Content-Prefs")))
-    response, checkpoint = engine.act(body.text, seed_roll=body.seed_roll)
+    payload, checkpoint = engine.act(body.text, seed_roll=body.seed_roll)
 
     # Resolved state is committed (and checkpointed) before the response leaves,
     # so a dropped connection can never lose a resolved action.
@@ -176,5 +181,12 @@ def act(
     if session.state.completed and campaign.status != "completed":
         campaign.status = "completed"
         db.commit()
-    session.remember_action(db, key, response)
-    return response
+    session.remember_action(db, key, payload)
+
+    # Live AI-cost truth (stub costs nothing, but the call count is real).
+    report = engine.meter.report(campaign.id)
+    response.headers["x-ai-calls"] = str(report["calls"])
+    response.headers["x-ai-cost-usd"] = f"{report.get('cost_usd', 0.0):.6f}"
+    response.headers["x-ai-cache"] = "miss"
+    response.headers["x-cache"] = "miss"
+    return payload

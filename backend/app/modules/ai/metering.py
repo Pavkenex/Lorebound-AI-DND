@@ -5,6 +5,7 @@ Usage is measured and reported per campaign.
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -12,6 +13,21 @@ from dataclasses import dataclass, field
 PRIMARY_ROLES = frozenset({"narrator"})
 #: Expected primary calls per player action (budget norm).
 CALLS_PER_ACTION = 1
+
+
+def _cost_rates() -> tuple[float, float]:
+    """USD per 1K tokens (prompt, completion) from the environment.
+
+    Defaults to 0 — the stub provider genuinely costs nothing, and the headers
+    must not invent a price for it.
+    """
+    def _read(name: str) -> float:
+        try:
+            return float(os.environ.get(name) or 0)
+        except ValueError:
+            return 0.0
+
+    return _read("AI_COST_PROMPT_PER_1K"), _read("AI_COST_COMPLETION_PER_1K")
 
 
 @dataclass
@@ -42,6 +58,10 @@ class CampaignMeter:
         return self.primary_calls / self.actions
 
     def report(self) -> dict:
+        prompt_rate, completion_rate = _cost_rates()
+        cost = (self.prompt_tokens / 1000.0) * prompt_rate + (
+            self.completion_tokens / 1000.0
+        ) * completion_rate
         return {
             "campaign_id": self.campaign_id,
             "actions": self.actions,
@@ -51,6 +71,7 @@ class CampaignMeter:
             "within_budget": self.primary_per_action <= CALLS_PER_ACTION + 1e-9 or self.actions == 0,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "cost_usd": round(cost, 6),
             "by_role": dict(self.by_role),
         }
 
