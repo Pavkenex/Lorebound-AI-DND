@@ -1,8 +1,10 @@
 "use client";
 // Settings screen: a11y (t_4f820f0d), content prefs via api headers (t_32d887a4),
-// audio toggles (t_0c977269), AI cost display (t_eff821f1).
+// audio toggles (t_0c977269), AI cost display (t_eff821f1), dice preview (t_ae0e86a6).
+import { useState } from "react";
 import { useStore } from "../../lib/store";
 import { A11yControls, AudioControls, CostBadge } from "../../components/widgets";
+import { Dice } from "../../components/dice3d";
 import type { ContentPrefs } from "../../lib/store-types";
 
 const OPTS: { key: Exclude<keyof ContentPrefs, "nsfw">; label: string; choices: string[]; help: string }[] = [
@@ -84,6 +86,16 @@ export default function SettingsPage() {
         <p className="sys">The chronicle is fully playable silent — ambience is garnish, never signal.</p>
       </div>
 
+      <h2 style={{ marginTop: 20 }}>The dice</h2>
+      <div className="parchment card">
+        <p className="sys" style={{ marginTop: 0 }}>
+          When a check happens in the chronicle, a real die tumbles and lands on the roll.
+          Natural 20s and natural 1s get their own flourishes — try them here.
+          Quiet mode (Reduce motion) shows the settled die without the tumble.
+        </p>
+        <DiceDemo />
+      </div>
+
       <h2 style={{ marginTop: 20 }}>Tale-telling cost</h2>
       <div className="parchment card">
         <p><CostBadge /></p>
@@ -98,6 +110,32 @@ export default function SettingsPage() {
       <h2 style={{ marginTop: 20 }}>Beginning again</h2>
       <div className="parchment card">
         <button className="btn btn-ghost" onClick={() => s.set({ tutorialDone: false })}>Replay the three-step introduction</button>
+      </div>
+    </div>
+  );
+}
+
+/** Live preview of the 3D die: a normal roll, a natural 20, a natural 1. */
+function DiceDemo() {
+  const [runs, setRuns] = useState({ roll: 0, crit: 0, miss: 0 });
+  const [face, setFace] = useState(14);
+  const bump = (k: keyof typeof runs) => setRuns((r) => ({ ...r, [k]: r[k] + 1 }));
+  return (
+    <div className="dice-demo">
+      <div className="dice-demo-cell">
+        <Dice key={`roll-${runs.roll}`} d20={face} outcome={face === 20 ? "Exceptional" : face === 1 ? "CriticalFailure" : "Success"} size={132} autoPlay />
+        <p className="sys dice-demo-note">A check — the die tumbles and lands on the roll.</p>
+        <button className="btn btn-ghost" onClick={() => { setFace(1 + Math.floor(Math.random() * 20)); bump("roll"); }}>Roll a d20</button>
+      </div>
+      <div className="dice-demo-cell">
+        <Dice key={`crit-${runs.crit}`} d20={20} outcome="Exceptional" size={132} autoPlay />
+        <p className="sys dice-demo-note">Critical success — natural 20, a golden burst.</p>
+        <button className="btn btn-ghost" onClick={() => bump("crit")}>Replay</button>
+      </div>
+      <div className="dice-demo-cell">
+        <Dice key={`miss-${runs.miss}`} d20={1} outcome="CriticalFailure" size={132} autoPlay />
+        <p className="sys dice-demo-note">Critical miss — natural 1, a dire slam and ash.</p>
+        <button className="btn btn-ghost" onClick={() => bump("miss")}>Replay</button>
       </div>
     </div>
   );

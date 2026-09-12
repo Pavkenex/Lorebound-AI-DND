@@ -32,6 +32,8 @@ export default function AdventurePage() {
   const [scene, setScene] = useState("tavern interior");
   const keyRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Dice events created in this session roll their 3D animation on mount (t_ae0e86a6).
+  const freshDiceRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     try {
@@ -68,8 +70,11 @@ export default function AdventurePage() {
       setAck(r.data.ack);
       // Mechanics resolve fast; narration streams into its slot.
       const pending: FeedEvent[] = [];
-      if (r.data.mechanics)
-        pending.push({ id: nid(), kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail } });
+      if (r.data.mechanics) {
+        const diceId = nid();
+        freshDiceRef.current.add(diceId);
+        pending.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome } });
+      }
       let full = "";
       setStreaming("");
       for await (const chunk of streamNarration(r.data.narration)) {
@@ -165,7 +170,7 @@ export default function AdventurePage() {
             <p className="sys">Unrolling the chronicle…</p>
           </div>
         )}
-        {!loading && <Feed events={events} streaming={streaming} onInspect={inspect} />}
+        {!loading && <Feed events={events} streaming={streaming} onInspect={inspect} freshDice={freshDiceRef.current} />}
         {ack && <p className="ack" role="status">{ack}</p>}
         {error && (
           <ErrorBanner

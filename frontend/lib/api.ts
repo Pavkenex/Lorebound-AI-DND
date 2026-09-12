@@ -88,7 +88,14 @@ async function post<T>(path: string, body: unknown, fallback: T, prefs?: Content
 
 export interface ActResponse {
   ack: string;
-  mechanics?: { label: string; roll: string; total: number; detail?: string } | null;
+  mechanics?: {
+    label: string; roll: string; total: number; detail?: string;
+    /** Raw d20 value — drives the 3D die face and the critical animations (t_ae0e86a6). */
+    d20?: number;
+    /** Engine outcome, e.g. "Success", "CriticalFailure". */
+    outcome?: string;
+    dc?: number;
+  } | null;
   narration: string;
   dialogue?: { speaker: string; line: string }[];
   newLeads?: string[];

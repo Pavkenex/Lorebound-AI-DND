@@ -91,13 +91,24 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
   padding: 8px 12px; margin: 10px 0 10px 18px; border-radius: 0 6px 6px 0;
 }
 .dialogue .who { color: var(--gold-hi); font-variant: small-caps; font-size: 0.9em; }
-.dice {
-  display: inline-flex; gap: 8px; align-items: center; font-size: 0.92em;
-  border: 1px dashed var(--parch-dim); border-radius: 6px; padding: 6px 10px; margin: 8px 0;
-  background: #1a1409; cursor: pointer;
+/* 3D dice — feed roll + critical flourishes (t_06f54e57, t_4ae64d0a, t_a1b7e3ae) */
+.dice-row {
+  display: flex; gap: 12px; align-items: center; margin: 10px 0;
+  border: 1px dashed var(--parch-dim); border-radius: 8px; padding: 8px 12px; background: #1a1409;
 }
-.dice .d20 { color: var(--gold-hi); font-weight: bold; }
-.dice small { color: var(--parch-dim); }
+.dice-row.crit-success { border-color: var(--gold); box-shadow: 0 0 16px rgba(201,162,39,0.28); }
+.dice-row.crit-miss { border-color: var(--blood); box-shadow: 0 0 16px rgba(142,47,47,0.32); }
+.dice-canvas { background: none; border: 0; padding: 0; cursor: pointer; border-radius: 10px; line-height: 0; flex: none; }
+.dice-canvas:hover { filter: drop-shadow(0 0 7px rgba(201,162,39,0.35)); }
+.dice-canvas:active { transform: scale(0.97); }
+.dice-body { min-width: 0; flex: 1 1 auto; }
+.dice-line { background: none; border: 0; color: var(--ink); font: inherit; font-size: 0.95em; text-align: left; cursor: pointer; padding: 2px 0; }
+.dice-line strong { color: var(--gold-hi); }
+.dice-line small { color: var(--parch-dim); }
+.d20-legacy { color: var(--gold-hi); font-weight: bold; font-size: 1.6em; padding: 0 10px; }
+.dice-demo { display: flex; gap: 18px; flex-wrap: wrap; }
+.dice-demo-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 168px; }
+.dice-demo-note { margin: 0; text-align: center; min-height: 2.8em; }
 .entity { color: var(--gold-hi); text-decoration: underline dotted; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; }
 .entity:hover { color: #fff; }
 .lead-toast {

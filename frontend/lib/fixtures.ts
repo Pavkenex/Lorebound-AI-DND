@@ -4,7 +4,16 @@ export interface FeedEvent {
   kind: "narration" | "dialogue" | "dice" | "lead" | "system";
   text?: string;
   speaker?: string;
-  roll?: { label: string; dice: string; total: number; detail?: string };
+  roll?: {
+    label: string;
+    dice: string;
+    total: number;
+    detail?: string;
+    /** Raw d20 — when present the feed renders the 3D die (t_ae0e86a6). */
+    d20?: number;
+    /** Engine outcome string, e.g. "Success" / "CriticalFailure". */
+    outcome?: string;
+  };
   lead?: string;
 }
 
@@ -47,7 +56,7 @@ export const fixtures = {
     feed: [
       { id: "e1", kind: "narration", text: "Rain needles the shutters of the Lantern Inn. The hearth throws long shadows across Marla's notice board, where one parchment hangs newer than the rest." } as FeedEvent,
       { id: "e2", kind: "dialogue", speaker: "Marla Voss", text: "You're the lamplighter's girl. Then you'll want to see this — a wagon came back without its driver last night." } as FeedEvent,
-      { id: "e3", kind: "dice", roll: { label: "Wits check — notice the seal", dice: "d20+2", total: 17, detail: "Merchant Guild wax, cracked" } } as FeedEvent,
+      { id: "e3", kind: "dice", roll: { label: "Wits check — notice the seal", dice: "d20+2", total: 17, detail: "Merchant Guild wax, cracked — pressed in haste, or opened and resealed?", d20: 15, outcome: "Success" } } as FeedEvent,
       { id: "e4", kind: "lead", lead: "Missing Caravan — a guild wagon returned driverless" } as FeedEvent,
     ] as FeedEvent[],
   },
@@ -97,7 +106,7 @@ export const fixtures = {
     title: "A Ten-Minute Beginning",
     beats: [
       { h: "Act with words", p: "Type anything — “ask Marla about the wagon”, “inspect the seal”, “draw my bow”. There are no wrong verbs. Press Enter; the world answers." },
-      { h: "Checks", p: "When risk appears you'll see a compact dice seal (⬢ d20). Click it for detail. Success moves you on; partial success moves you on at a cost." },
+      { h: "Checks", p: "When risk appears a real die tumbles into the chronicle and lands on your roll — natural 20s and natural 1s get their own flourishes. Click the die to replay; open the line for detail. Success moves you on; partial success moves you on at a cost." },
       { h: "Journal", p: "Every discovery becomes a LEAD. Open the Journal to trace the Missing Caravan thread — caravan → wagon → silver powder → guild → monastery." },
       { h: "Saves", p: "The chronicler autosaves at checkpoints, and you can Save Now any time from the Saves page. Your tale waits for you — Continue any time." },
     ],

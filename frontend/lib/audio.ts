@@ -107,6 +107,70 @@ export function uiBlip(freq = 660) {
   } catch { /* muted or blocked — game continues */ }
 }
 
+/** Dice clatter — quick wooden ticks as the die tumbles (t_4ae64d0a, no assets). */
+export function diceClatter() {
+  try {
+    const c = ac();
+    const now = c.currentTime;
+    for (let i = 0; i < 7; i++) {
+      const t0 = now + i * 0.06 + Math.random() * 0.03;
+      const o = c.createOscillator(); o.type = "square";
+      o.frequency.value = 1150 + Math.random() * 1500;
+      const g = c.createGain(); g.gain.value = 0;
+      o.connect(g); g.connect(c.destination);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.025, t0 + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.05);
+      o.start(t0); o.stop(t0 + 0.06);
+    }
+  } catch { /* muted or blocked — the die still lands */ }
+}
+
+/** Soft wooden thud as the die settles onto the table. */
+export function diceSettleSound() {
+  try {
+    const c = ac();
+    const t0 = c.currentTime;
+    const o = c.createOscillator(); o.type = "sine"; o.frequency.value = 165;
+    const g = c.createGain(); g.gain.value = 0;
+    o.connect(g); g.connect(c.destination);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.09, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+    o.start(t0); o.stop(t0 + 0.24);
+    const o2 = c.createOscillator(); o2.type = "triangle"; o2.frequency.value = 720;
+    const g2 = c.createGain(); g2.gain.value = 0;
+    o2.connect(g2); g2.connect(c.destination);
+    g2.gain.setValueAtTime(0, t0);
+    g2.gain.linearRampToValueAtTime(0.03, t0 + 0.004);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o2.start(t0); o2.stop(t0 + 0.1);
+  } catch { /* muted or blocked */ }
+}
+
+/** Critical stingers (t_a1b7e3ae): rising gold chime for a nat 20, dire thud for a nat 1. */
+export function critStinger(kind: "crit-success" | "crit-miss") {
+  try {
+    const c = ac();
+    const t0 = c.currentTime;
+    const note = (freq: number, at: number, type: OscillatorType, vol: number, decay: number) => {
+      const o = c.createOscillator(); o.type = type; o.frequency.value = freq;
+      const g = c.createGain(); g.gain.value = 0;
+      o.connect(g); g.connect(c.destination);
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(vol, at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+      o.start(at); o.stop(at + decay + 0.05);
+    };
+    if (kind === "crit-success") {
+      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => note(f, t0 + i * 0.09, "triangle", 0.07, 0.45));
+    } else {
+      [220, 174.61, 130.81].forEach((f, i) => note(f, t0 + i * 0.13, "sawtooth", 0.045, 0.4));
+      note(60, t0, "sine", 0.11, 0.5); // sub thump
+    }
+  } catch { /* muted or blocked */ }
+}
+
 /** React hook: drive ambient from store state. */
 export function useAmbient(ambient: Ambient, muted: boolean) {
   const ref = useRef<Ambient>("off");
