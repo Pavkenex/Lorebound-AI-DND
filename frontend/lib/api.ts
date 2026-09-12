@@ -99,6 +99,8 @@ export interface ActResponse {
   narration: string;
   dialogue?: { speaker: string; line: string }[];
   newLeads?: string[];
+  /** Engine system lines for the live feed (clues found, routes opened). */
+  system?: string[];
 }
 
 /** Retry-safe submit: idempotency key per player action (t_18510814). */

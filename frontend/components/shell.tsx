@@ -29,8 +29,9 @@ function AmbientDriver() {
 }
 
 function AccountLink() {
+  const path = usePathname();
   const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => setSignedIn(!!getToken()), []);
+  useEffect(() => setSignedIn(!!getToken()), [path]);
   return (
     <Link href="/login" prefetch title={signedIn ? "Your account and saves" : "Sign in or register"}>
       {signedIn ? "Account" : "Sign in"}

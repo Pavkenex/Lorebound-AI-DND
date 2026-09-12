@@ -80,6 +80,8 @@ export default function AdventurePage() {
       setAck(r.data.ack);
       // Mechanics resolve fast; narration streams into its slot.
       const pending: FeedEvent[] = [];
+      for (const s of r.data.system ?? [])
+        pending.push({ id: nid(), kind: "system", text: s });
       if (r.data.mechanics) {
         const diceId = nid();
         freshDiceRef.current.add(diceId);
@@ -101,6 +103,11 @@ export default function AdventurePage() {
       }
       setEvents((e) => [...e, { id: nid(), kind: "system", text: `❧ ${text}` }, ...pending]);
       setAck(null);
+      // Refresh the surrounding panels (location, clock, NPCs, leads, sheet) from
+      // the authoritative state — the local feed already shows what happened.
+      api.gameState(content).then((r2) => {
+        if (!r2.fromFixture) { setGs(r2.data); addCost(r2.cost); }
+      });
       if (text.toLowerCase().match(/road|hollow|forest|wreck|travel|leave|north/)) setScene("forest road");
       else if (text.toLowerCase().match(/monastery|chapel|beacon|monk/)) setScene("monastery");
     } catch {
