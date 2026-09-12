@@ -8,7 +8,11 @@ import { uiBlip } from "../../lib/audio";
 
 interface Skill { name: string; tier: string; xp: number; recent: string[]; trainers: string[]; practice: string }
 
-const TIER_MAX: Record<string, number> = { Novice: 500, Apprentice: 1000, Journeyman: 2000, Adept: 3000, Skilled: 4000, Master: 6000 };
+// Mastery thresholds — live tiers (Untrained..Master) and the legacy fixture tiers.
+const TIER_MAX: Record<string, number> = {
+  Untrained: 200, Novice: 600, Competent: 1200, Skilled: 2000, Expert: 3200, Master: 3200,
+  Apprentice: 1000, Journeyman: 2000, Adept: 3000,
+};
 
 export default function SkillsPage() {
   const { content, addCost } = useStore();
@@ -70,7 +74,9 @@ export default function SkillsPage() {
 }
 
 function nextTier(t: string): string {
-  const order = ["Novice", "Apprentice", "Journeyman", "Adept", "Skilled", "Master"];
+  const live = ["Untrained", "Novice", "Competent", "Skilled", "Expert", "Master"];
+  const legacy = ["Novice", "Apprentice", "Journeyman", "Adept", "Skilled", "Master"];
+  const order = live.includes(t) ? live : legacy;
   const i = order.indexOf(t);
   return i >= 0 && i < order.length - 1 ? order[i + 1] : "legend";
 }

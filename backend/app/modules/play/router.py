@@ -18,6 +18,7 @@ from app.modules.auth.deps import require_user, scope_campaign
 from app.modules.auth.models import User
 from app.modules.campaign.models import Campaign
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.play import screens
 from app.modules.play.engine import ActEngine
 from app.modules.play.session import PlaySession
 from app.modules.play.view import game_state_payload
@@ -83,6 +84,72 @@ def game_state(
     campaign = _resolve_campaign(db, user, campaign_id)
     session = PlaySession.load(db, campaign.id)
     return game_state_payload(session.state)
+
+
+@router.get("/character")
+def character_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.character_payload(session.state)
+
+
+@router.get("/skills")
+def skills_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.skills_payload(session.state)
+
+
+@router.get("/journal")
+def journal_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.journal_payload(session.state)
+
+
+@router.get("/map")
+def map_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.map_payload(session.state)
+
+
+@router.get("/inventory")
+def inventory_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.inventory_payload(session.state)
+
+
+@router.get("/companions")
+def companions_view(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return screens.companions_payload(session.state)
 
 
 @router.post("/act")

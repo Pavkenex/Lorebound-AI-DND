@@ -30,6 +30,12 @@ export default function CompanionsPage() {
         {live ? "Travelling with you." : "Local pages (backend unreachable)."}
         {" "}They act on their own judgment — the notes say how, so you can plan around it.
       </p>
+      {live && list.length === 0 && (
+        <p className="parchment card" style={{ marginTop: 12 }}>
+          You travel alone for now — no one has bound their road to yours yet. The inns
+          and roads of Ravenford are full of people whose stories could still join your own.
+        </p>
+      )}
       <div className="grid2" style={{ marginTop: 12 }}>
         {list.map((c) => (
           <article key={c.name} className="parchment card" aria-label={c.name}>

@@ -18,6 +18,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from app.content.skills import SKILL_KEYS
+
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
 
@@ -116,6 +118,13 @@ class PlayState:
     feed_seq: int = 0
     feed: list[dict[str, Any]] = field(default_factory=list)
 
+    # -- progression (five slice skills) ----------------------------------
+    skills: dict[str, int] = field(default_factory=lambda: {k: 0 for k in SKILL_KEYS})
+    skill_recent: dict[str, list[str]] = field(default_factory=dict)
+
+    #: Locations the player has actually stood in (map/journal reveal).
+    visited: list[str] = field(default_factory=lambda: ["lantern-inn"])
+
     # ------------------------------------------------------------------ api
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -169,6 +178,18 @@ class PlayState:
             return False
         self.solution_path = solution_id
         return True
+
+    def visit_location(self, location_id: str) -> None:
+        if location_id not in self.visited:
+            self.visited.append(location_id)
+
+    def award_skill(self, skill: str, amount: int, note: str = "") -> None:
+        """Add mastery XP for a skill used in anger; keep the last notes."""
+        self.skills[skill] = self.skills.get(skill, 0) + max(0, amount)
+        if note:
+            recent = self.skill_recent.setdefault(skill, [])
+            recent.append(f"{note} +{amount}")
+            self.skill_recent[skill] = recent[-3:]
 
     def append_feed(self, kind: str, **payload: Any) -> dict[str, Any]:
         """Append one player-visible feed event; keeps only the tail."""

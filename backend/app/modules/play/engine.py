@@ -455,6 +455,12 @@ class ActEngine:
         )
         result = roll_check(request, roll=self._seed_roll)
         self._seed_roll = None  # a seed only steers the action's first check
+        if result.outcome in SUCCESS_OUTCOMES:
+            self.state.award_skill(
+                skill,
+                30 if result.outcome == Outcome.Exceptional else 20,
+                label.split("—")[0].strip(),
+            )
         mech = {
             "label": label,
             "roll": f"d20{attr_mod + skill_mod:+d}" if (attr_mod + skill_mod) else "d20",
@@ -673,12 +679,14 @@ class ActEngine:
                 kind="travel",
             )
         st.location = "northern-road"
+        st.visit_location("northern-road")
         st.advance_minutes(10)
         return BeatOutcome(ack="You step out into the rain.", narration=LEAVE_NARRATION, kind="travel")
 
     def _beat_return(self, text: str) -> BeatOutcome:
         st = self.state
         st.location = "lantern-inn"
+        st.visit_location("lantern-inn")
         st.visits += 1
         st.advance_minutes(10)
         return BeatOutcome(
@@ -703,12 +711,14 @@ class ActEngine:
     def _beat_travel_market(self, text: str) -> BeatOutcome:
         st = self.state
         st.location = "market"
+        st.visit_location("market")
         st.advance_minutes(15)
         return BeatOutcome(ack="You take the market road.", narration=MARKET_NARRATION, kind="travel")
 
     def _beat_travel_monastery(self, text: str) -> BeatOutcome:
         st = self.state
         st.location = "old-monastery"
+        st.visit_location("old-monastery")
         st.advance_minutes(25)
         return BeatOutcome(ack="You climb the monastery path.", narration=MONASTERY_NARRATION, kind="travel")
 
