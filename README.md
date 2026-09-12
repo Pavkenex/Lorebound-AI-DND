@@ -12,7 +12,7 @@ docker compose up --build
 ```
 
 - Game: http://localhost:3000
-- API: http://localhost:8000 (docs at /docs, health at /health)
+- API: http://localhost:8001 (docs at /docs, health at /health)
 - Mailhog-free local dev: backend unit tests run without Docker.
 
 ## Local backend dev (no Docker)

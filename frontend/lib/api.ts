@@ -4,7 +4,7 @@
 import { fixtures } from "./fixtures";
 import type { ContentPrefs } from "./store-types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 
 export interface CostInfo { calls: number; costUsd: number; cached: boolean }
 export interface ApiResult<T> { data: T; cost: CostInfo; fromFixture: boolean }

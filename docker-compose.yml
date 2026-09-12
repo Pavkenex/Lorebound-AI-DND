@@ -23,7 +23,7 @@ services:
       DATABASE_URL: postgresql+psycopg://lorebound:lorebound@db:5432/lorebound
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -34,7 +34,7 @@ services:
   frontend:
     build: ./frontend
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
     ports:
       - "3000:3000"
     depends_on:

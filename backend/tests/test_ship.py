@@ -33,7 +33,7 @@ def test_compose_services_and_health():
     text = (REPO / "docker-compose.yml").read_text()
     for service in ("db:", "redis:", "backend:", "frontend:"):
         assert service in text, f"compose missing service {service}"
-    assert "8000:8000" in text and "3000:3000" in text
+    assert "8001:8000" in text and "3000:3000" in text
     assert "pg_isready" in text  # db healthcheck gates backend startup
 
 
@@ -56,5 +56,5 @@ def test_readme_run_steps_accurate():
     assert "cp .env.example .env" in text
     assert "docker compose up" in text
     assert "localhost:3000" in text  # frontend reachable
-    assert "localhost:8000" in text  # backend reachable
+    assert "localhost:8001" in text  # backend reachable
     assert "/health" in text  # health endpoint documented
