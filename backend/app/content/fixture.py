@@ -89,6 +89,17 @@ class NarrativeResult:
 # ---------------------------------------------------------------------------
 
 
+#: Authored return greetings — rotated per visit so repeat visits never repeat
+#: (PLAYTEST_REPORT condition 1). Every variant references what Marla remembers.
+_RETURN_GREETINGS: tuple[str, ...] = (
+    "Welcome back, Aric. Marla looks up from the bar — she remembers {recalled}.",
+    "The door lets you in and Marla is already watching it — she remembers "
+    "{recalled}, and does not pretend otherwise.",
+    "The Lantern's fire has hardly found you before Marla sets a cup on the bar. "
+    "She remembers {recalled}; nothing said under this roof is ever quite forgotten here.",
+)
+
+
 class FixtureWorld:
     """Playable Aric / Lantern Inn / Marla fixture with Marla's memory.
 
@@ -202,11 +213,9 @@ class FixtureWorld:
         recalled = (
             "; ".join(memories) if memories else "a quiet first visit"
         )
+        template = _RETURN_GREETINGS[(self.visits - 2) % len(_RETURN_GREETINGS)]
         return NarrativeResult(
-            text=(
-                f"Welcome back, Aric. Marla looks up from the bar — she remembers "
-                f"{recalled}."
-            ),
+            text=template.format(recalled=recalled),
             events=["travel:returned"],
             state_changes={"location": "lantern-inn", "visits": str(self.visits)},
         )

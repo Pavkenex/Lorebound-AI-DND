@@ -44,6 +44,7 @@ for each path; verdicts are the harness assertions in prose.
 ## Decision: GO on scaling to MVP, with conditions
 
 - Go: memory, multi-solution mystery, and economy-of-detail all reproduce.
-- Condition 1: fix the "seams on repeat visits" partial — vary Marla's
-  return lines (card: return-greeting variety).
+- Condition 1: SATISFIED — Marla's return lines now rotate through three
+  authored greetings (no consecutive repeats; memory references preserved),
+  guarded by `test_return_greetings_vary_without_losing_memory`.
 - Condition 2: keep the narration budget enforced in CI (this harness).

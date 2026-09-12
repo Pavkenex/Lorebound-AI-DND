@@ -63,3 +63,25 @@ def test_marla_clean_visit_has_no_false_memories():
     greeting = w.return_to_inn().text
     assert "missing silver" not in greeting
     assert "brawl" not in greeting
+
+
+def test_return_greetings_vary_without_losing_memory():
+    """Playtest condition 1: repeat visits never read the same twice."""
+    w = new_fixture_world()
+    w.talk_to_marla("travelers")
+    w.steal("storeroom-strongbox")
+    greetings = []
+    for _ in range(4):
+        w.leave_inn()
+        greetings.append(w.return_to_inn().text)
+
+    # No two consecutive returns repeat the same greeting.
+    for a, b in zip(greetings, greetings[1:]):
+        assert a != b
+    # All three authored variants get exercised across returns.
+    assert len(set(greetings)) == 3
+    # Every variant still carries Marla's recollection of the theft and the talk.
+    for g in greetings:
+        assert "Marla" in g and "remembers" in g
+        assert "missing silver" in g
+        assert "travelers" in g
