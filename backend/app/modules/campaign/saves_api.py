@@ -117,3 +117,58 @@ def get_save(
         "snapshot": snapshot,
         "created_at": row.created_at.isoformat() if row.created_at is not None else None,
     }
+
+
+@router.post("/saves/{save_id}/load")
+def restore_save(
+    save_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Apply a save's snapshot to the live campaign (owner-scoped, 404 foreign).
+
+    Restores the play state (position, mystery progress, memory, sheet) and the
+    campaign clock; scenes/facts remain as recorded at save time.
+    """
+    from app.modules.campaign.models import GameTime
+    from app.modules.play.models import PlayStateRow
+    from app.modules.play.state import PlayState
+
+    row = db.query(SaveGame).filter(SaveGame.id == save_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="save not found")
+    scope_campaign(db, user, row.campaign_id)
+
+    try:
+        snapshot = json.loads(row.snapshot)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        snapshot = {}
+
+    play = snapshot.get("play")
+    if isinstance(play, dict):
+        state = PlayState.from_json(json.dumps(play))
+        state.actions_taken += 1
+        state.append_feed("system", text=f"❧ The chronicle turns back to — {row.label or 'an earlier page'}.")
+        ps_row = db.get(PlayStateRow, row.campaign_id)
+        payload = state.to_json()
+        if ps_row is None:
+            db.add(PlayStateRow(campaign_id=row.campaign_id, state_json=payload))
+        else:
+            ps_row.state_json = payload
+
+    clock = snapshot.get("clock")
+    if isinstance(clock, dict):
+        gt = db.query(GameTime).filter(GameTime.campaign_id == row.campaign_id).first()
+        if gt is not None:
+            gt.day = int(clock.get("day", gt.day))
+            gt.hour = int(clock.get("hour", gt.hour))
+            gt.minute = int(clock.get("minute", gt.minute))
+    db.commit()
+    return {
+        "loaded": True,
+        "save_id": row.id,
+        "campaign_id": row.campaign_id,
+        "label": row.label,
+        "checkpoint": row.checkpoint,
+        "had_play_state": isinstance(play, dict),
+    }

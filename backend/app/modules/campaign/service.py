@@ -199,10 +199,17 @@ def visible_facts(db: Session, *, campaign_id: str, party_view: bool = False) ->
 
 def build_snapshot(db: Session, *, campaign_id: str) -> dict:
     """Collect resolved state into a JSON-serializable snapshot (no prose)."""
+    from app.modules.play.models import PlayStateRow
+
     scenes = db.query(Scene).filter(Scene.campaign_id == campaign_id).all()
     facts = db.query(WorldFact).filter(WorldFact.campaign_id == campaign_id).all()
     clock = db.query(GameTime).filter(GameTime.campaign_id == campaign_id).first()
     summary = db.query(CampaignSummary).filter(CampaignSummary.campaign_id == campaign_id).first()
+    play_row = db.get(PlayStateRow, campaign_id)
+    try:
+        play = json.loads(play_row.state_json) if play_row is not None else None
+    except (TypeError, ValueError):
+        play = None
     return {
         "campaign_id": campaign_id,
         "saved_at": _utcnow().isoformat(),
@@ -220,6 +227,7 @@ def build_snapshot(db: Session, *, campaign_id: str) -> dict:
         ],
         "clock": {"day": clock.day, "hour": clock.hour, "minute": clock.minute} if clock else None,
         "summary": summary.text if summary else "",
+        "play": play,
     }
 
 

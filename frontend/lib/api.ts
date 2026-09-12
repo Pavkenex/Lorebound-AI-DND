@@ -297,5 +297,10 @@ export const api = {
       prefs
     ),
   loadSave: (saveId: string, prefs?: ContentPrefs) =>
-    get<Record<string, unknown>>(`/saves/${encodeURIComponent(saveId)}`, { snapshot: "fixture", saveId }, prefs),
+    post<Record<string, unknown>>(
+      `/saves/${encodeURIComponent(saveId)}/load`,
+      {},
+      { loaded: false, saveId },
+      prefs
+    ),
 };

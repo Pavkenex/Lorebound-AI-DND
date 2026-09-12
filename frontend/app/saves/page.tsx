@@ -69,7 +69,11 @@ export default function SavesPage() {
       localStorage.setItem(RESUME_KEY, JSON.stringify({ label: row.label, at: new Date().toISOString(), saveId: row.id, campaignId }));
     } catch { /* ignore */ }
     uiBlip(880);
-    setNotice(`❧ Restored snapshot — “${row.label}”. Turning the page…`);
+    setNotice(
+      r.fromFixture
+        ? `❧ Restored snapshot — “${row.label}”. Turning the page…`
+        : `❧ The chronicle turns back — “${row.label}”. The world remembers where you were.`
+    );
     setTimeout(() => router.push("/adventure"), 650);
   }
 
