@@ -76,8 +76,10 @@ def test_field_actions_have_costs_and_yields():
 def test_deliberate_discovery_with_awareness():
     chapel = next(h for h in HIDDEN if h.id == "sunken-chapel")
     assert chapel.major
+    # Both rolls injected: the accident branch (accidental_p=0.06) must not be
+    # able to hijack a deliberate-discovery assertion on an unseeded draw.
     found = attempt_discovery(chapel, awareness=18, methods_used=[DiscoveryMethod.EXPLORE],
-                              roll=0.99)
+                              roll=0.99, accident_roll=0.99)
     assert found.found and not found.accidental
 
 
