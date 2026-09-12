@@ -21,8 +21,8 @@ from app.modules.actions.suggest import SceneContext, generate_suggestions
 from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
 from app.modules.narrator.authority import AuthorityEngine, EngineProposal
-from app.modules.narrator.prompts import PromptContext
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.narrator.prompts import PromptContext
 from app.modules.narrator.schemas import Length, NarratorOutput
 from app.modules.narrator.service import acknowledge, narrate
 from app.modules.narrator.validator import (

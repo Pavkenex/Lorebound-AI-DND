@@ -6,14 +6,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
-from app.modules.auth.models import User  # noqa: F401  (register metadata)
-from app.modules.campaign import models as cm  # noqa: F401
+from app.modules.auth.models import User
+from app.modules.campaign import models as cm
 from app.modules.campaign import npc as _npc  # noqa: F401
 from app.modules.campaign import story as _story  # noqa: F401
 from app.modules.campaign import world as _world  # noqa: F401
 from app.modules.character import models as _char  # noqa: F401
 from app.modules.inventory import models as _inv  # noqa: F401
-from app.modules.play import models as pm  # noqa: F401
+from app.modules.play import models as pm
 from app.modules.play.session import PlaySession
 from app.modules.play.state import CLUES, LEAD_STAGES, PlayState, seeded_state
 

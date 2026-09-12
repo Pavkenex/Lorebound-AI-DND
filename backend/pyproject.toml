@@ -32,6 +32,11 @@ addopts = "-q"
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+# B008: FastAPI expresses dependency injection as Depends(...) defaults; that
+# is the framework idiom, not a mutable-default bug.
+ignore = ["B008"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.main import app
 from app.modules.auth.models import User  # noqa: F401  (register metadata)
-from app.modules.campaign import models as cm  # noqa: F401
+from app.modules.campaign import models as cm
 from app.modules.campaign import npc as _npc  # noqa: F401
 from app.modules.campaign import story as _story  # noqa: F401
 from app.modules.campaign import world as _world  # noqa: F401
@@ -88,7 +88,7 @@ def test_clues_progress_to_investigating_and_open_the_trail(client: TestClient):
     assert "tracks" in st.clues and st.lead_stage == "investigating"
     assert st.solution_path is None  # one clue is not yet a route
 
-    r2 = _act(client, h, "I watch the treeline for the monastery lights")
+    _act(client, h, "I watch the treeline for the monastery lights")
     assert "lanterns" in _state(cid).clues
     st = _state(cid)
     assert st.solution_path == "follow-the-clues"  # two clues = the Ledger Trail opens

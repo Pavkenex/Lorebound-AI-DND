@@ -17,6 +17,7 @@ from app.modules.progression.specializations import (
     available_specializations,
     choose_specialization,
 )
+from app.modules.progression.training import INSTRUCTORS, practice
 from app.modules.progression.traits import (
     NarratorAuthorityError,
     Trait,
@@ -24,7 +25,6 @@ from app.modules.progression.traits import (
     derive_undead_trait,
     narrator_propose_story_trait,
 )
-from app.modules.progression.training import INSTRUCTORS, practice
 from app.modules.progression.xp import (
     challenge_factor,
     compute_skill_xp,

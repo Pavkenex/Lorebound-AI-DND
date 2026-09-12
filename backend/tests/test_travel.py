@@ -1,10 +1,10 @@
 """Exploration: regions, location state, travel, discovery, escalation, map, leads."""
 from app.modules.exploration.discovery import (
-    DiscoveryMethod,
     HIDDEN,
+    DiscoveryMethod,
     attempt_discovery,
 )
-from app.modules.exploration.escalation import EscalationStage, EscalationTrack, STAGE_ORDER
+from app.modules.exploration.escalation import STAGE_ORDER, EscalationStage, EscalationTrack
 from app.modules.exploration.leads import LeadStatus, seed_caravan_graph
 from app.modules.exploration.location_state import LocationState, is_open, narrator_brief
 from app.modules.exploration.map_api import POSITIONS, get_map_data

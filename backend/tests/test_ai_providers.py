@@ -45,7 +45,7 @@ def _make_server(state: _State) -> HTTPServer:
             self.end_headers()
             self.wfile.write(data)
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -168,7 +168,7 @@ def test_factory_missing_base_url(monkeypatch):
     monkeypatch.setenv("AI_PROVIDER", "openai-compatible")
     monkeypatch.delenv("OPENAI_COMPAT_BASE_URL", raising=False)
     monkeypatch.setenv("OPENAI_COMPAT_MODEL", "m")
-    with pytest.raises(Exception):
+    with pytest.raises(ProviderError):
         get_provider()
 
 
@@ -176,7 +176,7 @@ def test_factory_missing_model(monkeypatch):
     monkeypatch.setenv("AI_PROVIDER", "openai-compatible")
     monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "https://api.example.com/v1")
     monkeypatch.delenv("OPENAI_COMPAT_MODEL", raising=False)
-    with pytest.raises(Exception):
+    with pytest.raises(ProviderError):
         get_provider()
 
 

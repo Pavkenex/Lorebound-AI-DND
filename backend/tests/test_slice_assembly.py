@@ -13,7 +13,7 @@ try:
         SLICE_NPCS,
         get_slice,
     )
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001 - stream-not-landed guard
     pytest.skip(f"content stream not landed: {exc}", allow_module_level=True)
 
 

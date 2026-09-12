@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 try:
     from fastapi import APIRouter
-except Exception:  # pragma: no cover - fastapi always present in backend
+except Exception:  # noqa: BLE001 - fastapi always present in backend
     APIRouter = None  # type: ignore
 
 from app.content.fixture import ARIC, LANTERN_INN, MARLA, MISSING_TRAVELERS_LEAD

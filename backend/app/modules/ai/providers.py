@@ -6,14 +6,12 @@ changing callers (t_9f1f24aa).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
-
 import json
 import os
-import socket
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 
 class ProviderError(RuntimeError):
@@ -107,8 +105,7 @@ class OpenAICompatibleProvider:
                 with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 return self._to_result(data, role)
-            except (socket.timeout, TimeoutError, urllib.error.HTTPError,
-                    urllib.error.URLError) as exc:
+            except (TimeoutError, urllib.error.HTTPError, urllib.error.URLError) as exc:
                 last_exc = exc
         raise ProviderError(f"OpenAI-compatible request failed: {last_exc}") from last_exc
 

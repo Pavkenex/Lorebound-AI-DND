@@ -1,7 +1,7 @@
 """Story Director pass & pacing (t_2921a87c)."""
 from app.modules.exploration.director import (
-    DirectorProposal,
     PACING_ORDER,
+    DirectorProposal,
     PacingStage,
     engine_decide,
     evaluate_pass,

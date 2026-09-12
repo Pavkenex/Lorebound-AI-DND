@@ -23,11 +23,7 @@ def require_user(
     db: Session = Depends(get_db),
 ) -> User:
     """Decode the Bearer JWT, load the User, 401 on any failure."""
-    subject: str | None = None
-    try:
-        subject = decode_access_token(token)
-    except Exception:
-        subject = None
+    subject: str | None = decode_access_token(token)
     if not subject:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

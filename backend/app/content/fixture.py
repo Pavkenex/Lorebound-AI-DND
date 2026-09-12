@@ -93,10 +93,10 @@ class NarrativeResult:
 #: (PLAYTEST_REPORT condition 1). Every variant references what Marla remembers.
 _RETURN_GREETINGS: tuple[str, ...] = (
     "Welcome back, Aric. Marla looks up from the bar — she remembers {recalled}.",
-    "The door lets you in and Marla is already watching it — she remembers "
-    "{recalled}, and does not pretend otherwise.",
-    "The Lantern's fire has hardly found you before Marla sets a cup on the bar. "
-    "She remembers {recalled}; nothing said under this roof is ever quite forgotten here.",
+    ("The door lets you in and Marla is already watching it — she remembers "
+     "{recalled}, and does not pretend otherwise."),
+    ("The Lantern's fire has hardly found you before Marla sets a cup on the bar. "
+     "She remembers {recalled}; nothing said under this roof is ever quite forgotten here."),
 )
 
 

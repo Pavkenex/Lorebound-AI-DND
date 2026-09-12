@@ -11,7 +11,7 @@ jobs:
       - name: Install
         run: pip install -e "./backend[dev]"
       - name: Lint
-        run: ruff check backend || true
+        run: ruff check backend
       - name: Tests
         run: pytest backend/tests -q
   frontend:

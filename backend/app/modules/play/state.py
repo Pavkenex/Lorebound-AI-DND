@@ -137,7 +137,7 @@ class PlayState:
             return cls()
         if not isinstance(data, dict):
             return cls()
-        known = {f for f in cls.__dataclass_fields__}  # noqa: SIM118 - dataclass fields
+        known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in data.items() if k in known})
 
     # ------------------------------------------------------------- helpers

@@ -38,7 +38,7 @@ class Trait:
             )
 
     @classmethod
-    def from_event(cls, event: GameEvent, name: str, description: str) -> "Trait":
+    def from_event(cls, event: GameEvent, name: str, description: str) -> Trait:
         """Event-layer constructor: the only legal source of story traits."""
         return cls(
             name=name,

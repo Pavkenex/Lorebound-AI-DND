@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+if TYPE_CHECKING:
+    from app.modules.campaign.models import Campaign
+
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -23,6 +27,6 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
-    campaigns: Mapped[list["Campaign"]] = relationship(
+    campaigns: Mapped[list[Campaign]] = relationship(
         "Campaign", back_populates="owner", cascade="all, delete-orphan", lazy="selectin"
     )

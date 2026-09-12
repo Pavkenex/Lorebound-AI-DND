@@ -7,11 +7,11 @@ can never lose a resolved action or corrupt the save.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.core.events import EventKind, event_log, GameEvent
+from app.core.events import EventKind, GameEvent, event_log
 from app.modules.campaign.models import Campaign, CampaignSummary, GameTime, SaveGame
 from app.modules.campaign.story import Scene
 from app.modules.campaign.world import Location, Region, World, WorldFact
@@ -109,7 +109,7 @@ SEEDS: dict[str, dict] = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def create_campaign_from_seed(db: Session, *, owner_user_id: str, name: str, seed_key: str) -> Campaign:
@@ -293,6 +293,6 @@ def resolve_then_narrate(
     save = autosave(db, campaign_id=campaign_id, checkpoint=checkpoint)
     try:
         prose = narrate()  # type: ignore[operator]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - narration failure must never lose resolved state
         return {"resolved": resolved, "prose": None, "narration_error": str(exc), "save_id": save.id}
     return {"resolved": resolved, "prose": prose, "save_id": save.id}

@@ -5,7 +5,7 @@ Time is an authoritative engine value; the AI may never advance it on its own.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 
 class ClockAuthorityError(PermissionError):
@@ -29,7 +29,7 @@ CRAFT_MIN_PER_ITEM = 60
 class GameClock:
     """In-game clock. Only ``actor='engine'`` may advance it."""
 
-    now: datetime = field(default_factory=lambda: datetime(1487, 4, 1, 8, 0))
+    now: datetime = field(default_factory=lambda: datetime(1487, 4, 1, 8, 0, tzinfo=UTC))
     log: list[dict] = field(default_factory=list)
 
     def advance_minutes(self, minutes: int, *, actor: str, reason: str) -> datetime:

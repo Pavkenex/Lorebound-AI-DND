@@ -8,7 +8,7 @@ conversation reveals an ancient conspiracy by accident.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -49,9 +49,9 @@ class DirectorDecision:
 
 def validate_proposal(p: DirectorProposal) -> tuple[bool, str]:
     """Guardrails: no ancient conspiracy surfaces from idle tavern talk."""
-    if p.is_conspiracy_reveal():
-        if p.context == "tavern_conversation" and p.supporting_leads < 2:
-            return False, "Conspiracy reveals need corroborating leads, not tavern talk."
+    if (p.is_conspiracy_reveal() and p.context == "tavern_conversation"
+            and p.supporting_leads < 2):
+        return False, "Conspiracy reveals need corroborating leads, not tavern talk."
     return True, "ok"
 
 

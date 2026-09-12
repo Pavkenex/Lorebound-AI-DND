@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from app.modules.progression.skills import (
     SkillProgress,
     format_skill_display,
-    next_threshold,
     tier_progress,
 )
 from app.modules.progression.specializations import available_specializations
@@ -41,7 +40,6 @@ def skill_entry(
     progress: SkillProgress,
     trainers: list[Instructor] | None = None,
 ) -> dict:
-    nxt = next_threshold(progress.xp)
     into, needed = tier_progress(progress.xp)
     return {
         "name": progress.name,

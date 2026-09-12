@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _uid() -> str:
@@ -38,7 +38,7 @@ class Campaign(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
 
-    owner: Mapped["User"] = relationship("User", back_populates="campaigns", lazy="joined")
+    owner: Mapped[User] = relationship("User", back_populates="campaigns", lazy="joined")
 
 
 class GameTime(Base):

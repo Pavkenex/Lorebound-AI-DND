@@ -16,7 +16,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from app.core.events import EventKind, event_log, GameEvent
+from app.core.events import EventKind, GameEvent, event_log
 from app.modules.campaign.service import autosave
 from app.modules.play.models import PlayActionRow, PlayStateRow
 from app.modules.play.state import PlayState, seeded_state

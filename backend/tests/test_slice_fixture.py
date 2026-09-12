@@ -1,5 +1,7 @@
 """t_5f738da1: fixture flows — talk/inspect/steal/fight/discover-lead/leave/return."""
 
+import itertools
+
 import pytest
 
 try:
@@ -13,7 +15,7 @@ try:
         new_fixture_world,
     )
     from app.content.skills import SKILL_KEYS
-except Exception as exc:  # other streams still landing
+except Exception as exc:  # noqa: BLE001 - other streams still landing
     pytest.skip(f"content stream not landed: {exc}", allow_module_level=True)
 
 
@@ -76,7 +78,7 @@ def test_return_greetings_vary_without_losing_memory():
         greetings.append(w.return_to_inn().text)
 
     # No two consecutive returns repeat the same greeting.
-    for a, b in zip(greetings, greetings[1:]):
+    for a, b in itertools.pairwise(greetings):
         assert a != b
     # All three authored variants get exercised across returns.
     assert len(set(greetings)) == 3

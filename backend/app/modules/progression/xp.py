@@ -28,10 +28,8 @@ def challenge_factor(challenge: int) -> float:
 
     Calibrated so a trivial (challenge 1) success with fresh novelty = 8 XP.
     """
-    if challenge < 1:
-        challenge = 1
-    if challenge > 10:
-        challenge = 10
+    challenge = max(challenge, 1)
+    challenge = min(challenge, 10)
     return 6.0 + 2.0 * challenge
 
 

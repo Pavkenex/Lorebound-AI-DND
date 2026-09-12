@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 LEVEL_THRESHOLDS: list[int] = [0, 300, 800, 1500, 2500, 3800, 5400, 7300, 9500, 12000]
 MAX_LEVEL = len(LEVEL_THRESHOLDS)
 

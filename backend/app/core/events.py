@@ -2,9 +2,10 @@
 
 Contract shared by all modules. The engine appends events; the narrator only reads them.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -29,7 +30,7 @@ class GameEvent(BaseModel):
     campaign_id: str = "default"
     actor_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = {"use_enum_values": True}
 

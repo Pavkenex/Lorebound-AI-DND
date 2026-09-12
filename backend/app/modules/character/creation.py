@@ -59,7 +59,7 @@ class CreationState:
         return json.dumps({"stage": self.stage, "data": self.data})
 
     @classmethod
-    def from_json(cls, raw: str) -> "CreationState":
+    def from_json(cls, raw: str) -> CreationState:
         try:
             obj = json.loads(raw or "{}")
         except json.JSONDecodeError:
@@ -101,11 +101,15 @@ def validate_drives(payload: dict) -> dict:
 
 
 def validate_attributes(payload: dict) -> dict:
-    from app.modules.character.attributes import ATTRIBUTES, MAX_ATTRIBUTE_VALUE, MIN_ATTRIBUTE_VALUE
+    from app.modules.character.attributes import (
+        ATTRIBUTES,
+        MAX_ATTRIBUTE_VALUE,
+        MIN_ATTRIBUTE_VALUE,
+    )
 
     attrs = payload.get("attributes", {})
     if not isinstance(attrs, dict):
-        raise ValueError("attributes must be a mapping")
+        raise TypeError("attributes must be a mapping")
     cleaned: dict[str, int] = {}
     for name in ATTRIBUTES:
         if name not in attrs:

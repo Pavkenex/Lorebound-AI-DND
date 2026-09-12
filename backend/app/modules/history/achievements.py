@@ -27,11 +27,10 @@ class AchievementTracker:
             if len(self.influential_favours) >= 5 and "everyone-owes-me" not in self.unlocked:
                 self.unlocked.add("everyone-owes-me")
                 newly.append("everyone-owes-me")  # Everyone Owes Me
-        if kind == EventKind.LOCATION_DISCOVERED and event.payload.get("accidental") \
-                and event.payload.get("major"):
-            if "wrong-door" not in self.unlocked:
-                self.unlocked.add("wrong-door")
-                newly.append("wrong-door")  # Wrong Door
+        if (kind == EventKind.LOCATION_DISCOVERED and event.payload.get("accidental")
+                and event.payload.get("major") and "wrong-door" not in self.unlocked):
+            self.unlocked.add("wrong-door")
+            newly.append("wrong-door")  # Wrong Door
         return newly
 
 

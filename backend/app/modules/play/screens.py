@@ -53,8 +53,7 @@ def skills_payload(state: PlayState) -> dict:
     """The five slice skills with mastery XP earned in play."""
     by_key = {s.key: s for s in SKILLS}
     rows = []
-    for key in by_key:
-        skill = by_key[key]
+    for key, skill in by_key.items():
         xp = int(state.skills.get(key, 0))
         tier = tier_for_xp(xp).value
         rows.append({
@@ -176,6 +175,6 @@ def inventory_payload(state: PlayState) -> list[dict]:
     return items
 
 
-def companions_payload(state: PlayState) -> list[dict]:  # noqa: ARG001 - shape parity
+def companions_payload(state: PlayState) -> list[dict]:
     """No companions are recruited in the vertical slice yet — honestly empty."""
     return []

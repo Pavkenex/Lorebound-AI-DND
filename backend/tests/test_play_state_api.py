@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.main import app
 from app.modules.auth.models import User
-from app.modules.campaign import models as cm  # noqa: F401
+from app.modules.campaign import models as cm
 from app.modules.campaign import npc as _npc  # noqa: F401
 from app.modules.campaign import story as _story  # noqa: F401
 from app.modules.campaign import world as _world  # noqa: F401

@@ -9,10 +9,10 @@ try:
         NPCS,
         OPENING_SCENE,
         RUMOURS,
-        THREADS,
         THREAD_INTERSECTIONS,
+        THREADS,
     )
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001 - stream-not-landed guard
     pytest.skip(f"content stream not landed: {exc}", allow_module_level=True)
 
 

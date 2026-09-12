@@ -215,7 +215,7 @@ def test_rest_restores_and_time_advances(client: TestClient):
 
 def test_all_beat_narrations_within_budget(client: TestClient):
     """Playtest narration discipline: no beat text exceeds 600 chars."""
-    h, cid = _setup(client, "budget@example.com")
+    h, _cid = _setup(client, "budget@example.com")
     seen: list[str] = []
     scripts = [
         ("I ask Marla about the travelers", 18),

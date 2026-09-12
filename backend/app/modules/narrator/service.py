@@ -13,8 +13,8 @@ from typing import Any
 from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider, get_provider
 from app.modules.ai.roles import Role, build_role_prompt
-from app.modules.narrator.prompts import PromptBundle, PromptContext, assemble_prompt
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.narrator.prompts import PromptBundle, PromptContext, assemble_prompt
 from app.modules.narrator.schemas import (
     DEFAULT_LENGTH,
     WORD_TARGETS,

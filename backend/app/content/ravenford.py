@@ -7,7 +7,7 @@ look unrelated but intersect as the mystery is investigated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Locations

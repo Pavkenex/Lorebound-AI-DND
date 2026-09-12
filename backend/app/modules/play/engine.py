@@ -332,32 +332,32 @@ _REST_V = r"\b(rest|sleep|bead|bed|nap|camp|bandage|tend|recover)\b"
 _LEAVE_V = r"\b(leave|step out|go out|head out|exit|outside|depart|walk out|head north|take the road|northern road|north road)\b"
 _RETURN_V = r"\b(return|go back|come back|back to|enter)\b"
 
-_MARLA = re.compile(r"\bmarla\b|\binnkeeper\b", re.I)
-_INN = re.compile(r"\binn\b|\blantern\b", re.I)
-_BORIN = re.compile(r"\bborin\b|\bmercenary\b|\bdrunk\b", re.I)
-_BOX = re.compile(r"strongbox|strong box|lockbox|storeroom|pantry|till|till box", re.I)
-_BOARD = re.compile(r"notice|board|plea|posting|parchment", re.I)
-_LEDGER = re.compile(r"ledger|guest ?book|books", re.I)
-_CELLAR = re.compile(r"cellar|trapdoor|cellars", re.I)
-_MARKET = re.compile(r"\bmarket\b|\bstalls?\b|\bshops?\b|sella", re.I)
-_MONASTERY = re.compile(r"monastery|chapel|anselm|beacon|monks?", re.I)
+_MARLA = re.compile(r"\bmarla\b|\binnkeeper\b", re.IGNORECASE)
+_INN = re.compile(r"\binn\b|\blantern\b", re.IGNORECASE)
+_BORIN = re.compile(r"\bborin\b|\bmercenary\b|\bdrunk\b", re.IGNORECASE)
+_BOX = re.compile(r"strongbox|strong box|lockbox|storeroom|pantry|till|till box", re.IGNORECASE)
+_BOARD = re.compile(r"notice|board|plea|posting|parchment", re.IGNORECASE)
+_LEDGER = re.compile(r"ledger|guest ?book|books", re.IGNORECASE)
+_CELLAR = re.compile(r"cellar|trapdoor|cellars", re.IGNORECASE)
+_MARKET = re.compile(r"\bmarket\b|\bstalls?\b|\bshops?\b|sella", re.IGNORECASE)
+_MONASTERY = re.compile(r"monastery|chapel|anselm|beacon|monks?", re.IGNORECASE)
 
 # --- arc routing (solutions + resolution) -----------------------------------
-_SELLA = re.compile(r"\bsella\b|\bfactor\b|\bscales\b", re.I)
-_PERSUADE_RE = re.compile(r"\b(persuade|convince|charm|plead|plea|reason with|talk down|coax)\b", re.I)
-_INTIMIDATE_RE = re.compile(r"\b(intimidate|threaten|pressure|lean on|scare|strong-arm|cow)\b", re.I)
+_SELLA = re.compile(r"\bsella\b|\bfactor\b|\bscales\b", re.IGNORECASE)
+_PERSUADE_RE = re.compile(r"\b(persuade|convince|charm|plead|plea|reason with|talk down|coax)\b", re.IGNORECASE)
+_INTIMIDATE_RE = re.compile(r"\b(intimidate|threaten|pressure|lean on|scare|strong-arm|cow)\b", re.IGNORECASE)
 _CONFRONT_RE = re.compile(
     r"\b(confront|enter the cellar|into the cellar|cellar stairs|go down|descend|"
     r"open the cellar|the passage|down into the dark|enter the tunnel|into the tunnel)\b",
-    re.I,
+    re.IGNORECASE,
 )
 _AMBUSH_RE = re.compile(
     r"\b(ambush|waylay|lie in wait|wait in ambush|strike first)\b|\b(attack|stop|rob)\b.*\b(carriers?|cart|wagons?)\b",
-    re.I,
+    re.IGNORECASE,
 )
-_TRACKS_RE = re.compile(r"\b(tracks?|ruts?|wheel|wheels?|mud)\b", re.I)
-_LIGHTS_RE = re.compile(r"\b(lanterns?|lights?|bells?)\b", re.I)
-_WATCH_RE = re.compile(r"\b(watch|wait|follow|tail|shadow|observe|trail|stake out|keep watch)\b", re.I)
+_TRACKS_RE = re.compile(r"\b(tracks?|ruts?|wheel|wheels?|mud)\b", re.IGNORECASE)
+_LIGHTS_RE = re.compile(r"\b(lanterns?|lights?|bells?)\b", re.IGNORECASE)
+_WATCH_RE = re.compile(r"\b(watch|wait|follow|tail|shadow|observe|trail|stake out|keep watch)\b", re.IGNORECASE)
 
 
 def route(text: str) -> str:
@@ -365,9 +365,9 @@ def route(text: str) -> str:
     t = text.strip()
     # Target-specific rules first: naming the ledger/board/cellar wins over the
     # generic "mentions Marla" rules ("I search Marla's ledger" is an inspection).
-    if _BOX.search(t) and re.search(_STEAL_V, t, re.I):
+    if _BOX.search(t) and re.search(_STEAL_V, t, re.IGNORECASE):
         return "steal"
-    if _BORIN.search(t) and re.search(_FIGHT_V, t, re.I):
+    if _BORIN.search(t) and re.search(_FIGHT_V, t, re.IGNORECASE):
         return "fight"
     if _PERSUADE_RE.search(t) and (_SELLA.search(t) or _BORIN.search(t)):
         return "persuade"
@@ -377,35 +377,35 @@ def route(text: str) -> str:
         return "ambush"
     if _CONFRONT_RE.search(t):
         return "confront"
-    if _TRACKS_RE.search(t) and re.search(_INSPECT_V + r"|\b(follow|study)\b", t, re.I):
+    if _TRACKS_RE.search(t) and re.search(_INSPECT_V + r"|\b(follow|study)\b", t, re.IGNORECASE):
         return "clue_tracks"
     if _LIGHTS_RE.search(t) and _WATCH_RE.search(t):
         return "clue_lanterns"
-    if _BOARD.search(t) and (re.search(_INSPECT_V, t, re.I) or not re.search(_TALK_V, t, re.I)):
+    if _BOARD.search(t) and (re.search(_INSPECT_V, t, re.IGNORECASE) or not re.search(_TALK_V, t, re.IGNORECASE)):
         return "inspect_board"
-    if _LEDGER.search(t) and (re.search(_INSPECT_V, t, re.I) or not re.search(_TALK_V, t, re.I)):
+    if _LEDGER.search(t) and (re.search(_INSPECT_V, t, re.IGNORECASE) or not re.search(_TALK_V, t, re.IGNORECASE)):
         return "inspect_ledger"
-    if _CELLAR.search(t) and re.search(_INSPECT_V, t, re.I):
+    if _CELLAR.search(t) and re.search(_INSPECT_V, t, re.IGNORECASE):
         return "inspect_cellar"
-    if _BORIN.search(t) and re.search(_TALK_V, t, re.I):
+    if _BORIN.search(t) and re.search(_TALK_V, t, re.IGNORECASE):
         return "talk_borin"
-    if _MARLA.search(t) and re.search(_TALK_V, t, re.I):
+    if _MARLA.search(t) and re.search(_TALK_V, t, re.IGNORECASE):
         return "talk"
-    if _MARLA.search(t) and re.search(_INSPECT_V, t, re.I):
+    if _MARLA.search(t) and re.search(_INSPECT_V, t, re.IGNORECASE):
         return "talk"
-    if re.search(r"\b(ask|question|talk|speak)\b.*\b(wagon|travelers?|guests?|missing)\b", t, re.I):
+    if re.search(r"\b(ask|question|talk|speak)\b.*\b(wagon|travelers?|guests?|missing)\b", t, re.IGNORECASE):
         return "talk"
-    if re.search(_REST_V, t, re.I):
+    if re.search(_REST_V, t, re.IGNORECASE):
         return "rest"
-    if _MARKET.search(t) and re.search(r"\b(go|walk|head|travel|visit|leave|enter|toward|towards|to)\b", t, re.I):
+    if _MARKET.search(t) and re.search(r"\b(go|walk|head|travel|visit|leave|enter|toward|towards|to)\b", t, re.IGNORECASE):
         return "travel_market"
-    if _MONASTERY.search(t) and re.search(r"\b(go|walk|head|travel|visit|leave|enter|toward|towards|to)\b", t, re.I):
+    if _MONASTERY.search(t) and re.search(r"\b(go|walk|head|travel|visit|leave|enter|toward|towards|to)\b", t, re.IGNORECASE):
         return "travel_monastery"
-    if _INN.search(t) and re.search(_RETURN_V, t, re.I):
+    if _INN.search(t) and re.search(_RETURN_V, t, re.IGNORECASE):
         return "return"
-    if re.search(_LEAVE_V, t, re.I):
+    if re.search(_LEAVE_V, t, re.IGNORECASE):
         return "leave"
-    if re.search(_INSPECT_V, t, re.I):
+    if re.search(_INSPECT_V, t, re.IGNORECASE):
         return "inspect"
     return "pipeline"
 
@@ -434,7 +434,7 @@ class ActEngine:
 
     # -- helpers ------------------------------------------------------------
     @property
-    def state(self):  # noqa: ANN201 - PlayState (avoids import cycle for typing)
+    def state(self):
         return self.session.state
 
     def _modifiers(self, skill: str) -> tuple[int, int]:
@@ -774,7 +774,7 @@ class ActEngine:
             )
         if st.lead_stage == "unheard":
             return BeatOutcome(ack="The dark stays dark.", narration=LANTERNS_HINT, kind="inspect")
-        following = bool(re.search(r"\b(follow|tail|shadow)\b", text, re.I))
+        following = bool(re.search(r"\b(follow|tail|shadow)\b", text, re.IGNORECASE))
         skill = "stealth" if following else "perception"
         label = "Stealth — tailing the lantern-bearers" if following else "Perception — watching the treeline"
         mech, result = self._check(skill, "Moderate", label)
@@ -972,10 +972,10 @@ class ActEngine:
     # -- Marla's memory greeting --------------------------------------------
     _GREETING_TEMPLATES = (
         "Welcome back. Marla looks up from the bar — she remembers {recalled}.",
-        "The door has hardly shut before Marla says it: she remembers {recalled}, "
-        "and does not pretend otherwise.",
-        "Marla slides a cup across the bar without being asked. \"Back, then,\" she "
-        "says, and lets you hear the rest in the pause: {recalled}.",
+        ("The door has hardly shut before Marla says it: she remembers {recalled}, "
+         "and does not pretend otherwise."),
+        ("Marla slides a cup across the bar without being asked. \"Back, then,\" she "
+         "says, and lets you hear the rest in the pause: {recalled}."),
     )
 
     def _marla_greeting(self) -> str:

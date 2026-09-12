@@ -5,9 +5,9 @@ slice tests pass while other streams' modules are still landing.
 """
 
 from app.content.fixture import (  # noqa: F401  (re-exported API)
+    SCRIPTED_FLOWS,
     FixtureWorld,
     NarrativeResult,
-    SCRIPTED_FLOWS,
     new_fixture_world,
 )
 from app.content.ravenford import (  # noqa: F401

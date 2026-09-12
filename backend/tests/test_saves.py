@@ -12,8 +12,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
-from app.modules.auth.models import User  # noqa: F401
-from app.modules.campaign import models as cm  # noqa: F401
+from app.modules.auth.models import User
+from app.modules.campaign import models as cm
 from app.modules.campaign import npc as _npc  # noqa: F401
 from app.modules.campaign import story as _story  # noqa: F401
 from app.modules.campaign import world as _world  # noqa: F401

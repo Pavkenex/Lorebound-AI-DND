@@ -13,7 +13,7 @@ import pytest
 try:
     from app.content.fixture import SCRIPTED_FLOWS, new_fixture_world
     from app.content.slice import MYSTERY, SESSION_BEATS
-except Exception as exc:
+except Exception as exc:  # noqa: BLE001 - stream-not-landed guard
     pytest.skip(f"content stream not landed: {exc}", allow_module_level=True)
 
 SUCCESS_SIGNALS = (
