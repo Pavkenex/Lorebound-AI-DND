@@ -13,3 +13,5 @@ dist/
 coverage/
 htmlcov/
 alembic/versions/__pycache__/
+*.db
+*.sqlite3
