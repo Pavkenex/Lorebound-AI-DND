@@ -58,3 +58,9 @@ try:  # Live play: campaign lifecycle (create/list) + engine-backed play endpoin
     app.include_router(campaigns_router)
 except Exception:  # pragma: no cover - live stream not landed yet
     pass
+try:  # Live play: POST /act (engine-backed actions).
+    from app.modules.play.router import router as play_router
+
+    app.include_router(play_router)
+except Exception:  # pragma: no cover - live stream not landed yet
+    pass

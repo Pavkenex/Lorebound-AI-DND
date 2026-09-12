@@ -22,6 +22,7 @@ from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
 from app.modules.narrator.authority import AuthorityEngine, EngineProposal
 from app.modules.narrator.prompts import PromptContext
+from app.modules.narrator.prefs import ContentPrefs
 from app.modules.narrator.schemas import Length, NarratorOutput
 from app.modules.narrator.service import acknowledge, narrate
 from app.modules.narrator.validator import (
@@ -66,7 +67,8 @@ class Pipeline:
         self.rng = rng or random.Random()
 
     def orchestrate(self, action: ActionInput,
-                    state: dict[str, Any] | None = None) -> PipelineResult:
+                    state: dict[str, Any] | None = None,
+                    prefs: ContentPrefs | None = None) -> PipelineResult:
         state = dict(state or {})
         campaign_id = action.campaign_id
         events: list[GameEvent] = []
@@ -126,7 +128,8 @@ class Pipeline:
         output, _bundle = narrate(prompt_ctx, provider=self.provider,
                                   meter=self.meter, campaign_id=campaign_id,
                                   suggestions=[{"label": s["label"], "command": s["command"]}
-                                               for s in suggestions])
+                                               for s in suggestions],
+                                  prefs=prefs)
 
         # If the player tried to author facts, the narration must not honor them.
         if intent.world_fact_attempt:

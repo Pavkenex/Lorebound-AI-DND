@@ -14,6 +14,7 @@ from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider, get_provider
 from app.modules.ai.roles import Role, build_role_prompt
 from app.modules.narrator.prompts import PromptBundle, PromptContext, assemble_prompt
+from app.modules.narrator.prefs import ContentPrefs
 from app.modules.narrator.schemas import (
     DEFAULT_LENGTH,
     WORD_TARGETS,
@@ -50,10 +51,11 @@ def render_prose(provider_text: str, length: str = DEFAULT_LENGTH) -> str:
 def narrate(ctx: PromptContext, provider: Provider | None = None,
             meter: MeterRegistry | None = None,
             campaign_id: str = "default",
-            suggestions: list[dict[str, str]] | None = None) -> tuple[NarratorOutput, PromptBundle]:
+            suggestions: list[dict[str, str]] | None = None,
+            prefs: ContentPrefs | None = None) -> tuple[NarratorOutput, PromptBundle]:
     """Single narration call. Returns (output, prompt_bundle for tests)."""
     prov: Provider = provider or get_provider()
-    bundle = assemble_prompt(ctx, role_system=build_role_prompt(Role.NARRATOR.value))
+    bundle = assemble_prompt(ctx, role_system=build_role_prompt(Role.NARRATOR.value), prefs=prefs)
     result = prov.generate(f"{bundle.system}\n\n{bundle.user}", role=Role.NARRATOR.value)
     if meter is not None:
         meter.record(campaign_id, Role.NARRATOR.value,
