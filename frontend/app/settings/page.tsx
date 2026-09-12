@@ -16,10 +16,10 @@ import {
 import type { ContentPrefs } from "../../lib/store-types";
 
 const OPTS: { key: Exclude<keyof ContentPrefs, "nsfw">; label: string; choices: string[]; help: string }[] = [
-  { key: "violence", label: "Violence", choices: ["off", "low", "standard"], help: "How plainly harm is described." },
-  { key: "horror", label: "Horror", choices: ["off", "low", "standard"], help: "Dread, gore, and things in the dark." },
-  { key: "romance", label: "Romance", choices: ["off", "low", "standard"], help: "Tenderness on the road." },
-  { key: "language", label: "Language", choices: ["clean", "mild"], help: "Oaths at the table." },
+  { key: "violence", label: "Violence", choices: ["off", "reduced", "standard"], help: "How plainly harm is described." },
+  { key: "horror", label: "Horror", choices: ["off", "reduced", "standard"], help: "Dread, gore, and things in the dark." },
+  { key: "romance", label: "Romance", choices: ["off", "reduced", "standard"], help: "Tenderness on the road." },
+  { key: "language", label: "Language", choices: ["off", "reduced", "standard"], help: "Oaths at the table." },
 ];
 
 export default function SettingsPage() {
@@ -58,36 +58,19 @@ export default function SettingsPage() {
 
       <h2 style={{ marginTop: 20 }}>Adult content</h2>
       <div className="parchment card">
-        <label style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <input
             type="checkbox"
             checked={s.content.nsfw === true}
-            onChange={(e) => {
-              if (e.target.checked) {
-                const ok = window.confirm(
-                  "Allow explicit adult content in the chronicle?\n\nThis lifts the fade-to-black for sexual content. It stays OFF unless you opt in here, is kept only in this browser, and travels with requests as prefs.nsfw. You can turn it back off any time."
-                );
-                if (!ok) return;
-                s.set({ content: { ...s.content, nsfw: true } });
-              } else {
-                s.set({ content: { ...s.content, nsfw: false } });
-              }
-            }}
+            onChange={(e) => s.set({ content: { ...s.content, nsfw: e.target.checked } })}
             aria-describedby="nsfw-help"
           />
-          <span>
-            <strong>Allow explicit adult content (18+)</strong>
-            <br />
-            <span className="sys" id="nsfw-help">
-              Default OFF. When off, the chronicler fades to black. When on, mature
-              romantic/erotic content may be described plainly — still within
-              consent and story boundaries above. Applies to new narration after
-              you toggle it.
-            </span>
-          </span>
+          <span><strong>Enable NSFW — uncensored</strong></span>
         </label>
-        <p className="sys" style={{ marginBottom: 0 }}>
-          Status: <strong>{s.content.nsfw ? "ON — explicit adult content allowed" : "OFF — fade to black"}</strong>
+        <p className="sys" id="nsfw-help" style={{ margin: "8px 0 0" }}>
+          When on, all content limits are lifted: graphic and explicit content, no
+          fade to black. Overrides the story boundaries above while enabled. Off by
+          default; travels with every chronicle request.
         </p>
       </div>
 
