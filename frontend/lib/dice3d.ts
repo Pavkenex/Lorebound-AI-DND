@@ -469,3 +469,102 @@ export function buildFxPlan(kind: "crit-success" | "crit-miss", seed: number): F
   }));
   return { kind, particles, rays: 0, flashAlpha: 0.5, shakeAmp: 0.07, durationMs: 1600 };
 }
+
+// --- face colour + readable numerals -----------------------------------------
+//
+// Legibility rule (t_55274097): the carved number must meet WCAG 4.5:1 against
+// whatever shade the facet lands on — the earlier fixed near-black glyph went
+// invisible on the darker (shadowed / critical-miss) facets. The renderer and
+// the unit tests share these exact functions.
+
+export type Rgb = readonly [number, number, number];
+
+/** Face colour model for one facet. ``shade`` is the 0..1 diffuse term. */
+export interface FacePalette {
+  readonly h: number;
+  readonly s: number;
+  readonly l: number;
+}
+
+export const NUMERAL_DARK: Rgb = [28, 18, 6];
+export const NUMERAL_DARK_CRIT: Rgb = [64, 38, 2];
+export const NUMERAL_LIGHT: Rgb = [238, 226, 197];
+
+/** The real renderer's diffuse term lives in [0.35, 1]; clamp so the palette —
+ *  and every legibility guarantee made on it — holds for any input. */
+export const SHADE_MIN = 0.35;
+
+/**
+ * Per-kind facet palette. The base lightness floor (44%) is tuned so the dark
+ * engraved numeral clears WCAG 4.5:1 even on the most shadowed facet; the
+ * mid-luminance zone where neither etching colour can reach 4.5:1 is avoided.
+ */
+export function facePalette(shade: number, kind: RollKind | null, fxOn: boolean): FacePalette {
+  const s = Math.max(SHADE_MIN, Math.min(1, shade));
+  const t = (s - SHADE_MIN) / (1 - SHADE_MIN); // normalized diffuse term, 0..1
+  const baseL = 44 + t * 20; // [44, 64]
+  if (kind === "crit-success") return { h: 46, s: 64, l: Math.min(70, baseL + 6) };
+  // The critical miss keeps the die in its dire, darkened register: a narrow
+  // dark band where the light etching colour always clears 4.5:1.
+  if (kind === "crit-miss") return { h: 30, s: fxOn ? 36 : 24, l: 26 + t * 8 };
+  if (kind === "fail") return { h: 40, s: 28, l: baseL };
+  return { h: 42, s: 55, l: baseL };
+}
+
+export function faceFillCss(p: FacePalette): string {
+  return `hsl(${p.h}, ${p.s}%, ${p.l}%)`;
+}
+
+export function hslToRgb({ h, s, l }: FacePalette): Rgb {
+  const sn = s / 100;
+  const ln = l / 100;
+  const c = (1 - Math.abs(2 * ln - 1)) * sn;
+  const hp = (((h % 360) + 360) % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = ln - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hp < 1) [r, g, b] = [c, x, 0];
+  else if (hp < 2) [r, g, b] = [x, c, 0];
+  else if (hp < 3) [r, g, b] = [0, c, x];
+  else if (hp < 4) [r, g, b] = [0, x, c];
+  else if (hp < 5) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
+
+export function faceRgb(shade: number, kind: RollKind | null, fxOn: boolean): Rgb {
+  return hslToRgb(facePalette(shade, kind, fxOn));
+}
+
+export function relativeLuminance(rgb: Rgb): number {
+  const f = (v: number) => {
+    const x = v / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+export function contrastRatio(a: Rgb, b: Rgb): number {
+  const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The carved numeral colour for a facet: dark engraving on light facets, warm
+ * light engraving on dark ones, always picking the best-contrast candidate.
+ */
+export function numeralRgb(shade: number, kind: RollKind | null, fxOn: boolean, crit: boolean): Rgb {
+  const face = faceRgb(shade, kind, fxOn);
+  const dark = crit ? NUMERAL_DARK_CRIT : NUMERAL_DARK;
+  const darkRatio = contrastRatio(dark, face);
+  const lightRatio = contrastRatio(NUMERAL_LIGHT, face);
+  if (darkRatio >= 4.5 && darkRatio >= lightRatio) return dark;
+  if (lightRatio >= 4.5) return NUMERAL_LIGHT;
+  return darkRatio >= lightRatio ? dark : NUMERAL_LIGHT;
+}

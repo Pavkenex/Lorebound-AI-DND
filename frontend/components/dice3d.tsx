@@ -14,7 +14,10 @@ import {
   buildRollPlan,
   cameraTilt,
   d20Mesh,
+  faceFillCss,
+  facePalette,
   isCrit,
+  numeralRgb,
   orientForFace,
   projectPoint,
   quatMul,
@@ -39,14 +42,6 @@ interface Scene {
   fx: FxPlan | null;
   fxT: number | null;
   shakeX: number;
-}
-
-function faceFill(shade: number, kind: RollKind | null, fxOn: boolean): string {
-  const l = 24 + shade * 40;
-  if (kind === "crit-success") return `hsl(46, 64%, ${Math.min(66, l + 6)}%)`;
-  if (kind === "crit-miss") return `hsl(30, ${fxOn ? 36 : 24}%, ${Math.max(20, l - 8)}%)`;
-  if (kind === "fail") return `hsl(40, 28%, ${l}%)`;
-  return `hsl(42, 55%, ${l}%)`;
 }
 
 /** Draw one complete frame: table, die, and any critical flourish. */
@@ -176,7 +171,7 @@ function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
     ctx.lineTo(b[0] - cx, b[1] - cy);
     ctx.lineTo(c[0] - cx, c[1] - cy);
     ctx.closePath();
-    ctx.fillStyle = faceFill(face.shade, kind, crit);
+    ctx.fillStyle = faceFillCss(facePalette(face.shade, kind, crit));
     ctx.fill();
     if (crit && fx!.kind === "crit-success") {
       // Golden rim light around every facet.
@@ -205,7 +200,9 @@ function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
       ctx.font = '700 0.36px Georgia, "Times New Roman", serif';
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = kind === "crit-success" && crit ? "rgba(64, 38, 2, 0.98)" : "rgba(28, 18, 6, 0.92)";
+      const critGold = kind === "crit-success" && crit;
+      const [nr, ng, nb] = numeralRgb(face.shade, kind, crit, critGold);
+      ctx.fillStyle = `rgba(${nr}, ${ng}, ${nb}, ${critGold ? 0.98 : 0.94})`;
       ctx.fillText(String(face.number), 0, 0);
       ctx.restore();
     }

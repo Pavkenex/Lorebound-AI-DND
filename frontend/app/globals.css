@@ -59,6 +59,8 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
   border-radius: 5px; padding: 12px; width: 100%;
 }
 .input-parch:focus { outline: 2px solid var(--gold); }
+/* Placeholders were the only sub-4.5:1 text on the boards (t_55274097). */
+.input-parch::placeholder { color: var(--parch-1); opacity: 1; }
 
 /* shell */
 .shell { display: grid; grid-template-columns: 290px minmax(0,1fr) 300px; min-height: 100vh; }

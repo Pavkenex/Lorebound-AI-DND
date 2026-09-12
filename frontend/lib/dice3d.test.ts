@@ -11,10 +11,13 @@ import {
   buildFxPlan,
   buildRollPlan,
   cameraTilt,
+  contrastRatio,
   d20Mesh,
   faceByNumber,
+  faceRgb,
   isCrit,
   mulberry32,
+  numeralRgb,
   orientForFace,
   projectPoint,
   quatFromUnitVectors,
@@ -268,4 +271,30 @@ test("fx plan (crit miss): dire slam with shake and embers, deterministic", () =
     assert.ok(p.hue < 34, "ash / ember hues only");
     assert.ok(p.angle > 0 && p.angle < Math.PI, "downward drift");
   }
+});
+
+test("carved numerals stay readable on every facet shade (t_55274097)", () => {
+  // The die tumbles across every shade; the engraved number must meet WCAG
+  // 4.5:1 against the facet it lands on, for every outcome treatment.
+  const kinds = [null, "fail", "crit-success", "crit-miss"] as const;
+  for (let shade = 0; shade <= 1.0001; shade += 0.05) {
+    for (const kind of kinds) {
+      for (const fxOn of [false, true]) {
+        const face = faceRgb(shade, kind, fxOn);
+        const numeral = numeralRgb(shade, kind, fxOn, kind === "crit-success");
+        const ratio = contrastRatio(face, numeral);
+        assert.ok(
+          ratio >= 4.5,
+          `shade=${shade.toFixed(2)} kind=${kind} fxOn=${fxOn}: numeral contrast ${ratio.toFixed(2)} < 4.5`
+        );
+      }
+    }
+  }
+});
+
+test("numerals flip to light etching on dark facets, dark on light ones", () => {
+  const darkSide = numeralRgb(0.35, "crit-miss", true, false);
+  const lightSide = numeralRgb(1.0, "crit-success", false, true);
+  assert.ok(darkSide[0] > 200 && darkSide[1] > 200, "dark facet -> light numeral");
+  assert.ok(lightSide[0] < 90 && lightSide[1] < 90, "light facet -> dark numeral");
 });
