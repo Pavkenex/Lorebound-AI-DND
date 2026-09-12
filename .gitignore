@@ -8,6 +8,7 @@ venv/
 .env
 node_modules/
 .next/
+*.tsbuildinfo
 dist/
 coverage/
 htmlcov/
