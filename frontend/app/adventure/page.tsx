@@ -8,6 +8,7 @@ import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
 import { Feed } from "../../components/feed";
 import { SceneArt, Portrait } from "../../components/art";
+import { DiceTray } from "../../components/dice3d";
 import { ErrorBanner, TutorialOverlay } from "../../components/widgets";
 
 let n = 100;
@@ -178,6 +179,10 @@ export default function AdventurePage() {
         <div className="parchment card" style={{ marginTop: 12 }}>
           <h3>Party</h3>
           {gs.party.map((p) => <p key={p.name} style={{ margin: "4px 0" }}>{p.name} <span className="sys">· {p.hp}</span></p>)}
+        </div>
+        <div className="parchment card" style={{ marginTop: 12 }}>
+          <h3>The dice</h3>
+          <DiceTray />
         </div>
       </aside>
 

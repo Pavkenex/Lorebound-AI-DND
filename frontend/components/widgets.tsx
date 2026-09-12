@@ -81,7 +81,7 @@ export function A11yControls() {
 
 const STEPS = [
   { h: "Act with words", p: "Type anything — “ask Marla about the wagon”, “inspect the seal”, “draw my bow”. There are no wrong verbs. Press Enter; the world answers." },
-  { h: "Checks", p: "When risk appears a real die tumbles into the chronicle and lands on your roll — natural 20s and natural 1s get their own flourishes. Click the die to replay; open the line for detail. Success moves you on; partial success moves you on at a cost." },
+  { h: "Checks & the dice", p: "When risk appears a real die tumbles into the chronicle and lands on your roll — natural 20s and natural 1s get their own flourishes. Click the die to replay; open the line for detail. You can also throw the d20 yourself any time from the Dice tray beside your sheet." },
   { h: "Journal", p: "Every discovery becomes a LEAD. Open the Journal to trace the Missing Caravan thread — caravan → wagon → silver powder → guild → monastery." },
 ];
 
