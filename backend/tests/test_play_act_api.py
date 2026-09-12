@@ -128,6 +128,7 @@ def test_ledger_check_finds_clue_only_on_success(client: TestClient):
 
     hit = _act(client, h, "I examine the guest ledger again", seed=18)
     assert hit["mechanics"]["outcome"] in ("Success", "Exceptional", "SuccessWithCost")
+    assert any("Clue found" in s for s in hit["system"])  # surfaces live, not just on reload
     st = _state(cid)
     assert "ledger" in st.clues
     assert st.lead_stage == "investigating"

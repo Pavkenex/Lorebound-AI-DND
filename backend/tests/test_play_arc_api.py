@@ -163,6 +163,7 @@ def test_path_shadow_them(client: TestClient):
     _learn_and_go(client, h)
     r = _act(client, h, "I follow the lanterns through the trees")
     assert r["mechanics"]["label"].startswith("Stealth")
+    assert any("The way in" in s for s in r["system"])
     st = _state(cid)
     assert "lanterns" in st.clues and st.solution_path == "shadow-them"
     _resolve_at_monastery(client, h)

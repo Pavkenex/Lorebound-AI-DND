@@ -499,11 +499,21 @@ class ActEngine:
 
         beat = route(t)
         handler = getattr(self, f"_beat_{beat}")
+        seq_before = self.state.feed_seq
         if beat == "pipeline":
             outcome, checkpoint = handler(t)
         else:
             outcome = handler(t)
             checkpoint = outcome.kind
+
+        # System lines the beat itself wrote (clues found, routes opened, notes)
+        # are echoed in the response so the live feed shows them immediately.
+        system_lines = [
+            e["text"]
+            for e in self.state.feed
+            if e.get("kind") == "system"
+            and int(str(e.get("id", "live-0")).split("-")[-1] or 0) > seq_before
+        ]
 
         response = {
             "ack": outcome.ack,
@@ -511,6 +521,7 @@ class ActEngine:
             "narration": outcome.narration,
             "dialogue": outcome.dialogue,
             "newLeads": outcome.new_leads,
+            "system": system_lines,
         }
         # Mirror the response into the chronicle feed so a page reload
         # reconstructs exactly what the player saw live.
