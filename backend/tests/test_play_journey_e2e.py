@@ -105,7 +105,7 @@ def test_full_journey_start_to_finish(client: TestClient):
     st = client.get("/state", headers=h).json()
     assert st["character"]["hp"]["cur"] == 29  # took three, won the room
 
-    road = act("I step out into the rain and take the northern road")
+    act("I step out into the rain and take the northern road")
     assert "Northern Road" in client.get("/state", headers=h).json()["location"]
     back = act("I return to the inn")
     assert "remembers" in back["dialogue"][0]["line"]
