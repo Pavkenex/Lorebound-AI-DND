@@ -18,6 +18,7 @@ from app.modules.ai.settings_store import resolve_provider
 from app.modules.auth.deps import require_user, scope_campaign
 from app.modules.auth.models import User
 from app.modules.campaign.models import Campaign
+from app.modules.character import prebuilt
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play import creation, screens
 from app.modules.play.engine import ActEngine
@@ -156,6 +157,42 @@ def companions_view(
 class AdvanceIn(BaseModel):
     stage: int = Field(ge=1, le=6)
     payload: dict = Field(default_factory=dict)
+
+
+@router.get("/character/prebuilts")
+def prebuilts_view(user: User = Depends(require_user)) -> list[dict]:
+    """Standard prebuilt hero sheets a new game can start from."""
+    return prebuilt.list_heroes()
+
+
+@router.post("/character/prebuilts/{hero_id}/apply")
+def prebuilt_apply(
+    hero_id: str,
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Take a prebuilt hero as this campaign's character (bypasses the wizard)."""
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    try:
+        hero = prebuilt.get_hero(hero_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"no prebuilt hero {hero_id!r}"
+        )
+    if session.state.pc.get("created"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="character already created"
+        )
+    draft = hero.build_creation_state()
+    session.state.creation = json.loads(draft.to_json())
+    try:
+        applied = creation.apply_creation(db, campaign.id, session.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    session.checkpoint(db, "")
+    return applied
 
 
 @router.get("/character/creation")

@@ -401,6 +401,39 @@ Promise<{ ok: boolean; error?: string }> {
   return { ok: true };
 }
 
+/** Standard prebuilt hero sheets (choose-your-hero step) + apply. */
+export interface PrebuiltHeroDoc {
+  id: string;
+  name: string;
+  class: string;
+  blurb: string;
+  pronouns: string;
+  age_range: string;
+  homeland: string;
+  appearance: string;
+  background: string;
+  background_grants: Record<string, unknown>;
+  drives: string[];
+  attributes: Record<string, number>;
+  skills: string[];
+  traits: string[];
+}
+
+export async function listPrebuiltsApi(): Promise<PrebuiltHeroDoc[] | null> {
+  const r = await authJson<PrebuiltHeroDoc[]>("/character/prebuilts");
+  return Array.isArray(r) ? r : null;
+}
+
+export async function applyPrebuiltApi(id: string): Promise<{ ok: boolean; error?: string }> {
+  const r = await authJson<{ __error?: string }>(
+    `/character/prebuilts/${encodeURIComponent(id)}/apply`,
+    { method: "POST", body: "{}" }
+  );
+  if (r === null) return { ok: false, error: "The chronicler is not reachable — try again while the backend is awake." };
+  if (r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true };
+}
+
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),

@@ -44,6 +44,20 @@ BACKGROUNDS: dict[str, dict] = {
         "equipment": ["healer's kit", "herb pouch"],
         "hooks": ["a patient who never woke"],
     },
+    "Road Warden": {
+        "skills": ["Tracking", "Foraging"],
+        "contacts": ["a warden captain at the watchtower"],
+        "knowledge": ["the northern road and its weather"],
+        "equipment": ["trail cloak", "yew bow"],
+        "hooks": ["a beacon you were meant to watch"],
+    },
+    "Wandering Player": {
+        "skills": ["Persuasion", "Insight"],
+        "contacts": ["a troupe master in Ravenford"],
+        "knowledge": ["old songs and older rumours"],
+        "equipment": ["a patched lute", "a purse of borrowed coin"],
+        "hooks": ["a patron's debt come due"],
+    },
 }
 
 RESOLVE_USES: tuple[str, ...] = ("reroll_check", "resist_fear", "push_exhaustion", "activate_ability")

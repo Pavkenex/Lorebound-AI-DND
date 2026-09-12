@@ -1,11 +1,20 @@
 "use client";
-// Character creation: 6-stage wizard over /character/creation (t_42372415).
+// Character creation: choose a standard prebuilt hero or build your own (t_e71475f8).
+// The custom path is the 6-stage wizard over /character/creation (t_42372415).
 // Identity -> Background -> Drives -> Attributes -> Skills & Traits -> Review.
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { advanceCreationApi, commitCreationApi, creationStateApi, getToken, type CreationStateDoc } from "../../lib/api";
+import { advanceCreationApi, applyPrebuiltApi, commitCreationApi, creationStateApi, getToken, listPrebuiltsApi, type CreationStateDoc, type PrebuiltHeroDoc } from "../../lib/api";
 import { uiBlip } from "../../lib/audio";
+
+const ATTR_ABBR: Record<string, string> = {
+  Might: "Mgt", Agility: "Agi", Intellect: "Int", Awareness: "Awa", Will: "Wil", Presence: "Pre",
+};
+
+function attrLine(attributes: Record<string, number>): string {
+  return Object.entries(attributes).map(([k, v]) => `${ATTR_ABBR[k] ?? k.slice(0, 3)} ${v}`).join(" · ");
+}
 
 export default function CreatePage() {
   const router = useRouter();
@@ -13,6 +22,11 @@ export default function CreatePage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Choose-your-hero step: prebuilt standard sheets or the free-form wizard.
+  const [prebuilts, setPrebuilts] = useState<PrebuiltHeroDoc[] | null | undefined>(undefined);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"choose" | "custom">("choose");
 
   // Stage drafts
   const [name, setName] = useState("");
@@ -52,6 +66,24 @@ export default function CreatePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!getToken()) return;
+    void listPrebuiltsApi().then((h) => setPrebuilts(h));
+  }, []);
+
+  async function takeHero(hero: PrebuiltHeroDoc) {
+    setApplyingId(hero.id);
+    setChoiceError(null);
+    const r = await applyPrebuiltApi(hero.id);
+    if (!r.ok) {
+      setApplyingId(null);
+      setChoiceError(r.error ?? "The ledger refused the hero.");
+      return;
+    }
+    uiBlip(880);
+    router.push("/adventure");
+  }
 
   function toggle(list: string[], set: (v: string[]) => void, item: string) {
     set(list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
@@ -106,6 +138,51 @@ export default function CreatePage() {
           <Link className="btn" href="/character" prefetch>See the character</Link>
           <Link className="btn btn-ghost" href="/adventure" prefetch>Back to the road</Link>
         </div>
+      </div>
+    );
+  }
+
+  // Fresh campaign: the choose-your-hero step comes before the wizard.
+  const fresh = doc.stage === 1 && Object.keys(doc.data ?? {}).length === 0;
+  if (fresh && mode === "choose") {
+    return (
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: 16 }}>
+        <h1>Choose your hero</h1>
+        <p className="sys">
+          Take a standard hero from the roll of names, or forge your own in the six-stage ledger.
+        </p>
+        {choiceError && <div className="error-banner" role="alert"><strong>The ink blotted —</strong> {choiceError}</div>}
+        {prebuilts === undefined && <p className="sys">Unrolling the roll of heroes…</p>}
+        {prebuilts === null && (
+          <p className="sys">
+            The roll of heroes could not be reached. <button className="entity" onClick={() => setMode("custom")}>Forge your own instead</button>.
+          </p>
+        )}
+        {Array.isArray(prebuilts) && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12 }}>
+            {prebuilts.map((h) => (
+              <section className="parchment card" key={h.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <h3 style={{ margin: 0 }}>{h.name}</h3>
+                <p className="sys" style={{ margin: 0 }}>{h.class} · {h.pronouns} · {h.background}</p>
+                <p style={{ margin: "4px 0" }}>{h.blurb}</p>
+                <p className="sys" style={{ margin: 0 }} aria-label={`${h.name} attributes`}>{attrLine(h.attributes)}</p>
+                <p className="sys" style={{ margin: 0 }}>Drives: {h.drives.join(" · ")}</p>
+                <p className="sys" style={{ margin: 0 }}>Skills: {h.skills.join(", ")}</p>
+                <button
+                  className="btn"
+                  style={{ marginTop: "auto" }}
+                  disabled={applyingId !== null}
+                  onClick={() => void takeHero(h)}
+                >
+                  {applyingId === h.id ? "The ink dries…" : `✦ Take this hero — ${h.name}`}
+                </button>
+              </section>
+            ))}
+          </div>
+        )}
+        <p style={{ marginTop: 16 }}>
+          <button className="btn btn-ghost" onClick={() => setMode("custom")}>✎ Forge my own hero — the six-stage ledger</button>
+        </p>
       </div>
     );
   }

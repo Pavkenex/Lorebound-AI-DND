@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LAST_SAVE_KEY, RESUME_KEY, getCampaignId, ensureCampaign } from "../lib/api";
+import { LAST_SAVE_KEY, RESUME_KEY, creationStateApi, getCampaignId, ensureCampaign } from "../lib/api";
 import { useStore } from "../lib/store";
 
 interface Resume { label: string; at: string; saveId: string }
@@ -36,9 +36,14 @@ export default function MenuPage() {
       localStorage.setItem(RESUME_KEY, JSON.stringify({ label: "A new road from Ravenford", at: new Date().toISOString(), saveId: "", campaignId: getCampaignId() }));
       localStorage.removeItem(LAST_SAVE_KEY);
     } catch { /* ignore */ }
-    // Live play when signed in + backend up: make sure a campaign exists first
-    // (best-effort; offline play falls back to the fixture chronicle).
-    void ensureCampaign().then(() => router.push("/adventure"));
+    // Live play when signed in + backend up: make sure a campaign exists first,
+    // then send campaigns without a hero through the choose-your-hero step
+    // (prebuilt sheets or the six-stage wizard) before the road (t_e71475f8).
+    void ensureCampaign().then(async (cid) => {
+      if (!cid) { router.push("/adventure"); return; }
+      const doc = await creationStateApi();
+      router.push(doc && !doc.applied ? "/create" : "/adventure");
+    });
   }
 
   return (
