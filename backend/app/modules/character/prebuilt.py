@@ -84,7 +84,7 @@ class PrebuiltHero:
 PREBUILTS: tuple[PrebuiltHero, ...] = (
     PrebuiltHero(
         id="knight",
-        name="Ser Aldric Vane",
+        name="Aldric Vane",
         klass="Knight",
         blurb="A seasoned blade who mustered out of the king's war; holds the line so others don't have to.",
         pronouns="he/him",

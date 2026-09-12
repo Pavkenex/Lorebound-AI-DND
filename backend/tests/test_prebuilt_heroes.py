@@ -110,11 +110,11 @@ def test_apply_endpoint_sets_the_live_character(client):
     assert r.status_code == 200, r.text
     doc = r.json()
     assert doc["applied"] is True
-    assert doc["character"]["name"] == "Ser Aldric Vane"
+    assert doc["character"]["name"] == "Aldric Vane"
     assert doc["character"]["created"] is True
 
     state = client.get("/state", headers=headers).json()
-    assert state["character"]["name"] == "Ser Aldric Vane"
+    assert state["character"]["name"] == "Aldric Vane"
 
     creation = client.get("/character/creation", headers=headers).json()
     assert creation["applied"] is True

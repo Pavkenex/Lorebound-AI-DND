@@ -30,7 +30,7 @@ export default function CharacterPage() {
       </header>
 
       <section className="parchment card" style={{ marginTop: 12 }} aria-label="Background">
-        <h2>How she came to the road</h2>
+        <h2>How they came to the road</h2>
         <p style={{ fontStyle: "italic" }}>{c.background}</p>
       </section>
 
@@ -47,7 +47,7 @@ export default function CharacterPage() {
           <p>{c.conditions.map((x) => <span className="tag red" key={x}>{x}</span>)}</p>
         </section>
         <section className="parchment card" aria-label="Attributes">
-          <h2>What she is like</h2>
+          <h2>What they are like</h2>
           <dl className="kv">
             {Object.entries(c.attributes).map(([k, v]) => (
               <div key={k} style={{ display: "contents" }}><dt>{k}</dt><dd>{v} <span className="sys">{flavour(k, v as number)}</span></dd></div>
@@ -60,9 +60,9 @@ export default function CharacterPage() {
 
       <div className="grid2" style={{ marginTop: 12 }}>
         <section className="parchment card" aria-label="Drives">
-          <h2>What pulls her forward</h2>
+          <h2>What pulls them forward</h2>
           <ul>{c.drives.map((d) => <li key={d}>{d}</li>)}</ul>
-          <h2>What she has done</h2>
+          <h2>What they have done</h2>
           <ul>{c.achievements.map((a) => <li key={a}>{a}</li>)}</ul>
         </section>
         <section className="parchment card" aria-label="Relationships and equipment">
