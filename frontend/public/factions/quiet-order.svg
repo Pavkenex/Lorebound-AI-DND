@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Order of the Quiet Bell sigil">
+  <circle cx="64" cy="64" r="60" fill="#1a1626" stroke="#c9a227" stroke-width="4"/>
+  <g fill="none" stroke="#e8e2d0" stroke-width="5" stroke-linecap="round">
+    <path d="M64 30 C46 30 40 52 40 66 H88 C88 52 82 30 64 30 Z"/>
+    <line x1="56" y1="30" x2="56" y2="22"/>
+    <line x1="72" y1="30" x2="72" y2="22"/>
+    <line x1="48" y1="22" x2="80" y2="22"/>
+  </g>
+  <circle cx="64" cy="78" r="7" fill="#e8c766"/>
+  <path d="M34 96 Q64 86 94 96" stroke="#c9a227" stroke-width="4" fill="none" stroke-linecap="round"/>
+</svg>

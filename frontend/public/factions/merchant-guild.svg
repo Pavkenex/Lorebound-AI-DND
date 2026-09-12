@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ashen Merchant Guild sigil">
+  <circle cx="64" cy="64" r="60" fill="#171208" stroke="#c9a227" stroke-width="4"/>
+  <g stroke="#e8c766" stroke-width="5" stroke-linecap="round" fill="none">
+    <line x1="64" y1="28" x2="64" y2="44"/>
+    <line x1="40" y1="52" x2="88" y2="52"/>
+    <path d="M40 52 L28 92 M88 52 L100 92 M36 76 H92"/>
+    <circle cx="64" cy="22" r="5" fill="#e8c766" stroke="none"/>
+  </g>
+  <circle cx="52" cy="92" r="6" fill="none" stroke="#e8c766" stroke-width="4"/>
+  <circle cx="76" cy="92" r="6" fill="none" stroke="#e8c766" stroke-width="4"/>
+</svg>

@@ -12,13 +12,34 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
 import {
-  ICONS_ATLAS,
-  ICONS_ATLAS_URL,
   PORTRAIT_ATLAS,
   PORTRAIT_ATLAS_SIZE,
   PORTRAIT_ATLAS_URL,
   portraitIdForName,
 } from "../lib/atlas";
+
+const FACTION_IDS = ["merchant-guild", "quiet-order", "town-watch"] as const;
+
+function factionIdFor(faction: string): string | null {
+  const slug = faction
+    .toLowerCase()
+    .replace(/^(the|order of|ashen)\s+/g, "")
+    .replace(/[^a-z]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const alias: Record<string, string> = {
+    guild: "merchant-guild",
+    merchant: "merchant-guild",
+    ashen: "merchant-guild",
+    order: "quiet-order",
+    bell: "quiet-order",
+    quiet: "quiet-order",
+    watch: "town-watch",
+    town: "town-watch",
+    sergeant: "town-watch",
+  };
+  if ((FACTION_IDS as readonly string[]).includes(slug)) return slug;
+  return alias[slug.split("-")[0]] ?? null;
+}
 
 export function SceneArt({ scene, label }: { scene: string; label: string }) {
   const { hideArtwork, reducedMotion } = useStore();
@@ -190,10 +211,10 @@ export function AtlasPortrait({
 }
 
 /**
- * One sigil of icons-atlas.png. Knows coordinates from lib/atlas.ts —
- * the PNG itself is built later by scripts/build-atlas.py from
- * public/factions/*.png. Until then falls back to the individual file,
- * then a gold initial.
+ * Standalone faction sigil — its own file per faction, NOT a cell in the
+ * portrait atlas. Resolution: generated PNG if the image agent landed one,
+ * else the checked-in SVG. Positioned separately by the caller (badge corner
+ * via PortraitWithSigil, or inline next to a faction name).
  */
 export function FactionSigil({
   faction,
@@ -202,12 +223,10 @@ export function FactionSigil({
   faction: string;
   size?: number;
 }) {
-  const id = faction.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-+|-+$/g, "");
-  const cell = ICONS_ATLAS[id];
-  const [imgFailed, setImgFailed] = useState(false);
-  useEffect(() => setImgFailed(false), [id]);
-  if (!cell) return null;
-  const scale = size / cell.w;
+  const id = factionIdFor(faction);
+  const [pngFailed, setPngFailed] = useState(false);
+  useEffect(() => setPngFailed(false), [faction]);
+  if (!id) return null;
   return (
     <div
       role="img"
@@ -218,39 +237,44 @@ export function FactionSigil({
         borderRadius: "50%", border: "1px solid #c9a227", background: "#171208", flex: "none",
       }}
     >
-      <span
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={pngFailed ? `/factions/${id}.svg` : `/factions/${id}.png`}
+        alt=""
         aria-hidden="true"
-        style={{
-          position: "absolute", inset: 0, display: "flex", alignItems: "center",
-          justifyContent: "center", color: "#e8c766", fontFamily: "Georgia,serif",
-          fontSize: size * 0.4, fontVariant: "small-caps",
-        }}
-      >
-        {faction[0]?.toUpperCase()}
-      </span>
-      {!imgFailed && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={`/factions/${id}.png`}
-          alt=""
-          aria-hidden="true"
-          loading="lazy"
-          onError={() => setImgFailed(true)}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      )}
-      {imgFailed && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute", inset: 0, borderRadius: "50%",
-            backgroundImage: `url(${ICONS_ATLAS_URL})`,
-            backgroundPosition: `-${cell.x * scale}px -${cell.y * scale}px`,
-            backgroundSize: `${384 * scale}px auto`,
-            backgroundRepeat: "no-repeat",
-          }}
-        />
-      )}
+        loading="lazy"
+        onError={() => setPngFailed(true)}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Portrait + separately-positioned faction badge. The sigil is a layout
+ * overlay (bottom-right), never baked into the portrait pixels, so the
+ * portrait atlas stays faction-agnostic and swappable.
+ */
+export function PortraitWithSigil({
+  name,
+  hue,
+  faction,
+  size = 72,
+  sigilSize,
+}: {
+  name: string;
+  hue: number;
+  faction: string;
+  size?: number;
+  sigilSize?: number;
+}) {
+  const badge = sigilSize ?? Math.round(size * 0.42);
+  return (
+    <div style={{ position: "relative", width: size, height: size, flex: "none" }}>
+      <Portrait name={name} hue={hue} size={size} />
+      <div style={{ position: "absolute", right: -4, bottom: -4 }}>
+        <FactionSigil faction={faction} size={badge} />
+      </div>
     </div>
   );
 }

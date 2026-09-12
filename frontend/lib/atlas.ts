@@ -35,13 +35,9 @@ export const PORTRAIT_ATLAS: Record<string, AtlasCell> = {
   "sister-pell": { x: 512, y: 768, w: 256, h: 256 },
 };
 
-export const ICONS_ATLAS_URL = "/atlas/icons-atlas.png";
-
-export const ICONS_ATLAS: Record<string, AtlasCell> = {
-  "merchant-guild": { x: 0, y: 0, w: 128, h: 128 },
-  "quiet-order": { x: 128, y: 0, w: 128, h: 128 },
-  "town-watch": { x: 256, y: 0, w: 128, h: 128 },
-};
+// Faction sigils are standalone files in public/factions/ (one SVG/PNG per
+// faction), intentionally NOT atlased — they overlay portraits via
+// PortraitWithSigil and render next to faction names.
 
 /** Normalize a display name ("Sella Voss", "Sergeant Dain") to an atlas id. */
 export function portraitIdForName(name: string): string {

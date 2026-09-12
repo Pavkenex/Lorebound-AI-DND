@@ -7,11 +7,10 @@ Usage:
 
 Reads:
     public/portraits/<id>.png        (256x256, 12 NPCs + kaelis/bram/sister-pell)
-    public/factions/<id>.png         (128x128, merchant-guild/quiet-order/town-watch)
 Writes:
-    public/atlas/portraits-atlas.png (1024x1024, 4 cols x 3 rows of NPCs)
-    public/atlas/icons-atlas.png     (384x128, 3 faction sigils in a row)
-Manifests (coords) are owned by lib/atlas.ts + public/atlas/*.json — this
+    public/atlas/portraits-atlas.png (1024x768, 4 cols x 3 rows of NPCs)
+Faction sigils are standalone (public/factions/*.svg/PNG) and NOT atlased.
+Manifest coords are owned by lib/atlas.ts + public/atlas/*.json — this
 script only composites pixels, never edits coordinates.
 """
 from __future__ import annotations
@@ -37,7 +36,6 @@ _RESAMPLE = _resample()
 
 ROOT = Path(__file__).resolve().parent.parent
 PORTRAITS_DIR = ROOT / "public" / "portraits"
-FACTIONS_DIR = ROOT / "public" / "factions"
 ATLAS_DIR = ROOT / "public" / "atlas"
 
 PORTRAIT_ORDER = [
@@ -45,7 +43,6 @@ PORTRAIT_ORDER = [
     "sergeant-dain", "wren", "brother-anselm", "mother-ilde",
     "corb", "fenn", "ossia", "elder-bran",
 ]
-ICON_ORDER = ["merchant-guild", "quiet-order", "town-watch"]
 
 
 def build_portraits() -> Path:
@@ -69,25 +66,6 @@ def build_portraits() -> Path:
     return out
 
 
-def build_icons() -> Path | None:
-    srcs = [(FACTIONS_DIR / f"{fid}.png") for fid in ICON_ORDER]
-    if not any(p.exists() for p in srcs):
-        print("no faction icons yet — skipping icons-atlas.png")
-        return None
-    out = ATLAS_DIR / "icons-atlas.png"
-    atlas = Image.new("RGBA", (384, 128), (0, 0, 0, 0))
-    for i, (fid, src) in enumerate(zip(ICON_ORDER, srcs)):
-        if not src.exists():
-            print(f"icon missing: {fid}")
-            continue
-        img = Image.open(src).convert("RGBA").resize((128, 128), _RESAMPLE)
-        atlas.paste(img, (i * 128, 0), img)
-    ATLAS_DIR.mkdir(parents=True, exist_ok=True)
-    atlas.save(out)
-    print(f"saved {out} (384x128)")
-    return out
-
-
 def main() -> None:
     check = "--check" in sys.argv
     if check:
@@ -101,7 +79,6 @@ def main() -> None:
         print("atlas manifest satisfied")
         return
     build_portraits()
-    build_icons()
 
 
 if __name__ == "__main__":
