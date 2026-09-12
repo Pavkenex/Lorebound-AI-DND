@@ -35,12 +35,21 @@ class ActIn(BaseModel):
 def _resolve_campaign(db: Session, user: User, campaign_id: str | None) -> Campaign:
     if campaign_id:
         return scope_campaign(db, user, campaign_id)
+    # Prefer the most recent active campaign; after the arc completes the
+    # campaign turns "completed" and free play continues there.
     campaign = (
         db.query(Campaign)
         .filter(Campaign.owner_user_id == user.id, Campaign.status == "active")
         .order_by(Campaign.created_at.desc())
         .first()
     )
+    if campaign is None:
+        campaign = (
+            db.query(Campaign)
+            .filter(Campaign.owner_user_id == user.id, Campaign.status != "archived")
+            .order_by(Campaign.created_at.desc())
+            .first()
+        )
     if campaign is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -97,5 +106,8 @@ def act(
     # Resolved state is committed (and checkpointed) before the response leaves,
     # so a dropped connection can never lose a resolved action.
     session.checkpoint(db, checkpoint or "")
+    if session.state.completed and campaign.status != "completed":
+        campaign.status = "completed"
+        db.commit()
     session.remember_action(db, key, response)
     return response

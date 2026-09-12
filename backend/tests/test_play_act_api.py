@@ -104,6 +104,11 @@ def test_talk_discovers_then_accepted_and_feed_grows(client: TestClient):
     st = _state(cid)
     kinds = [e["kind"] for e in st.feed]
     assert "system" in kinds and "dialogue" in kinds and "lead" in kinds
+    # The chronicle feed mirrors every action's response (reload reconstructs it):
+    # opening narration + one narration per action; the response dialogue lands too.
+    narrations = [e for e in st.feed if e["kind"] == "narration"]
+    assert len(narrations) >= 3
+    assert st.feed[-1]["kind"] == "dialogue"
     assert st.actions_taken == 2
 
 

@@ -31,6 +31,16 @@ CLUES: dict[str, str] = {
     "lanterns": "Lanterns moving through the trees after dark, timed to the monastery bells.",
 }
 
+#: The five solution paths (GDD §116): id -> display name. Each is gated by one
+#: slice skill; unlocking any one opens the confrontation.
+SOLUTIONS: dict[str, str] = {
+    "talk-it-out": "The Honest Plea",
+    "lean-on-them": "The Hard Stare",
+    "follow-the-clues": "The Ledger Trail",
+    "shadow-them": "The Night Watch",
+    "blades-out": "The Road Ambush",
+}
+
 #: Authored live protagonist default sheet (the chronicle's lead, as authored
 #: across the UI). Character creation (later stream) replaces this per campaign.
 DEFAULT_PC: dict[str, Any] = {
@@ -149,6 +159,15 @@ class PlayState:
         if clue_id in self.clues:
             return False
         self.clues.append(clue_id)
+        return True
+
+    def unlock_solution(self, solution_id: str) -> bool:
+        """Record the route that opens the confrontation. Returns True if new."""
+        if solution_id not in SOLUTIONS:
+            raise ValueError(f"unknown solution {solution_id!r}")
+        if self.solution_path is not None:
+            return False
+        self.solution_path = solution_id
         return True
 
     def append_feed(self, kind: str, **payload: Any) -> dict[str, Any]:

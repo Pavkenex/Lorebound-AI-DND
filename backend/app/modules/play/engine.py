@@ -20,6 +20,7 @@ from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play.session import PlaySession
+from app.modules.play.state import CLUES, SOLUTIONS
 from app.modules.play.view import npc_names
 from app.modules.rules.checks import (
     CheckRequest,
@@ -196,6 +197,118 @@ MONASTERY_NARRATION = (
     "silent in the towers but a lantern burns low at the porter's door."
 )
 
+# --- investigation, solutions, resolution (the arc) ------------------------
+
+TRACKS_SUCCESS = (
+    "You kneel where the mud still holds its shape. Two wheel-ruts leave the "
+    "monastery road at the lightning-bent oak — and they cut away toward the "
+    "deep forest, where no map of Ravenford admits a road at all. Guild-narrow "
+    "wheels, double-laden by the look of the rills: whatever came back "
+    "driverless, something heavier followed it in."
+)
+TRACKS_FAIL = (
+    "The rain has combed the last day's ruts to soup. Carts came and went — "
+    "that much the mud will swear to — but which way the last one turned, it "
+    "keeps to itself. Come at it fresh; the weather will hold long enough."
+)
+TRACKS_HINT = (
+    "The ruts are knee-deep and dumb. Without a story to follow they are only "
+    "mud — ask under the Lantern's roof what everyone else is trying not to "
+    "notice, and the road will start to make sense."
+)
+LANTERNS_SUCCESS = (
+    "You fold into the hollow of the woodline and wait the way a lamplighter's "
+    "daughter waits. Near the second bell, lights come swinging down through "
+    "the trees — three lanterns, one route, carried low and slow with weight. "
+    "They pass near enough to smell of tallow and wet wool, and they take the "
+    "wide path east where the ridge folds: the mouth of the old supply tunnel."
+)
+LANTERNS_FAIL = (
+    "You wait through one bell and two, until the cold owns the hollow and the "
+    "rain finds a way past your collar. Lanterns or fireflies, the trees keep "
+    "their business to themselves tonight."
+)
+LANTERNS_HINT = (
+    "The tree line is only dark, and dark is not yet evidence. Learn first "
+    "what the road has been swallowing, then watch what the night carries — "
+    "the two will start to rhyme."
+)
+SELLA_PERSUADE_SUCCESS = (
+    "Sella listens with the weariness of a woman who has heard every plea ever "
+    "made across that stall — and it is not the plea that lands. It is Marla's "
+    "name. She closes the ledger and looks up the road a long moment. \"The "
+    "guild rents the old monastery cellar — the one the order calls sealed. If "
+    "your two went up that road, they are under the hill. Go before the bells "
+    "ring again, and you never heard it here.\""
+)
+SELLA_PERSUADE_FAIL = (
+    "\"Guild business, love,\" she says, not unkindly, and slides the ledger "
+    "out from under your eyes. The kindness is real; so is the ledger."
+)
+SELLA_INTIMIDATE_SUCCESS = (
+    "Something in your stillness reaches her after all. Sella's own stillness "
+    "breaks first — she turns a page she is not reading. \"The cellar under "
+    "the monastery. The old one. Guild rent, guild carriers — and your "
+    "travelers still breathing, because the guild wants the road worried "
+    "about, not closed. That is all you get.\""
+)
+SELLA_INTIMIDATE_FAIL = (
+    "You are three words into the hard voice when two grey-gloved men find "
+    "reasons to stand behind her shoulders. Sella smiles the whole way. "
+    "Nothing is said that a magistrate could use."
+)
+AMBUSH_WIN = (
+    "They come up the road late with hooded lanterns and a hand-cart — Fenn "
+    "in front, a caravan guard twice your width behind. The fight is short and "
+    "muddy and ends with the guard sitting in the ditch reconsidering his "
+    "career. Fenn talks, because Fenn always talks: a cellar under the old "
+    "monastery, guild rent, and two travelers kept alive because a closed road "
+    "earns the guild more than an empty one. The tunnel mouth, he says, is "
+    "east where the ridge folds."
+)
+AMBUSH_LOSE = (
+    "The road is bad at this hour and worse at ambushes; you learn that with "
+    "your ribs. You wake at the Lantern Inn with linen bound tight and a "
+    "headache in your teeth. Marla says nothing about it, which is the loudest "
+    "thing she has ever said to you. The road keeps its carriers — for now."
+)
+CONFRONT_READY = (
+    "The tunnel mouth breathes cold and lamp oil. You go in low along the "
+    "wall, past stacked silver that nobody in Ravenford will ever admit to — "
+    "and there they are: the two travelers, rope-burned and hollow-eyed and "
+    "alive. You cut them loose before the bells ring again, and the hill lets "
+    "all three of you out into the rain."
+)
+EPILOGUE = (
+    "By dawn it is over Ravenford: the guild's sealed cellar, the rent ledger, "
+    "the two names the notice board had begun to forget. Sergeant Dain takes "
+    "Fenn's statement twice. Marla sets two extra cups on the bar and does not "
+    "charge for them. The travelers walk the north road with the rain finally "
+    "behind them — and the chronicle closes this chapter grieving for nothing."
+)
+CONFRONT_HINT = (
+    "You stand at the monastery's undercroft door and feel the cold through "
+    "your boots. Something below is worth the guild's money and the order's "
+    "silence — but you hold threads, not a way in. Someone knows it: a factor "
+    "with a ledger, a mercenary with a grudge, or the road itself. Finish one "
+    "of those threads first."
+)
+BORIN_TALK_NARRATION = (
+    "Borin does not look up from his cup, but for Borin the not-looking is "
+    "practically confidence — the way of a man deciding how much of a secret "
+    "he can afford to be careless with."
+)
+BORIN_TALK_LINE = (
+    "Carts. Turn north of the oak, nights, since Midwinter. Ask the woman with "
+    "the scales why the guild pays over rate for silver — then ask her where "
+    "the carts come back from. You did not hear it here."
+)
+CONFRONT_QUIET = (
+    "The undercroft is quiet now — a cold stair, a smell of lamp oil and rain. "
+    "Whatever the guild kept down here, the light and the law have both found "
+    "it. You do not need to go down again."
+)
+
 
 @dataclass
 class BeatOutcome:
@@ -229,6 +342,23 @@ _CELLAR = re.compile(r"cellar|trapdoor|cellars", re.I)
 _MARKET = re.compile(r"\bmarket\b|\bstalls?\b|\bshops?\b|sella", re.I)
 _MONASTERY = re.compile(r"monastery|chapel|anselm|beacon|monks?", re.I)
 
+# --- arc routing (solutions + resolution) -----------------------------------
+_SELLA = re.compile(r"\bsella\b|\bfactor\b|\bscales\b", re.I)
+_PERSUADE_RE = re.compile(r"\b(persuade|convince|charm|plead|plea|reason with|talk down|coax)\b", re.I)
+_INTIMIDATE_RE = re.compile(r"\b(intimidate|threaten|pressure|lean on|scare|strong-arm|cow)\b", re.I)
+_CONFRONT_RE = re.compile(
+    r"\b(confront|enter the cellar|into the cellar|cellar stairs|go down|descend|"
+    r"open the cellar|the passage|down into the dark|enter the tunnel|into the tunnel)\b",
+    re.I,
+)
+_AMBUSH_RE = re.compile(
+    r"\b(ambush|waylay|lie in wait|wait in ambush|strike first)\b|\b(attack|stop|rob)\b.*\b(carriers?|cart|wagons?)\b",
+    re.I,
+)
+_TRACKS_RE = re.compile(r"\b(tracks?|ruts?|wheel|wheels?|mud)\b", re.I)
+_LIGHTS_RE = re.compile(r"\b(lanterns?|lights?|bells?)\b", re.I)
+_WATCH_RE = re.compile(r"\b(watch|wait|follow|tail|shadow|observe|trail|stake out|keep watch)\b", re.I)
+
 
 def route(text: str) -> str:
     """Classify player text to a beat name (or ``pipeline`` fallback)."""
@@ -239,12 +369,26 @@ def route(text: str) -> str:
         return "steal"
     if _BORIN.search(t) and re.search(_FIGHT_V, t, re.I):
         return "fight"
+    if _PERSUADE_RE.search(t) and (_SELLA.search(t) or _BORIN.search(t)):
+        return "persuade"
+    if _INTIMIDATE_RE.search(t) and (_SELLA.search(t) or _BORIN.search(t)):
+        return "intimidate"
+    if _AMBUSH_RE.search(t):
+        return "ambush"
+    if _CONFRONT_RE.search(t):
+        return "confront"
+    if _TRACKS_RE.search(t) and re.search(_INSPECT_V + r"|\b(follow|study)\b", t, re.I):
+        return "clue_tracks"
+    if _LIGHTS_RE.search(t) and _WATCH_RE.search(t):
+        return "clue_lanterns"
     if _BOARD.search(t) and (re.search(_INSPECT_V, t, re.I) or not re.search(_TALK_V, t, re.I)):
         return "inspect_board"
     if _LEDGER.search(t) and (re.search(_INSPECT_V, t, re.I) or not re.search(_TALK_V, t, re.I)):
         return "inspect_ledger"
     if _CELLAR.search(t) and re.search(_INSPECT_V, t, re.I):
         return "inspect_cellar"
+    if _BORIN.search(t) and re.search(_TALK_V, t, re.I):
+        return "talk_borin"
     if _MARLA.search(t) and re.search(_TALK_V, t, re.I):
         return "talk"
     if _MARLA.search(t) and re.search(_INSPECT_V, t, re.I):
@@ -362,6 +506,17 @@ class ActEngine:
             "dialogue": outcome.dialogue,
             "newLeads": outcome.new_leads,
         }
+        # Mirror the response into the chronicle feed so a page reload
+        # reconstructs exactly what the player saw live.
+        if outcome.mechanics:
+            m = outcome.mechanics
+            self._feed("dice", roll={
+                "label": m["label"], "dice": m["roll"], "total": m["total"],
+                "detail": m.get("detail"), "d20": m.get("d20"), "outcome": m.get("outcome"),
+            })
+        self._narrate_event(outcome.narration)
+        for d in outcome.dialogue:
+            self._feed("dialogue", speaker=d["speaker"], text=d["line"])
         return response, checkpoint
 
     # -- beats ---------------------------------------------------------------
@@ -556,6 +711,253 @@ class ActEngine:
         st.location = "old-monastery"
         st.advance_minutes(25)
         return BeatOutcome(ack="You climb the monastery path.", narration=MONASTERY_NARRATION, kind="travel")
+
+    # -- arc beats: clues, solutions, resolution -----------------------------
+    def _unlock(self, solution_id: str) -> bool:
+        if self.state.unlock_solution(solution_id):
+            self._feed("system", text=f"❧ The way in — {SOLUTIONS[solution_id]}")
+            return True
+        return False
+
+    def _clue(self, clue_id: str) -> bool:
+        if self.state.find_clue(clue_id):
+            self._feed("system", text=f"❧ Clue found — {CLUES[clue_id]}")
+            return True
+        return False
+
+    def _maybe_open_ledger_trail(self) -> bool:
+        """Two or more clues together spell the route (investigation solution)."""
+        if len(self.state.clues) >= 2 and self.state.solution_path is None:
+            return self._unlock("follow-the-clues")
+        return False
+
+    def _beat_clue_tracks(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.note("inspected:road-ruts")
+        st.advance_minutes(10)
+        if st.location != "northern-road":
+            return BeatOutcome(
+                ack="You look for tracks.",
+                narration="The ruts worth reading are out on the Northern Road; here, the mud "
+                          "has better manners.",
+                kind="inspect",
+            )
+        if st.lead_stage == "unheard":
+            return BeatOutcome(ack="The mud is dumb.", narration=TRACKS_HINT, kind="inspect")
+        mech, result = self._check("perception", "Moderate", "Perception — the wagon ruts")
+        if self._succeeded(result):
+            self._clue("tracks")
+            self._advance_to("investigating")
+            self._maybe_open_ledger_trail()
+            return BeatOutcome(ack="You read the road.", narration=TRACKS_SUCCESS, kind="inspect", mechanics=mech)
+        return BeatOutcome(ack="The rain owns the road.", narration=TRACKS_FAIL, kind="inspect", mechanics=mech)
+
+    def _beat_clue_lanterns(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(30)
+        if st.location not in ("northern-road", "old-monastery"):
+            return BeatOutcome(
+                ack="You find a vantage.",
+                narration="The lights over the treeline are watched from the road or the "
+                          "monastery path; from here, every lantern is just a lantern.",
+                kind="inspect",
+            )
+        if st.lead_stage == "unheard":
+            return BeatOutcome(ack="The dark stays dark.", narration=LANTERNS_HINT, kind="inspect")
+        following = bool(re.search(r"\b(follow|tail|shadow)\b", text, re.I))
+        skill = "stealth" if following else "perception"
+        label = "Stealth — tailing the lantern-bearers" if following else "Perception — watching the treeline"
+        mech, result = self._check(skill, "Moderate", label)
+        if self._succeeded(result):
+            self._clue("lanterns")
+            self._advance_to("investigating")
+            if following:
+                self._unlock("shadow-them")
+            self._maybe_open_ledger_trail()
+            return BeatOutcome(ack="You keep still and count lanterns.", narration=LANTERNS_SUCCESS, kind="inspect", mechanics=mech)
+        return BeatOutcome(ack="The cold wins.", narration=LANTERNS_FAIL, kind="inspect", mechanics=mech)
+
+    def _beat_persuade(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(10)
+        if not _SELLA.search(text):
+            return self._beat_talk_borin(text)
+        if st.location != "market":
+            return BeatOutcome(
+                ack="You straighten your cuffs.",
+                narration="Sella Voss keeps to the guild's stall in the market — you would "
+                          "have to go to her, and be ready to be seen doing it.",
+                kind="talk",
+            )
+        if st.lead_stage == "unheard":
+            return BeatOutcome(
+                ack="You would not know what to ask.",
+                narration="You do not yet know enough to make anyone nervous — learn what "
+                          "the road has been swallowing first.",
+                kind="talk",
+            )
+        mech, result = self._check("persuasion", "Difficult", "Persuasion — Sella Voss")
+        out = BeatOutcome(ack="You make your case quietly.", narration=SELLA_PERSUADE_FAIL, kind="talk", mechanics=mech)
+        if self._succeeded(result):
+            self._advance_to("investigating")
+            self._unlock("talk-it-out")
+            out.narration = SELLA_PERSUADE_SUCCESS
+        return out
+
+    def _beat_intimidate(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(10)
+        if _SELLA.search(text):
+            if st.location != "market":
+                return BeatOutcome(
+                    ack="You set your jaw.",
+                    narration="You will have to go to the market for that. Making a guild "
+                              "factor nervous in her own stall is a thing done in person.",
+                    kind="talk",
+                )
+            if st.lead_stage == "unheard":
+                return BeatOutcome(
+                    ack="You would not know where to press.",
+                    narration="Threats without a question behind them are just noise. Learn "
+                              "the story first — then choose who sweats.",
+                    kind="talk",
+                )
+            mech, result = self._check("intimidation", "Difficult", "Intimidation — Sella Voss")
+            out = BeatOutcome(ack="You lean into the space between you.", narration=SELLA_INTIMIDATE_FAIL, kind="talk", mechanics=mech)
+            if self._succeeded(result):
+                self._advance_to("investigating")
+                self._unlock("lean-on-them")
+                out.narration = SELLA_INTIMIDATE_SUCCESS
+            return out
+
+        # Borin: he can be cowed (slice NPC: "backs down if beaten or cowed").
+        if st.location != "lantern-inn":
+            return BeatOutcome(ack="Borin is not here.", narration="Wherever Borin is drinking tonight, it is not here.", kind="talk")
+        if st.borin_down:
+            return BeatOutcome(
+                ack="Borin avoids your eye.",
+                narration="Borin is in no hurry to be reacquainted. He mutters something "
+                          "about carts turning north of the oak, and finds his cup suddenly "
+                          "fascinating.",
+                kind="talk",
+            )
+        mech, result = self._check("intimidation", "Moderate", "Intimidation — Borin")
+        if self._succeeded(result):
+            st.borin_down = True
+            st.note("cowed:borin")
+            return BeatOutcome(
+                ack="You lean in close.",
+                narration="You do not put a hand on him — you do not need to. You lean in "
+                          "close enough that the fire's crackle cannot cover your voice, and "
+                          "the mercenary who has fought for worse pay than this decides he "
+                          "has somewhere else to be. He mutters one thing on his way out.",
+                kind="talk",
+                mechanics=mech,
+                dialogue=[{"speaker": "Borin", "line": "Carts. North of the oak. That is all you get from me."}],
+            )
+        return BeatOutcome(
+            ack="You test the room.",
+            narration="Borin has been intimidated by professionals, and you are not, tonight, "
+                      "one of them. He grins into his cup and stays exactly where he is.",
+            kind="talk",
+            mechanics=mech,
+        )
+
+    def _beat_ambush(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(20)
+        if st.location != "northern-road":
+            return BeatOutcome(
+                ack="You pick your ground.",
+                narration="Ambushes happen on the road, and you are not on the road. The "
+                          "carriers come and go on the Northern Road after dark.",
+                kind="inspect",
+            )
+        if st.lead_stage != "investigating":
+            return BeatOutcome(
+                ack="The road is just road.",
+                narration="You could wait out here, but you do not yet know what is worth "
+                          "lying in wait for. Follow the threads first — the north road is "
+                          "where they will end up crossing.",
+                kind="inspect",
+            )
+        mech, result = self._check("swordsmanship", "Difficult", "Swordsmanship — the road carriers")
+        if self._succeeded(result):
+            st.note("fought:road-carriers")
+            self._unlock("blades-out")
+            return BeatOutcome(ack="Lanterns, then shouting.", narration=AMBUSH_WIN, kind="fight", mechanics=mech)
+        pc = st.pc
+        hp = pc.get("hp", {"cur": 10, "max": 10})
+        hp["cur"] = max(1, hp["cur"] - (9 if result.outcome == Outcome.CriticalFailure else 6))
+        pc["hp"] = hp
+        st.note("fought:road-carriers")
+        st.location = "lantern-inn"
+        return BeatOutcome(ack="The mud gets its say.", narration=AMBUSH_LOSE, kind="fight", mechanics=mech)
+
+    def _beat_talk_borin(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.note("talked:borin")
+        st.advance_minutes(5)
+        if st.location != "lantern-inn":
+            return BeatOutcome(ack="You look for Borin.", narration="Wherever Borin is drinking tonight, it is not here.", kind="talk")
+        if st.borin_down:
+            return BeatOutcome(
+                ack="Borin eyes you over his bruises.",
+                narration="Borin is on the porch, reconsidering his choices and his jaw. He "
+                          "does not have a lot to say to you. He does, however, still have "
+                          "the grudge — which is halfway to a rumour.",
+                kind="talk",
+                dialogue=[{"speaker": "Borin", "line": "Carts. North of the oak. That is all you get from me, broken ribs and all."}],
+            )
+        return BeatOutcome(
+            ack="Borin warms to his theme.",
+            narration=BORIN_TALK_NARRATION,
+            kind="talk",
+            dialogue=[{"speaker": "Borin", "line": BORIN_TALK_LINE}],
+        )
+
+    def _beat_confront(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(20)
+        if st.completed:
+            return BeatOutcome(ack="The undercroft is quiet.", narration=CONFRONT_QUIET, kind="resolve")
+        if st.location == "lantern-inn":
+            return BeatOutcome(
+                ack="You consider the inn's cellar door.",
+                narration="The inn's cellar holds barrels and salt and one padlocked door that "
+                          "the old gripes say goes further than it should — but the guild's "
+                          "business is not kept under Marla's feet. Whatever is below, it is "
+                          "below the old monastery. The road goes there when you do.",
+                kind="inspect",
+            )
+        if st.location != "old-monastery":
+            return BeatOutcome(
+                ack="You would need to get there first.",
+                narration="The cold you are after comes from under the Old Monastery. The "
+                          "monastery path leaves Ravenford along the north road, past the "
+                          "oak.",
+                kind="inspect",
+            )
+        if st.solution_path is None:
+            return BeatOutcome(ack="You weigh the door.", narration=CONFRONT_HINT, kind="inspect")
+        # Resolution: the travelers come out, the arc completes.
+        self._advance_to("solved")
+        st.travelers_freed = True
+        st.completed = True
+        st.note("resolved:travelers")
+        st.pc.setdefault("achievements", []).append(f"Freed the missing travelers (Day {st.day})")
+        return BeatOutcome(
+            ack="You go down into the cold.",
+            narration=CONFRONT_READY,
+            kind="resolve",
+            dialogue=[
+                {
+                    "speaker": "The elder traveler",
+                    "line": "You came. Nobody came for three nights. We had started to think the road forgot us too.",
+                },
+                {"speaker": "The chronicler", "line": EPILOGUE},
+            ],
+        )
 
     # -- Marla's memory greeting --------------------------------------------
     _GREETING_TEMPLATES = (
