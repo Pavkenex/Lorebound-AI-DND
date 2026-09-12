@@ -2,11 +2,23 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Lorebound", version="0.1.0")
+from app.core.schema import ensure_schema
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # A fresh SQLite file or compose Postgres has no tables yet; make the game
+    # playable out of the box (create_all is idempotent; Alembic owns evolution).
+    ensure_schema()
+    yield
+
+
+app = FastAPI(title="Lorebound", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
