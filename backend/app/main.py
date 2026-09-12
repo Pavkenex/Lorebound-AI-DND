@@ -50,5 +50,11 @@ try:  # Saves API: campaign save slots (list/create/fetch).
     from app.modules.campaign.saves_api import router as saves_router
 
     app.include_router(saves_router)
-except Exception:  # saves stream not landed yet; core app still boots
+except Exception:  # pragma: no cover - saves stream not landed yet
+    pass
+try:  # Live play: campaign lifecycle (create/list) + engine-backed play endpoints.
+    from app.modules.campaign.api import router as campaigns_router
+
+    app.include_router(campaigns_router)
+except Exception:  # pragma: no cover - live stream not landed yet
     pass

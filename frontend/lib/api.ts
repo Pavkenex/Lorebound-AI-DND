@@ -204,6 +204,65 @@ export async function registerApi(email: string, password: string, displayName: 
   }
 }
 
+export interface CampaignRow {
+  id: string;
+  name: string;
+  seed_key: string;
+  status: string;
+  created_at?: string | null;
+}
+
+/** Best-effort campaign lookup. Returns null when offline or not signed in. */
+export async function listCampaigns(): Promise<CampaignRow[] | null> {
+  if (!getToken()) return null;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(`${BASE}/campaigns`, { signal: ctl.signal, headers: authHeaders() });
+    if (!res.ok) return null;
+    const data = (await res.json()) as CampaignRow[];
+    return Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** Ensure the signed-in player has a campaign; returns its id or null (offline). */
+export async function ensureCampaign(name?: string): Promise<string | null> {
+  if (!getToken()) return null;
+  try {
+    const list = await listCampaigns();
+    if (list === null) return null;
+    const current = getCampaignId();
+    const match = list.find((c) => c.id === current) ?? list[0];
+    if (match) {
+      setCampaignId(match.id);
+      return match.id;
+    }
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const res = await fetch(`${BASE}/campaigns`, {
+        method: "POST",
+        signal: ctl.signal,
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(name ? { name } : {}),
+      });
+      if (!res.ok) return null;
+      const created = (await res.json()) as CampaignRow;
+      if (!created?.id) return null;
+      setCampaignId(created.id);
+      return created.id;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return null;
+  }
+}
+
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),

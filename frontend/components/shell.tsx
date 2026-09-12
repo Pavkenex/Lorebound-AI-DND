@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { StoreProvider, useStore } from "../lib/store";
 import { useAmbient } from "../lib/audio";
+import { getToken } from "../lib/api";
 import { CostBadge } from "./widgets";
 
 const LINKS: [string, string][] = [
@@ -25,6 +26,16 @@ function AmbientDriver() {
   const { ambient, muted } = useStore();
   useAmbient(ambient, muted);
   return null;
+}
+
+function AccountLink() {
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => setSignedIn(!!getToken()), []);
+  return (
+    <Link href="/login" prefetch title={signedIn ? "Your account and saves" : "Sign in or register"}>
+      {signedIn ? "Account" : "Sign in"}
+    </Link>
+  );
 }
 
 function Nav() {
@@ -61,7 +72,10 @@ function Nav() {
           </Link>
         ))}
       </span>
-      <span style={{ marginLeft: "auto" }}><CostBadge /></span>
+      <span style={{ marginLeft: "auto", display: "inline-flex", gap: 12, alignItems: "center" }}>
+        <AccountLink />
+        <CostBadge />
+      </span>
     </nav>
   );
 }
