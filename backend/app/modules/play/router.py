@@ -18,7 +18,7 @@ from app.modules.auth.deps import require_user, scope_campaign
 from app.modules.auth.models import User
 from app.modules.campaign.models import Campaign
 from app.modules.narrator.prefs import ContentPrefs
-from app.modules.play import screens
+from app.modules.play import creation, screens
 from app.modules.play.engine import ActEngine
 from app.modules.play.session import PlaySession
 from app.modules.play.view import game_state_payload
@@ -150,6 +150,57 @@ def companions_view(
     campaign = _resolve_campaign(db, user, campaign_id)
     session = PlaySession.load(db, campaign.id)
     return screens.companions_payload(session.state)
+
+
+class AdvanceIn(BaseModel):
+    stage: int = Field(ge=1, le=6)
+    payload: dict = Field(default_factory=dict)
+
+
+@router.get("/character/creation")
+def creation_state(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """6-stage creation draft for this campaign + the catalogs the wizard renders."""
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return {"options": creation.options(), **creation.get_creation(session.state)}
+
+
+@router.post("/character/creation/advance")
+def creation_advance(
+    body: AdvanceIn,
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    try:
+        payload = creation.advance_creation(session.state, body.stage, body.payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    session.checkpoint(db, "")
+    return payload
+
+
+@router.post("/character/creation/commit")
+def creation_commit(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Apply the reviewed draft: DB character rows + the live play sheet."""
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    try:
+        applied = creation.apply_creation(db, campaign.id, session.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    session.checkpoint(db, "")
+    return applied
 
 
 @router.post("/act")

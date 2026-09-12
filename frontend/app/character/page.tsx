@@ -20,7 +20,7 @@ export default function CharacterPage() {
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
-      <p className="sys">The person of the chronicle{live ? "" : " · local pages (backend unreachable)"}</p>
+      <p className="sys">The person of the chronicle{live ? "" : " · local pages (backend unreachable)"} <span>· <a href="/create">Forge anew</a></span></p>
       <header className="parchment card" style={{ display: "flex", gap: 18, alignItems: "center" }}>
         <Portrait name={c.name} hue={c.portraitHue} size={96} />
         <div>

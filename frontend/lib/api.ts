@@ -276,6 +276,66 @@ export async function ensureCampaign(name?: string): Promise<string | null> {
   }
 }
 
+export interface CreationOptions {
+  stages: string[];
+  backgrounds: { name: string; grants: Record<string, unknown> }[];
+  age_ranges: string[];
+  attributes: { names: string[]; min: number; max: number; default: number; pool: number };
+  skills: string[];
+  traits: string[];
+}
+
+export interface CreationStateDoc {
+  options: CreationOptions;
+  stage: number;
+  complete: boolean;
+  applied: boolean;
+  data: Record<string, Record<string, unknown>>;
+}
+
+async function authJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+  if (!getToken()) return null;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...init,
+      signal: ctl.signal,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...(init?.headers ?? {}) },
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { __error: (body as { detail?: string } | null)?.detail ?? `HTTP ${res.status}` } as T;
+    return body as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function creationStateApi(): Promise<CreationStateDoc | null> {
+  return authJson<CreationStateDoc>("/character/creation");
+}
+
+export async function advanceCreationApi(stage: number, payload: Record<string, unknown>):
+Promise<{ ok: boolean; error?: string; state?: CreationStateDoc }> {
+  const r = await authJson<CreationStateDoc & { __error?: string }>("/character/creation/advance", {
+    method: "POST",
+    body: JSON.stringify({ stage, payload }),
+  });
+  if (r === null) return { ok: false, error: "The chronicler is not reachable — try again while the backend is awake." };
+  if (("__error" in r) && r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true, state: r };
+}
+
+export async function commitCreationApi():
+Promise<{ ok: boolean; error?: string }> {
+  const r = await authJson<{ __error?: string }>("/character/creation/commit", { method: "POST", body: "{}" });
+  if (r === null) return { ok: false, error: "The chronicler is not reachable — try again while the backend is awake." };
+  if (r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true };
+}
+
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),

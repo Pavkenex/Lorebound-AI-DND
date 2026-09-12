@@ -154,6 +154,14 @@ def advance(state: CreationState, stage: int, payload: dict) -> CreationState:
     return state
 
 
+def review(state: CreationState) -> CreationState:
+    """Accept the review stage (6): the draft is ready to commit."""
+    if state.stage != len(STAGES):
+        raise ValueError(f"review requires stage {len(STAGES)}; currently at {state.stage}")
+    state.stage = len(STAGES) + 1
+    return state
+
+
 def is_complete(state: CreationState) -> bool:
     return state.stage > len(STAGES)
 

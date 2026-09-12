@@ -125,6 +125,9 @@ class PlayState:
     #: Locations the player has actually stood in (map/journal reveal).
     visited: list[str] = field(default_factory=lambda: ["lantern-inn"])
 
+    #: In-flight 6-stage character creation draft: {"stage": int, "data": {...}}.
+    creation: dict[str, Any] = field(default_factory=dict)
+
     # ------------------------------------------------------------------ api
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)

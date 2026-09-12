@@ -72,6 +72,9 @@ export default function MenuPage() {
         <Link className="btn btn-ghost" style={{ padding: "12px" }} href="/tutorial" prefetch>
           {tutorialDone ? "❖ Revisit the Tutorial" : "❖ Begin with the Tutorial"}
         </Link>
+        <Link className="btn btn-ghost" style={{ padding: "12px" }} href="/create" prefetch>
+          ✦ Forge your own hero
+        </Link>
       </nav>
 
       <p className="sys" style={{ marginTop: 24 }}>
