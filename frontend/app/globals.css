@@ -181,3 +181,24 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
   border: 1px solid var(--gold); background: #1d1607; color: var(--gold-hi);
   border-radius: 6px; padding: 8px 14px; margin: 8px 0; font-variant: small-caps; letter-spacing: 0.06em;
 }
+
+/* route skeletons */
+.skel {
+  border-radius: 6px;
+  background: linear-gradient(100deg, #241d14 30%, #332917 50%, #241d14 70%);
+  background-size: 200% 100%;
+  animation: skel 1.4s ease-in-out infinite;
+  border: 1px solid var(--line);
+}
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* visible focus everywhere (keyboard players) */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--gold-hi); outline-offset: 2px; border-radius: 4px;
+}
+
+/* honour the OS when the player hasn't chosen */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

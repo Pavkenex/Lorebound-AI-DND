@@ -92,6 +92,20 @@ export const fixtures = {
     { name: "Bram Holloway", role: "Woodsman", note: "Laughs at danger, cries at songs. Bleeding loyalty since Day 2.", hue: 120 },
     { name: "Sister Pell", role: "Runaway novice", note: "Knows the monastery's back stair. Won't say how.", hue: 280 },
   ],
+  tutorial: {
+    id: "tutorial",
+    title: "A Ten-Minute Beginning",
+    beats: [
+      { h: "Act with words", p: "Type anything — “ask Marla about the wagon”, “inspect the seal”, “draw my bow”. There are no wrong verbs. Press Enter; the world answers." },
+      { h: "Checks", p: "When risk appears you'll see a compact dice seal (⬢ d20). Click it for detail. Success moves you on; partial success moves you on at a cost." },
+      { h: "Journal", p: "Every discovery becomes a LEAD. Open the Journal to trace the Missing Caravan thread — caravan → wagon → silver powder → guild → monastery." },
+      { h: "Saves", p: "The chronicler autosaves at checkpoints, and you can Save Now any time from the Saves page. Your tale waits for you — Continue any time." },
+    ],
+  },
+  saves: [
+    { id: "save-1", slot: "manual", label: "Before the Hollow Road", checkpoint: "chapter-1", created_at: "2026-09-01T21:00:00Z" },
+    { id: "save-2", slot: "autosave", label: "Autosave — met the carter", checkpoint: "met-carter", created_at: "2026-09-05T19:30:00Z" },
+  ],
   fallbackNarration(text: string) {
     const t = text.toLowerCase();
     if (t.includes("marla") || t.includes("talk") || t.includes("ask"))

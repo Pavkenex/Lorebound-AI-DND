@@ -9,6 +9,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+import json
+import os
+import socket
+import urllib.error
+import urllib.request
+
+
+class ProviderError(RuntimeError):
+    """Raised when an external AI provider call fails after retry."""
+
 
 @dataclass
 class ProviderResult:
@@ -53,6 +63,112 @@ class StubProvider:
                               prompt_tokens=len(prompt) // 4,
                               completion_tokens=len(text) // 4,
                               metadata={"role": role, "stub": True})
+
+
+class OpenAICompatibleProvider:
+    """HTTP provider for any OpenAI-compatible chat completions endpoint.
+
+    Stdlib ``urllib`` only — no new dependencies. POSTs to
+    ``<base_url>/chat/completions`` with system + user messages.
+    Retries once on timeout/HTTP error, then raises :class:`ProviderError`.
+    """
+
+    model_name: str
+
+    def __init__(self, base_url: str, model: str, api_key: str = "",
+                 timeout_s: float = 30) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model_name = model
+        self.api_key = api_key or ""
+        self.timeout_s = timeout_s
+
+    def generate(self, prompt: str, *, role: str = "narrator",
+                 max_tokens: int = 600, **kwargs: Any) -> ProviderResult:
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": f"You are the {role}."},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.7,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        url = f"{self.base_url}/chat/completions"
+        last_exc: Exception | None = None
+        for _ in range(2):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=body,
+                    headers=self._headers(),
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                return self._to_result(data, role)
+            except (socket.timeout, TimeoutError, urllib.error.HTTPError,
+                    urllib.error.URLError) as exc:
+                last_exc = exc
+        raise ProviderError(f"OpenAI-compatible request failed: {last_exc}") from last_exc
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _to_result(self, data: dict[str, Any], role: str) -> ProviderResult:
+        try:
+            choices = data.get("choices", [])
+            text = choices[0]["message"]["content"] if choices else ""
+            usage = data.get("usage", {}) or {}
+            prompt_tokens = int(usage.get("prompt_tokens", 0))
+            completion_tokens = int(usage.get("completion_tokens", 0))
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ProviderError(f"Malformed provider response: {exc}") from exc
+        return ProviderResult(
+            text=text or "",
+            model=self.model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            metadata={"role": role},
+        )
+
+
+def get_provider() -> Provider:
+    """Select a provider from the environment.
+
+    - ``AI_PROVIDER`` unset/empty/``stub`` -> :class:`StubProvider`
+    - ``AI_PROVIDER=openai-compatible`` -> :class:`OpenAICompatibleProvider`
+      using ``OPENAI_COMPAT_BASE_URL`` (required),
+      ``OPENAI_COMPAT_MODEL`` (required),
+      ``OPENAI_COMPAT_API_KEY`` (optional),
+      ``OPENAI_COMPAT_TIMEOUT_S`` (optional, default 30).
+    - anything else raises :class:`ValueError`.
+    """
+    name = (os.environ.get("AI_PROVIDER") or "").strip().lower()
+    if not name or name == "stub":
+        return StubProvider()
+    if name == "openai-compatible":
+        base_url = (os.environ.get("OPENAI_COMPAT_BASE_URL") or "").strip()
+        model = (os.environ.get("OPENAI_COMPAT_MODEL") or "").strip()
+        if not base_url:
+            raise ProviderError("OPENAI_COMPAT_BASE_URL is required")
+        if not model:
+            raise ProviderError("OPENAI_COMPAT_MODEL is required")
+        api_key = os.environ.get("OPENAI_COMPAT_API_KEY", "") or ""
+        timeout_raw = (os.environ.get("OPENAI_COMPAT_TIMEOUT_S") or "").strip()
+        timeout_s: float = 30
+        if timeout_raw:
+            try:
+                timeout_s = float(timeout_raw)
+            except ValueError as exc:
+                raise ProviderError(
+                    f"Invalid OPENAI_COMPAT_TIMEOUT_S: {timeout_raw!r}") from exc
+        return OpenAICompatibleProvider(
+            base_url=base_url, model=model, api_key=api_key, timeout_s=timeout_s)
+    raise ValueError(f"Unknown AI_PROVIDER: {name!r}")
 
 
 def _default_canned(role: str, prompt: str) -> str:

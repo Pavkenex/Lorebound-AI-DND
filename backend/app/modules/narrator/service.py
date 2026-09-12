@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from app.modules.ai.metering import MeterRegistry
-from app.modules.ai.providers import Provider, StubProvider
+from app.modules.ai.providers import Provider, get_provider
 from app.modules.ai.roles import Role, build_role_prompt
 from app.modules.narrator.prompts import PromptBundle, PromptContext, assemble_prompt
 from app.modules.narrator.schemas import (
@@ -52,7 +52,7 @@ def narrate(ctx: PromptContext, provider: Provider | None = None,
             campaign_id: str = "default",
             suggestions: list[dict[str, str]] | None = None) -> tuple[NarratorOutput, PromptBundle]:
     """Single narration call. Returns (output, prompt_bundle for tests)."""
-    prov: Provider = provider or StubProvider()
+    prov: Provider = provider or get_provider()
     bundle = assemble_prompt(ctx, role_system=build_role_prompt(Role.NARRATOR.value))
     result = prov.generate(f"{bundle.system}\n\n{bundle.user}", role=Role.NARRATOR.value)
     if meter is not None:

@@ -27,6 +27,7 @@ from app.content.slice import (
     SESSION_BEATS,
     SESSION_MINUTES,
 )
+from app.content.tutorial import INTRODUCTION
 
 router = APIRouter(prefix="/content", tags=["content"]) if APIRouter else None
 
@@ -67,3 +68,7 @@ if router is not None:
     @router.get("/leads-screen")
     def leads_screen() -> dict:
         return dict(LEADS_SCREEN)
+
+    @router.get("/tutorial")
+    def tutorial() -> dict:
+        return dict(INTRODUCTION)

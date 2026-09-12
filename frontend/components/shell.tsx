@@ -8,13 +8,16 @@ import { useAmbient } from "../lib/audio";
 import { CostBadge } from "./widgets";
 
 const LINKS: [string, string][] = [
-  ["/", "Adventure"],
+  ["/", "Menu"],
+  ["/adventure", "Adventure"],
+  ["/saves", "Saves"],
   ["/character", "Character"],
   ["/inventory", "Inventory"],
   ["/skills", "Skills"],
   ["/journal", "Journal"],
   ["/map", "Map"],
   ["/companions", "Companions"],
+  ["/tutorial", "Tutorial"],
   ["/settings", "Settings"],
 ];
 
@@ -28,12 +31,13 @@ function Nav() {
   const path = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  // 1–8 jump between pages (advertised in A11yControls).
+  // 1–9,0 jump between pages (advertised in A11yControls).
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-      const n = Number(e.key);
-      if (n >= 1 && n <= LINKS.length) router.push(LINKS[n - 1][0]);
+      const order = "1234567890";
+      const idx = order.indexOf(e.key);
+      if (idx >= 0 && idx < LINKS.length) router.push(LINKS[idx][0]);
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -41,7 +45,7 @@ function Nav() {
   useEffect(() => setOpen(false), [path]);
   return (
     <nav className={`topnav${open ? " open" : ""}`} aria-label="Chronicle">
-      <Link href="/" className="brand">❖ Lorebound</Link>
+      <Link href="/" className="brand" prefetch>❖ Lorebound</Link>
       <button
         className="nav-toggle btn btn-ghost"
         aria-expanded={open}
@@ -52,7 +56,7 @@ function Nav() {
       </button>
       <span className="nav-links">
         {LINKS.map(([href, label]) => (
-          <Link key={href} href={href} aria-current={path === href ? "page" : undefined}>
+          <Link key={href} href={href} prefetch aria-current={path === href ? "page" : undefined}>
             {label}
           </Link>
         ))}

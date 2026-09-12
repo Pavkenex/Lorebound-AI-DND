@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.modules.narrator.prefs import ContentPrefs
+
 #: Hard cap on retrieved events per prompt (retrieved context only, §103).
 MAX_RETRIEVED_EVENTS = 8
 #: Safety cap on facts/NPCs to keep prompts small (GDD §105: no unnecessary calls).
@@ -44,7 +46,11 @@ class PromptBundle(BaseModel):
     retrieved_counts: dict[str, int] = Field(default_factory=dict)
 
 
-def assemble_prompt(ctx: PromptContext, role_system: str = "") -> PromptBundle:
+def assemble_prompt(
+    ctx: PromptContext,
+    role_system: str = "",
+    prefs: ContentPrefs | None = None,
+) -> PromptBundle:
     """Build the narrator prompt from retrieved context slices only."""
     npcs = ctx.npcs[:MAX_NPCS]
     facts = ctx.world_facts[:MAX_FACTS]
@@ -58,8 +64,10 @@ def assemble_prompt(ctx: PromptContext, role_system: str = "") -> PromptBundle:
     pc_block = f"{pc.get('name', 'the hero')} — {pc.get('description', 'an adventurer')}" if pc else "an adventurer"
 
     system = role_system or "You are the Narrator."
+    boundaries = (prefs or ContentPrefs()).describe_for_prompt()
     user = (
         f"[System rules]\n{ctx.system_rules}\n\n"
+        f"[Content boundaries]\n{boundaries}\n\n"
         f"[Campaign tone]\n{ctx.campaign_tone}\n\n"
         f"[Location]\n{ctx.location}\n\n"
         f"[Scene]\n{ctx.scene}\n\n"

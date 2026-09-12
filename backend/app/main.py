@@ -46,3 +46,9 @@ try:  # Stream G: read-only content screens (fixture/slice/Ravenford)
         app.include_router(content_router)
 except Exception:  # content stream not landed yet; core app still boots
     pass
+try:  # Saves API: campaign save slots (list/create/fetch).
+    from app.modules.campaign.saves_api import router as saves_router
+
+    app.include_router(saves_router)
+except Exception:  # saves stream not landed yet; core app still boots
+    pass

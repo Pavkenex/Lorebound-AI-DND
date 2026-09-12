@@ -9,6 +9,27 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
 export interface CostInfo { calls: number; costUsd: number; cached: boolean }
 export interface ApiResult<T> { data: T; cost: CostInfo; fromFixture: boolean }
 
+const TOKEN_KEY = "lorebound-token";
+export const CAMPAIGN_KEY = "lorebound-campaign-id";
+export const LAST_SAVE_KEY = "lorebound-last-save";
+export const RESUME_KEY = "lorebound-resume";
+
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setToken(t: string | null) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* ignore */ }
+}
+export function getCampaignId(): string {
+  try { return localStorage.getItem(CAMPAIGN_KEY) ?? "demo-campaign"; } catch { return "demo-campaign"; }
+}
+export function setCampaignId(id: string) {
+  try { localStorage.setItem(CAMPAIGN_KEY, id); } catch { /* ignore */ }
+}
+
 function readCost(res: Response | null): CostInfo {
   if (!res) return { calls: 0, costUsd: 0, cached: true };
   const h = (n: string) => res.headers.get(n);
@@ -24,11 +45,38 @@ function prefsHeaders(p?: ContentPrefs): Record<string, string> {
   return { "X-Content-Prefs": JSON.stringify(p) };
 }
 
+function authHeaders(): Record<string, string> {
+  const t = typeof window === "undefined" ? null : getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 async function get<T>(path: string, fallback: T, prefs?: ContentPrefs): Promise<ApiResult<T>> {
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 6000);
-    const res = await fetch(`${BASE}${path}`, { signal: ctl.signal, headers: { ...prefsHeaders(prefs) } });
+    const res = await fetch(`${BASE}${path}`, {
+      signal: ctl.signal,
+      headers: { ...prefsHeaders(prefs), ...authHeaders() },
+    });
+    clearTimeout(t);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as T;
+    return { data, cost: readCost(res), fromFixture: false };
+  } catch {
+    return { data: fallback, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: true };
+  }
+}
+
+async function post<T>(path: string, body: unknown, fallback: T, prefs?: ContentPrefs): Promise<ApiResult<T>> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 12000);
+    const res = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: { "Content-Type": "application/json", ...prefsHeaders(prefs), ...authHeaders() },
+      body: JSON.stringify(body),
+    });
     clearTimeout(t);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as T;
@@ -57,8 +105,13 @@ export async function submitAction(
     const res = await fetch(`${BASE}/act`, {
       method: "POST",
       signal: ctl.signal,
-      headers: { "Content-Type": "application/json", "Idempotency-Key": key, ...prefsHeaders(prefs) },
-      body: JSON.stringify({ text }),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": key,
+        ...prefsHeaders(prefs),
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ text, prefs: prefs ? { nsfw: prefs.nsfw } : undefined }),
     });
     clearTimeout(t);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -93,6 +146,57 @@ export async function* streamNarration(full: string): AsyncGenerator<string> {
   }
 }
 
+export interface SaveRow {
+  id: string;
+  slot: string;
+  label: string;
+  checkpoint: string;
+  created_at: string;
+}
+
+export interface TutorialDoc {
+  id: string;
+  title: string;
+  beats: { h: string; p: string }[];
+}
+
+export async function loginApi(email: string, password: string): Promise<{ access_token: string }> {
+  const form = new URLSearchParams({ username: email, password });
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+    clearTimeout(t);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as { access_token: string };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function registerApi(email: string, password: string, displayName: string): Promise<{ token: { access_token: string } }> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const res = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, display_name: displayName }),
+    });
+    clearTimeout(t);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as { token: { access_token: string } };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),
@@ -102,4 +206,17 @@ export const api = {
   map: (prefs?: ContentPrefs) => get("/map", fixtures.mapInfo, prefs),
   inventory: (prefs?: ContentPrefs) => get("/inventory", fixtures.inventory, prefs),
   companions: (prefs?: ContentPrefs) => get("/companions", fixtures.companions, prefs),
+  tutorial: (prefs?: ContentPrefs) =>
+    get<TutorialDoc>("/content/tutorial", fixtures.tutorial as TutorialDoc, prefs),
+  listSaves: (campaignId: string, prefs?: ContentPrefs) =>
+    get<SaveRow[]>(`/campaigns/${encodeURIComponent(campaignId)}/saves`, fixtures.saves as SaveRow[], prefs),
+  createSave: (campaignId: string, label: string, prefs?: ContentPrefs) =>
+    post<SaveRow>(
+      `/campaigns/${encodeURIComponent(campaignId)}/saves`,
+      { label, slot: "manual", checkpoint: "manual", prefs: prefs ? { nsfw: prefs.nsfw } : undefined },
+      { id: `local-${Date.now()}`, slot: "manual", label, checkpoint: "manual", created_at: new Date().toISOString() },
+      prefs
+    ),
+  loadSave: (saveId: string, prefs?: ContentPrefs) =>
+    get<Record<string, unknown>>(`/saves/${encodeURIComponent(saveId)}`, { snapshot: "fixture", saveId }, prefs),
 };
