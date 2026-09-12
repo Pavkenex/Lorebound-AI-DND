@@ -220,6 +220,68 @@ export async function registerApi(email: string, password: string, displayName: 
   }
 }
 
+/** --- AI provider settings (bring your own OpenAI-compatible endpoint) --- */
+export interface AiSettingsDoc {
+  provider: "stub" | "openai-compatible" | null;
+  configured: boolean;
+  base_url: string;
+  model: string;
+  has_key: boolean;
+  timeout_s: number;
+  active_provider: string;
+  active_source: "settings" | "env" | "default";
+  env_provider: string;
+}
+
+export interface AiSettingsPayload {
+  provider: "stub" | "openai-compatible";
+  base_url?: string;
+  model?: string;
+  /** Omit to keep the stored key; empty string also keeps it (write-only field). */
+  api_key?: string;
+  clear_key?: boolean;
+  timeout_s?: number;
+}
+
+export interface AiTestDoc {
+  ok: boolean;
+  model?: string;
+  latency_ms?: number;
+  reply?: string;
+  error?: string;
+}
+
+export type AiResult<T> = { ok: true; doc: T } | { ok: false; error: string };
+
+export async function aiSettingsApi(): Promise<AiResult<AiSettingsDoc>> {
+  const r = await authJson<AiSettingsDoc & { __error?: string }>("/ai/settings");
+  if (r === null) return { ok: false, error: "The chronicler is out of reach — sign in first." };
+  if (r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true, doc: r };
+}
+
+export async function saveAiSettingsApi(body: AiSettingsPayload): Promise<AiResult<AiSettingsDoc>> {
+  const r = await authJson<AiSettingsDoc & { __error?: string }>("/ai/settings", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  if (r === null) return { ok: false, error: "The chronicler is out of reach — try again." };
+  if (r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true, doc: r };
+}
+
+export async function testAiSettingsApi(
+  body: { base_url?: string; model?: string; api_key?: string; timeout_s?: number }
+): Promise<AiResult<AiTestDoc>> {
+  const r = await authJson<AiTestDoc & { __error?: string }>("/ai/settings/test", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  if (r === null) return { ok: false, error: "The chronicler is out of reach — try again." };
+  if (r.__error) return { ok: false, error: String(r.__error) };
+  return { ok: true, doc: r };
+}
+
 export interface CampaignRow {
   id: string;
   name: string;
