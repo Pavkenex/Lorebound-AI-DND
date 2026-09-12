@@ -20,6 +20,7 @@ from app.modules.campaign.models import Campaign
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play.engine import ActEngine
 from app.modules.play.session import PlaySession
+from app.modules.play.view import game_state_payload
 
 router = APIRouter(tags=["play"])
 
@@ -61,6 +62,18 @@ def _parse_prefs(raw: str | None) -> ContentPrefs | None:
         return ContentPrefs(**data)
     except Exception:  # noqa: BLE001 - malformed prefs fall back to defaults
         return None
+
+
+@router.get("/state")
+def game_state(
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Live game state for the adventure screen (campaign-scoped, read-only)."""
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    return game_state_payload(session.state)
 
 
 @router.post("/act")

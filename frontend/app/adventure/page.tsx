@@ -2,15 +2,13 @@
 // Adventure screen: three-column layout (t_87bd1163), visual hierarchy (t_43e37b1e),
 // optimistic ack + streaming + error recovery (t_18510814), tutorial (t_d2dd38a0).
 import { useEffect, useRef, useState } from "react";
-import { api, streamNarration, submitAction, LAST_SAVE_KEY } from "../../lib/api";
+import { api, streamNarration, submitAction, LAST_SAVE_KEY, getToken, ensureCampaign, type LiveGameState } from "../../lib/api";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
 import { Feed } from "../../components/feed";
 import { SceneArt, Portrait } from "../../components/art";
 import { ErrorBanner, TutorialOverlay } from "../../components/widgets";
-
-type GS = typeof fixtures.gameState;
 
 let n = 100;
 const nid = () => `u${n++}`;
@@ -19,7 +17,7 @@ export default function AdventurePage() {
   const { content, addCost, compactNarration } = useStore();
   const [loading, setLoading] = useState(true);
   const [restored, setRestored] = useState<string | null>(null);
-  const [gs, setGs] = useState<GS>(fixtures.gameState);
+  const [gs, setGs] = useState<LiveGameState>(fixtures.gameState);
   const [live, setLive] = useState(false);
   const [events, setEvents] = useState<FeedEvent[]>(fixtures.gameState.feed);
   const [input, setInput] = useState("");
@@ -43,10 +41,22 @@ export default function AdventurePage() {
         if (s?.label) setRestored(s.label);
       }
     } catch { /* no restored save */ }
-    api.gameState(content).then((r) => {
+    async function loadState(): Promise<void> {
+      const r = await api.gameState(content);
+      if (r.fromFixture && getToken()) {
+        // Signed in but no campaign yet (e.g. deep link): provision one, retry once.
+        const cid = await ensureCampaign();
+        if (cid) {
+          const again = await api.gameState(content);
+          setGs(again.data); setEvents(again.data.feed); setLive(!again.fromFixture); addCost(again.cost);
+          setLoading(false);
+          return;
+        }
+      }
       setGs(r.data); setEvents(r.data.feed); setLive(!r.fromFixture); addCost(r.cost);
       setLoading(false);
-    });
+    }
+    void loadState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,6 +128,11 @@ export default function AdventurePage() {
 
   function inspect(name: string) {
     uiBlip(520);
+    if (live) {
+      // Live: inspecting is a real action — the engine decides what it reveals.
+      void runSubmit(`I look closely at the ${name}`);
+      return;
+    }
     setEvents((e) => [...e, {
       id: nid(), kind: "system",
       text: gs.interactables.includes(name.toLowerCase()) || gs.npcs.some((x) => x.name === name) || gs.leads.includes(name)
@@ -126,7 +141,7 @@ export default function AdventurePage() {
     }]);
   }
 
-  const ch = fixtures.character;
+  const ch = gs.character ?? fixtures.character;
 
   return (
     <div className="shell">
@@ -161,6 +176,11 @@ export default function AdventurePage() {
           <div className="level-toast" role="status">
             ❧ Restored snapshot — {restored}
             <button className="btn btn-ghost" style={{ marginLeft: 10, padding: "2px 8px" }} onClick={() => { try { localStorage.removeItem(LAST_SAVE_KEY); } catch { /* */ } setRestored(null); }}>Dismiss</button>
+          </div>
+        )}
+        {gs.completed && (
+          <div className="level-toast" role="status">
+            ❧ The tale of the missing travelers is told — the travelers walk free, and the chronicle marks this chapter complete. The road goes on.
           </div>
         )}
         {loading && (

@@ -20,6 +20,7 @@ from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play.session import PlaySession
+from app.modules.play.view import npc_names
 from app.modules.rules.checks import (
     CheckRequest,
     CheckResult,
@@ -640,21 +641,7 @@ class ActEngine:
 
     # -- world views ----------------------------------------------------------
     def present_npcs(self) -> list[str]:
-        st = self.state
-        if st.location == "lantern-inn":
-            npcs = ["Marla"]
-            if not st.borin_down:
-                npcs.append("Borin")
-            return npcs
-        if st.location == "northern-road":
-            return []
-        if st.location == "market":
-            return ["Sella", "Tomm"]
-        if st.location == "old-monastery":
-            return ["Brother Anselm"]
-        if st.location == "cellar":
-            return []
-        return []
+        return npc_names(self.state)
 
     def _pipeline_state(self) -> dict[str, Any]:
         st = self.state

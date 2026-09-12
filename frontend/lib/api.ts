@@ -106,6 +106,7 @@ export async function submitAction(
   text: string, prefs?: ContentPrefs, idempotencyKey?: string
 ): Promise<ApiResult<ActResponse>> {
   const key = idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const cid = getCampaignId();
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 25000);
@@ -118,7 +119,11 @@ export async function submitAction(
         ...prefsHeaders(prefs),
         ...authHeaders(),
       },
-      body: JSON.stringify({ text, prefs: prefs ? { nsfw: prefs.nsfw } : undefined }),
+      body: JSON.stringify({
+        text,
+        campaign_id: cid === "demo-campaign" ? undefined : cid,
+        prefs: prefs ? { nsfw: prefs.nsfw } : undefined,
+      }),
     });
     clearTimeout(t);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -160,6 +165,14 @@ export interface SaveRow {
   checkpoint: string;
   created_at: string;
 }
+
+/** Live game state (GET /state): the fixture shape plus live-only fields. */
+export type LiveGameState = typeof fixtures.gameState & {
+  character?: typeof fixtures.character;
+  completed?: boolean;
+  lead_stage?: string;
+  clues?: string[];
+};
 
 export interface TutorialDoc {
   id: string;
@@ -266,7 +279,7 @@ export async function ensureCampaign(name?: string): Promise<string | null> {
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),
-  gameState: (prefs?: ContentPrefs) => get("/state", fixtures.gameState, prefs),
+  gameState: (prefs?: ContentPrefs) => get<LiveGameState>("/state", fixtures.gameState, prefs),
   skills: (prefs?: ContentPrefs) => get("/skills", fixtures.skills, prefs),
   journal: (prefs?: ContentPrefs) => get("/journal", fixtures.journal, prefs),
   map: (prefs?: ContentPrefs) => get("/map", fixtures.mapInfo, prefs),
