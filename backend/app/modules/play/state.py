@@ -28,6 +28,7 @@ from app.modules.npc.mood import (
     clamp_intensity,
     mood_word,
 )
+from app.modules.story.scenes import SceneDirector
 
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
@@ -166,6 +167,16 @@ class PlayState:
 
     # -- sheet-adjacent economy -------------------------------------------
     silver: int = 8  # guilders in the pack
+
+    # -- scene flow (design §7) -------------------------------------------
+    #: The scene the player stands in — a map location's root scene id, or a
+    #: micro-scene nested under it ("lantern-inn:upstairs-room"). Scenes are
+    #: finer-grained than the map: the map tracks travel, scenes the moment.
+    scene: str = ""
+    #: Remembered scene state by id (see modules/story/scenes.py): re-entering
+    #: a scene restores its beats/progress/state, so a resolved scene never
+    #: re-runs its opening.
+    scenes: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # -- bookkeeping -------------------------------------------------------
     visits: int = 1
@@ -407,8 +418,11 @@ def seeded_state() -> PlayState:
 
     The mystery lead is *not* auto-discovered: the player earns "rumored" by
     asking Marla (or combing the notice board) — only the hook is in the air.
+    The player opens standing in the inn's common room (§7), so the opening
+    beat below is that scene's opening and never replays.
     """
     state = PlayState()
+    SceneDirector(state).seed()
     state.append_feed("narration", text=OPENING_BEAT)
     state.append_feed(
         "dialogue",
