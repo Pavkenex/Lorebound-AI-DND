@@ -108,7 +108,7 @@ export const fixtures = {
     title: "A Ten-Minute Beginning",
     beats: [
       { h: "Act with words", p: "Type anything — “ask Marla about the wagon”, “inspect the seal”, “draw my bow”. There are no wrong verbs. Press Enter; the world answers." },
-      { h: "Checks", p: "When an action turns on a real roll, the chronicle calls the check and a die rises for you to throw — press it, and the face that settles is the face the world reads. The line shows your skill, the DC, and the outcome; natural 20s and natural 1s get their own flourishes. Quiet checks (insight, perception) roll behind the screen. No check called, no die." },
+      { h: "Checks", p: "When an action turns on a real roll, the chronicle calls the check and a die rises for you to throw — press it, and the face that settles is the face the world reads. The line shows your skill, the DC, and the outcome; natural 20s and natural 1s get their own flourishes. Quiet checks (insight, perception) roll behind the screen — you still see passed or failed in the chronicle. No check called, no die." },
       { h: "Journal", p: "Every discovery becomes a LEAD. Open the Journal to trace the Missing Caravan thread — caravan → wagon → silver powder → guild → monastery." },
       { h: "Saves", p: "The chronicler autosaves at checkpoints, and you can Save Now any time from the Saves page. Your tale waits for you — Continue any time." },
     ],

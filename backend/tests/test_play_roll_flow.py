@@ -4,10 +4,12 @@ Flow under test: an unseeded action that calls for a visible check answers with
 ``pending_check`` (skill, attribute, modifiers, DC, label, token) and persists
 nothing; a second POST carrying the thrown face (``roll``) + ``pending_token``
 resolves the beat exactly as a seeded call would. A moved board answers 409.
+Quiet checks (hidden) never surface a die, but still report a verdict line.
 """
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -180,9 +182,26 @@ def test_hidden_checks_roll_behind_the_screen(client: TestClient):
     status, data, _ = _call(client, h, HIDDEN)
     assert status == 200
     assert "pending_check" not in data         # never surfaced, never thrown
-    assert data["mechanics"] is None           # hidden results stay silent
+    assert data["mechanics"] is None           # no dice card for a quiet check
     assert data["narration"]
+    # ...but the player still gets the verdict in the chronicle.
+    verdicts = [s for s in data["system"] if s.startswith("⚄ ")]
+    assert len(verdicts) == 1
+    assert re.fullmatch(r"⚄ Insight check — (passed|failed) · \d+ vs DC 13\.", verdicts[0])
+    assert any("⚄ Insight check" in (e.get("text") or "") for e in _state(cid).feed)
     assert _state(cid).actions_taken == 1
+
+
+def test_hidden_check_verdict_reports_pass_and_fail(client: TestClient):
+    h, _ = _setup(client, "roll10@example.com")
+    ok = client.post("/act", headers=h, json={"text": HIDDEN, "seed_roll": 18})
+    assert ok.status_code == 200, ok.text
+    line = next(s for s in ok.json()["system"] if s.startswith("⚄ "))
+    assert line == "⚄ Insight check — passed · 18 vs DC 13."
+    bad = client.post("/act", headers=h, json={"text": HIDDEN, "seed_roll": 2})
+    assert bad.status_code == 200, bad.text
+    line = next(s for s in bad.json()["system"] if s.startswith("⚄ "))
+    assert line == "⚄ Insight check — failed · 2 vs DC 13."
 
 
 def test_social_checks_without_stakes_never_ask_for_a_die(client: TestClient):

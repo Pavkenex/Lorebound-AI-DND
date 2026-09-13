@@ -1123,19 +1123,29 @@ class ActEngine:
 
         mechanics = None
         for check in result.checks:
+            snapshot = check.request_snapshot
             if check.surfaced:
-                snapshot = check.request_snapshot
-                mechanics = {
-                    "label": f"{snapshot.skill} check",
-                    "roll": "d20",
-                    "total": check.total,
-                    "detail": check.cost,
-                    "d20": check.roll,
-                    "outcome": check.outcome.value if hasattr(check.outcome, "value") else check.outcome,
-                    "dc": snapshot.dc,
-                    "skill": snapshot.skill,
-                }
-                break
+                if mechanics is None:
+                    mechanics = {
+                        "label": f"{snapshot.skill} check",
+                        "roll": "d20",
+                        "total": check.total,
+                        "detail": check.cost,
+                        "d20": check.roll,
+                        "outcome": check.outcome.value if hasattr(check.outcome, "value") else check.outcome,
+                        "dc": snapshot.dc,
+                        "skill": snapshot.skill,
+                    }
+                continue
+            if check.hidden and not check.trivial_auto:
+                # Quiet checks roll behind the screen — the player gets no die,
+                # but still gets the verdict in the chronicle (passed/failed
+                # with the math). Trivial autos never rolled; stay silent.
+                passed = check.outcome in SUCCESS_OUTCOMES
+                self._feed(
+                    "system",
+                    text=f"⚄ {snapshot.skill} check — {'passed' if passed else 'failed'} · {check.total} vs DC {snapshot.dc}.",
+                )
 
         narration = result.narration.narration
         out = BeatOutcome(
