@@ -51,6 +51,12 @@ def _setup(client: TestClient, email: str) -> dict:
     )
     headers = {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
     client.post("/campaigns", headers=headers, json={})
+    # The chronicle opens on the prologue's road (§intro); these tests play
+    # inside the tavern, so the player walks in first.
+    w = client.post(
+        "/act", headers=headers, json={"text": "I head down to the inn and step inside"}
+    )
+    assert w.status_code == 200, w.text
     return headers
 
 

@@ -55,7 +55,7 @@ def test_chronicle_retrieval_is_capped_and_keeps_the_tail():
 
 
 def test_second_turn_prompt_carries_the_first_turn_chronicle():
-    st = seeded_state()  # the opening narration + Marla's line sit in the feed
+    st = seeded_state()  # the prologue's arrival (§intro) sits in the feed
     prov = _CapturingProvider()
     engine = ActEngine(PlaySession("chron-prompt", st), provider=prov)
 
@@ -64,8 +64,9 @@ def test_second_turn_prompt_carries_the_first_turn_chronicle():
     assert len(prov.prompts) == 2, "both turns must ride the narrator pipeline"
 
     first, second = prov.prompts
-    # Turn one already knows the opening beat the player just read...
-    assert "Come in from the rain" in first
+    # Turn one already knows the arrival the player just read (the chronicle
+    # line is elided head+tail when long, so we check what survives at the head)...
+    assert "the rain has settled in for the night" in first
     # ...and turn two carries what turn one told the player: their own words,
     # the prose, and the spoken line — the scene continues instead of restarting.
     assert "hum a lamplighter's tune" in second        # the earlier action echo

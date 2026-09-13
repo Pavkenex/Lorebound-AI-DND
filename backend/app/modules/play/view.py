@@ -10,9 +10,10 @@ from app.modules.memory.npc_memory import npc_slug
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.npc.mood import surfaced_mood
 from app.modules.play.state import PlayState, attitude_band
-from app.modules.story.scenes import SceneDirector
+from app.modules.story.scenes import PROLOGUE, SceneDirector
 
 LOCATION_NAMES: dict[str, str] = {
+    PROLOGUE: "The road to Ravenford",
     "lantern-inn": "The Lantern Inn, Ravenford",
     "northern-road": "The Northern Road",
     "market": "Ravenford Market",
@@ -21,6 +22,7 @@ LOCATION_NAMES: dict[str, str] = {
 }
 
 INTERACTABLES: dict[str, list[str]] = {
+    PROLOGUE: ["the town below", "the inn sign", "the road behind"],
     "lantern-inn": ["hearth", "notice board", "marla's ledger", "cellar door", "Marla", "borin"],
     "northern-road": ["wagon ruts", "woodline", "distant lights"],
     "market": ["silver stall", "peddler row", "Sella"],

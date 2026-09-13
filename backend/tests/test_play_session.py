@@ -43,11 +43,13 @@ def _campaign() -> str:
 
 def test_seeded_state_defaults():
     st = seeded_state()
-    assert st.location == "lantern-inn"
+    assert st.location == "road-to-ravenford"  # the prologue (§intro)
+    assert st.scene == "road-to-ravenford"
     assert st.lead_stage == "unheard"
     assert st.completed is False
     assert st.pc["name"] == "Kaelis Thorn"
-    assert [e["kind"] for e in st.feed] == ["narration", "dialogue"]
+    assert [e["kind"] for e in st.feed] == ["narration"]
+    assert "Kaelis Thorn" in st.feed[0]["text"]  # the arrival reads the sheet
     assert st.silver == 8 and st.visits == 1
 
 

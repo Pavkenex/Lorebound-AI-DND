@@ -65,15 +65,16 @@ def test_fresh_campaign_state_shape(client: TestClient):
     assert r.status_code == 200, r.text
     s = r.json()
     assert s["campaign_id"] == cid  # the client stores this for saves/act
-    assert s["location"] == "The Lantern Inn, Ravenford"
+    assert s["location"] == "The road to Ravenford"  # the prologue opens outside (§intro)
     assert s["time"] == "Day 1 · 19:00 · rain"
-    assert [n["name"] for n in s["npcs"]] == ["Marla Voss", "Borin"]
+    assert s["npcs"] == []  # Marla is behind the inn's door, not in this scene
     assert s["leads"] == []
-    assert "hearth" in s["interactables"]
+    assert "the town below" in s["interactables"]
     assert s["party"][0]["name"] == "Kaelis"
     assert s["party"][0]["hp"] == "32/32"
-    assert len(s["feed"]) == 2
+    assert len(s["feed"]) == 1  # the arrival narration alone
     assert s["feed"][0]["kind"] == "narration"
+    assert "Kaelis Thorn" in s["feed"][0]["text"]
     assert s["character"]["name"] == "Kaelis Thorn"
     assert s["character"]["hp"] == {"cur": 32, "max": 32}
     assert s["completed"] is False
@@ -81,6 +82,7 @@ def test_fresh_campaign_state_shape(client: TestClient):
 
 def test_state_reflects_beats(client: TestClient):
     h, _cid = _setup(client, "beats@example.com")
+    client.post("/act", headers=h, json={"text": "I head down to the inn and step inside"})
     client.post("/act", headers=h, json={"text": "I ask Marla about the travelers"})
     s = client.get("/state", headers=h).json()
     assert s["leads"] == ["Missing Travelers"]
@@ -96,7 +98,7 @@ def test_state_reflects_beats(client: TestClient):
     assert s["location"] == "The Northern Road"
     assert s["npcs"] == []
     assert "wagon ruts" in s["interactables"]
-    assert s["time"] == "Day 1 · 19:30 · rain"  # talk 5 + steal 15 + leave 10 = 30m
+    assert s["time"] == "Day 1 · 19:35 · rain"  # walk-in 5 + talk 5 + steal 15 + leave 10
     assert s["feed"][-1]["kind"] in ("narration", "system")
 
 
@@ -104,7 +106,7 @@ def test_state_works_for_campaign_without_play_row(client: TestClient):
     """Campaigns that predate the live layer render a seeded (unpersisted) view."""
     h, _cid = _setup(client, "legacy@example.com")
     s = client.get("/state", headers=h).json()
-    assert s["location"] == "The Lantern Inn, Ravenford"
+    assert s["location"] == "The road to Ravenford"
     # And a forked campaign row created directly in the DB:
     db = TestingSession()
     try:
@@ -118,4 +120,4 @@ def test_state_works_for_campaign_without_play_row(client: TestClient):
         db.close()
     s2 = client.get(f"/state?campaign_id={cid2}", headers=h)
     assert s2.status_code == 200, s2.text
-    assert s2.json()["location"] == "The Lantern Inn, Ravenford"
+    assert s2.json()["location"] == "The road to Ravenford"

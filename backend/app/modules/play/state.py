@@ -28,7 +28,7 @@ from app.modules.npc.mood import (
     clamp_intensity,
     mood_word,
 )
-from app.modules.story.scenes import SceneDirector
+from app.modules.story.scenes import PROLOGUE, SceneDirector
 
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
@@ -91,6 +91,59 @@ OPENING_BEAT: str = (
     "across Marla's notice board, where one parchment hangs newer than the rest — "
     "a plea about travelers who never came back down the Northern Road."
 )
+
+#: The prologue's opening (§intro): the road above Ravenford, the rain, and the
+#: player's own sheet — the arrival the chronicle unrolls before the tavern.
+PROLOGUE_SCENE_TEXT = (
+    "Dusk, and the rain has settled in for the night. Ravenford lies below the "
+    "ridge in a scattershot of lamplight — wet slate, the river running black "
+    "under the old bridge, the last stretch of road coming down between dripping "
+    "hedgerows to a sign that still swings over the bend: a painted lantern, "
+    "and a door's worth of warmth beneath it."
+)
+
+
+def _drive_line(drives: list[Any]) -> str:
+    """The character's own reasons, verbatim from their sheet (§intro)."""
+    said = [str(d).strip() for d in drives if str(d).strip()][:2]
+    if not said:
+        return ""
+    listed = "; ".join(said)
+    return (
+        f" And what brought you here — {listed} — has waited this long; "
+        "it can wait for a dry seat by the fire."
+    )
+
+
+def prologue_opening(pc: dict[str, Any]) -> str:
+    """Compose the arrival: the world, and who the player built to walk it.
+
+    Light touch by design — name (+epithet), what they carry, and their
+    drives as the reason the road ran here. Every piece degrades away on a
+    sparse sheet: the scene never depends on a field existing.
+    """
+    name = str(pc.get("name") or "").strip() or "a traveler"
+    epithet = str(pc.get("epithet") or "").strip()
+    who = f"You are {name}" + (f", {epithet}" if epithet else "") + "."
+    items = [str(i).strip() for i in (pc.get("equipment") or []) if str(i).strip()][:3]
+    carry = f" What you carry, you carry yourself — {', '.join(items)}." if items else ""
+    return PROLOGUE_SCENE_TEXT + " " + who + carry + _drive_line(pc.get("drives") or [])
+
+
+def refresh_prologue_opening(state: PlayState) -> bool:
+    """Recompose the arrival in place after the sheet arrives (§intro).
+
+    A campaign is seeded before character creation commits, so the prologue
+    narration — the feed's first event — is rewritten here the moment the
+    player's own sheet lands.
+    """
+    if getattr(state, "location", "") != PROLOGUE:
+        return False
+    for event in getattr(state, "feed", []):
+        if event.get("id") == "live-1" and event.get("kind") == "narration":
+            event["text"] = prologue_opening(getattr(state, "pc", {}) or {})
+            return True
+    return False
 
 
 #: Relationship meter bounds (design §3): -100 (Hostile) .. +100 (Bonded).
@@ -414,22 +467,17 @@ class PlayState:
 
 
 def seeded_state() -> PlayState:
-    """Fresh campaign state: opening pose at the Lantern Inn, clock set, opening beat.
+    """Fresh campaign state: the prologue on the road, clock set, opening beat.
 
-    The mystery lead is *not* auto-discovered: the player earns "rumored" by
+    The chronicle now opens *outside* Ravenford (§intro): the arrival plays
+    first, and entering the inn is the first true transition — its opening
+    (and Marla's welcome) belongs to that beat, so it never replays. The
+    mystery lead is *not* auto-discovered: the player earns "rumored" by
     asking Marla (or combing the notice board) — only the hook is in the air.
-    The player opens standing in the inn's common room (§7), so the opening
-    beat below is that scene's opening and never replays.
     """
     state = PlayState()
+    state.location = PROLOGUE
+    state.visit_location(PROLOGUE)
     SceneDirector(state).seed()
-    state.append_feed("narration", text=OPENING_BEAT)
-    state.append_feed(
-        "dialogue",
-        speaker="Marla Voss",
-        text=(
-            "Come in from the rain, then — the fire's warm and the road's bad. "
-            "Sit where I can see you, stranger; questions come cheaper than silver here."
-        ),
-    )
+    state.append_feed("narration", text=prologue_opening(state.pc))
     return state

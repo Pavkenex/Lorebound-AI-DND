@@ -23,6 +23,7 @@ from app.modules.ai.providers import ProviderResult
 from app.modules.campaign.service import AUTOSAVE_CHECKPOINTS
 from app.modules.play import models as pm  # noqa: F401  (register metadata)
 from app.modules.play.engine import (
+    INN_ARRIVAL,
     UPSTAIRS_AFTERMATH,
     UPSTAIRS_OPENING,
     UPSTAIRS_REFUSED,
@@ -30,9 +31,11 @@ from app.modules.play.engine import (
 )
 from app.modules.play.models import PlayStateRow
 from app.modules.play.session import CHECKPOINT_BY_KIND, PlaySession
-from app.modules.play.state import OPENING_BEAT, PlayState, seeded_state
+from app.modules.play.state import OPENING_BEAT, PlayState, prologue_opening, seeded_state
 from app.modules.story.scenes import (
     ACTIVE,
+    PROLOGUE,
+    PROLOGUE_LABEL,
     RESOLVED,
     SCENE_STATES,
     TRANSITIONING,
@@ -113,6 +116,19 @@ def _engine(campaign_id: str, st: PlayState | None = None) -> ActEngine:
     return ActEngine(PlaySession(campaign_id, st if st is not None else seeded_state()))
 
 
+def _walk_in(engine_obj: ActEngine) -> dict:
+    """The prologue's one door (§intro): down the last stretch and inside."""
+    out, _checkpoint = engine_obj.act("I head down to the inn and step inside")
+    return out
+
+
+def _engine_in_inn(campaign_id: str) -> ActEngine:
+    """The tavern start these bar tests used to get from a fresh seed (§intro)."""
+    engine_obj = _engine(campaign_id)
+    _walk_in(engine_obj)
+    return engine_obj
+
+
 def _scene(state: PlayState):
     return SceneDirector(state).current()
 
@@ -126,17 +142,36 @@ def _walk_upstairs(engine_obj: ActEngine) -> tuple[dict, str | None]:
 # ------------------------------------------------------------- the scene model
 
 
-def test_a_fresh_campaign_opens_standing_in_the_inn():
+def test_a_fresh_campaign_opens_on_the_road_above_ravenford():
+    """A new chronicle begins at the prologue (§intro), not mid-tavern."""
     st = seeded_state()
-    assert st.scene == INN
+    assert (st.location, st.scene) == (PROLOGUE, PROLOGUE)
     scene = SceneDirector(st).current()
-    assert (scene.id, scene.label, scene.state) == (INN, "The Lantern Inn — common room", ACTIVE)
-    assert scene.goal == "Take the measure of the room"
+    assert (scene.id, scene.label, scene.state) == (PROLOGUE, PROLOGUE_LABEL, ACTIVE)
+    assert scene.goal == "Come in out of the rain"
     assert scene.beats == 0 and scene.last_progress == 0
-    # The opening beat *is* that scene's opening, so it never replays (it is one
-    # narration in the feed, not a line a beat re-prints).
-    assert [e.get("text", "") for e in st.feed].count(OPENING_BEAT) == 1
+    # The arrival is the one narration, and it is the player's own sheet.
+    assert [e.get("text", "") for e in st.feed] == [prologue_opening(st.pc)]
+    assert "Kaelis Thorn" in st.feed[0]["text"]
+    # The inn's opening waits at its door (§intro): never printed at the seed.
+    assert [e.get("text", "") for e in st.feed].count(OPENING_BEAT) == 0
     assert scene.state in SCENE_STATES
+
+
+def test_the_walk_in_is_the_inns_one_first_arrival():
+    """Entering town is a transition; its opening plays once (§intro, §7)."""
+    engine_obj = _engine("scene-inn-arrival")
+    out = _walk_in(engine_obj)
+    st = engine_obj.state
+    assert st.location == INN and st.scene == INN
+    assert out["narration"] == INN_ARRIVAL
+    assert out["dialogue"][0] == {
+        "speaker": "Marla Voss",
+        "line": "Come in from the rain, then — the fire's warm and the road's bad. "
+                "Sit where I can see you, stranger; questions come cheaper than silver here.",
+    }
+    assert [e.get("text", "") for e in st.feed].count(INN_ARRIVAL) == 1
+    assert any(line.startswith("▸ Scene — The Lantern Inn") for line in out["system"])
 
 
 def test_scene_state_rides_the_save_json():
@@ -170,7 +205,7 @@ def test_beat_bookkeeping_counts_and_marks_progress():
 
 
 def test_a_bar_conversation_can_walk_upstairs():
-    engine_obj = _engine("scene-upstairs")
+    engine_obj = _engine_in_inn("scene-upstairs")
     st = engine_obj.state
     out, checkpoint = _walk_upstairs(engine_obj)
     subs = st.scenes[UPSTAIRS]
@@ -184,7 +219,7 @@ def test_a_bar_conversation_can_walk_upstairs():
 
 
 def test_leaving_the_micro_scene_resolves_back_to_its_parent():
-    engine_obj = _engine("scene-downstairs")
+    engine_obj = _engine_in_inn("scene-downstairs")
     st = engine_obj.state
     _walk_upstairs(engine_obj)
     back, checkpoint = engine_obj.act("I go back down to the bar")
@@ -200,7 +235,7 @@ def test_leaving_the_micro_scene_resolves_back_to_its_parent():
 
 
 def test_the_room_keeps_its_beat_count_across_the_trip_down():
-    engine_obj = _engine("scene-keeps-count")
+    engine_obj = _engine_in_inn("scene-keeps-count")
     st = engine_obj.state
     _walk_upstairs(engine_obj)
     engine_obj.act("I go back down to the bar")
@@ -212,7 +247,7 @@ def test_the_room_keeps_its_beat_count_across_the_trip_down():
 
 
 def test_a_resolved_scene_never_replays_its_opening():
-    engine_obj = _engine("scene-no-pull-back")
+    engine_obj = _engine_in_inn("scene-no-pull-back")
     st = engine_obj.state
     opened, _ = _walk_upstairs(engine_obj)
     assert opened["narration"] == UPSTAIRS_OPENING
@@ -227,21 +262,22 @@ def test_a_resolved_scene_never_replays_its_opening():
 
 
 def test_leaving_and_returning_never_replays_the_inn_opening():
-    engine_obj = _engine("scene-inn-return")
+    engine_obj = _engine_in_inn("scene-inn-return")
     st = engine_obj.state
+    assert [e.get("text", "") for e in st.feed].count(INN_ARRIVAL) == 1
     engine_obj.act("I step out and take the northern road")
     assert (st.location, st.scene) == ("northern-road", "northern-road")
     back, _ = engine_obj.act("I head back to the inn")
     assert st.scene == INN and st.location == INN
     assert OPENING_BEAT not in back["narration"]
-    assert [e["text"] for e in st.feed].count(OPENING_BEAT) == 1
+    assert [e.get("text", "") for e in st.feed].count(INN_ARRIVAL) == 1
 
 
 # ------------------------------------------------------------ the invitation
 
 
 def test_the_stair_is_hers_until_the_story_is_told():
-    engine_obj = _engine("scene-stair-refused")
+    engine_obj = _engine_in_inn("scene-stair-refused")
     out, checkpoint = engine_obj.act("I go up to her room")
     assert engine_obj.state.scene == INN  # no transition: the fiction refuses
     assert checkpoint == ""  # and nothing checkpoints for a room that never opened
@@ -252,7 +288,7 @@ def test_the_stair_is_hers_until_the_story_is_told():
 
 
 def test_a_live_invitation_is_never_blocked_by_the_anti_loop():
-    engine_obj = _engine("scene-invite")
+    engine_obj = _engine_in_inn("scene-invite")
     engine_obj.act("I ask Marla about the travelers")
     for _ in range(5):
         engine_obj.act("I inspect the hearth")  # linger until the guard is fully on
@@ -270,7 +306,7 @@ def test_a_live_invitation_is_never_blocked_by_the_anti_loop():
 
 
 def test_repeated_actions_diminish_and_point_at_what_is_still_possible():
-    engine_obj = _engine("scene-diminish")
+    engine_obj = _engine_in_inn("scene-diminish")
     first, _ = engine_obj.act("I inspect the hearth")
     second, _ = engine_obj.act("I inspect the hearth")
     third, _ = engine_obj.act("I inspect the hearth")
@@ -286,7 +322,7 @@ def test_repeated_actions_diminish_and_point_at_what_is_still_possible():
 
 
 def test_a_run_of_idle_beats_also_diminishes():
-    engine_obj = _engine("scene-linger")
+    engine_obj = _engine_in_inn("scene-linger")
     beats = [
         "I inspect the hearth",
         "I inspect the hearth once more",
@@ -302,7 +338,17 @@ def test_a_run_of_idle_beats_also_diminishes():
 
 
 def test_possible_moves_follow_the_story_and_the_scene():
-    st = seeded_state()
+    # The prologue guides but never walls: three ways down, one of them the door.
+    road = seeded_state()
+    assert road.location == PROLOGUE
+    assert [m["label"] for m in possible_moves(road)] == [
+        "Look over the town below",
+        "Head down to the Lantern",
+        "Listen to the night",
+    ]
+    # Inside the inn the moves follow the story's stage (§1).
+    engine_obj = _engine_in_inn("scene-moves")
+    st = engine_obj.state
     unheard = [m["label"] for m in possible_moves(st)]
     assert "Ask Marla about the road" in unheard
     assert "Take the stairs with Marla" not in unheard
@@ -319,7 +365,7 @@ def test_possible_moves_follow_the_story_and_the_scene():
 
 
 def test_a_story_boundary_moves_the_scenes_aim_not_the_player():
-    engine_obj = _engine("scene-boundary")
+    engine_obj = _engine_in_inn("scene-boundary")
     st = engine_obj.state
     before = _scene(st).goal
     engine_obj.act("I ask Marla about the travelers")
@@ -339,6 +385,7 @@ def test_the_scene_transition_uses_a_real_checkpoint_name():
 
 def test_a_scene_transition_autosaves_a_checkpoint(client: TestClient):
     h, cid = _setup(client, "scene-autosave@example.com")
+    _act(client, h, "I head down to the inn and step inside")
     _act(client, h, "I ask Marla about the travelers")
     before = client.get(f"/campaigns/{cid}/saves", headers=h).json()
     assert "scene_transition" not in {r["checkpoint"] for r in before}
@@ -353,6 +400,7 @@ def test_a_scene_transition_autosaves_a_checkpoint(client: TestClient):
 
 def test_state_carries_the_scene_the_player_stands_in(client: TestClient):
     h, _cid = _setup(client, "scene-state@example.com")
+    _act(client, h, "I head down to the inn and step inside")
     _act(client, h, "I ask Marla about the travelers")
     _act(client, h, "I follow Marla upstairs")
     s = client.get("/state", headers=h).json()
@@ -368,6 +416,7 @@ def test_state_carries_the_scene_the_player_stands_in(client: TestClient):
 
 def test_scene_state_survives_save_and_load(client: TestClient):
     h, cid = _setup(client, "scene-save-load@example.com")
+    _act(client, h, "I head down to the inn and step inside")
     _act(client, h, "I ask Marla about the travelers")
     _act(client, h, "I follow Marla upstairs")
     assert _state(cid).scene == UPSTAIRS

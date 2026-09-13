@@ -28,7 +28,7 @@ from app.modules.character.creation import (
     review,
 )
 from app.modules.character.models import Character, CharacterAttribute
-from app.modules.play.state import PlayState
+from app.modules.play.state import PlayState, refresh_prologue_opening
 from app.modules.progression.skills import SKILL_REGISTRY
 
 #: Frontend play-sheet attribute names mapped from the creation attribute set.
@@ -181,6 +181,9 @@ def apply_creation(db: Session, campaign_id: str, state: PlayState) -> dict[str,
         f"{'; '.join(grants.get('hooks', ['a story still unfolding']))}."
     )
     pc["created"] = True
+    # The chronicle may already be open on the prologue's road: the arrival
+    # text is the player's own sheet, so it is recomposed the moment it lands.
+    refresh_prologue_opening(state)
     db.commit()
     return {
         "applied": True,

@@ -33,7 +33,7 @@ from app.modules.npc.personality import (
     social_adjustment,
 )
 from app.modules.play.session import PlaySession
-from app.modules.play.state import CLUES, SOLUTIONS
+from app.modules.play.state import CLUES, OPENING_BEAT, SOLUTIONS
 from app.modules.play.view import npc_names, npcs_present
 from app.modules.rules.checks import (
     CheckRequest,
@@ -45,6 +45,7 @@ from app.modules.rules.checks import (
     roll_check,
 )
 from app.modules.story.scenes import (
+    PROLOGUE,
     UPSTAIRS,
     UPSTAIRS_GOAL,
     UPSTAIRS_LABEL,
@@ -468,6 +469,37 @@ DOWNSTAIRS_ALREADY = (
     "nothing of you this hour."
 )
 
+#: The inn's one first arrival (§intro): the door, the room, and what the rain
+#: left on the board. Composed over the inn's opening beat so the room's text
+#: stays canon — the opening plays once, at this transition in.
+INN_ARRIVAL = "The door gives, and the night lets go of you all at once. " + OPENING_BEAT
+INN_WELCOME_LINE = (
+    "Come in from the rain, then — the fire's warm and the road's bad. "
+    "Sit where I can see you, stranger; questions come cheaper than silver here."
+)
+
+#: The prologue's own moves — authored, so the guided buttons always land in
+#: prose worth the tap, and none of them moves the player (§intro).
+PROLOGUE_TOWN_VIEW = (
+    "Ravenford from the ridge, in the rain: rooftops descending to the river like "
+    "ledger columns, the old bridge holding its arch against the current, and a "
+    "single lantern burning on the one street that matters — the inn's. Past the "
+    "last houses the Northern Road runs out into the dark; whatever waits on it "
+    "can wait until morning."
+)
+PROLOGUE_LISTEN = (
+    "You stand still a moment and let the night say what it has: rain on hedge and "
+    "slate, the river's low argument under the bridge, a shutter working loose "
+    "somewhere below — and under all of it, faint as coin under cloth, the murmur "
+    "of the inn's common room. A fire. Voices. A door worth opening."
+)
+PROLOGUE_NORTH = (
+    "You walk on past the last lamp, and Ravenford gathers itself behind you — "
+    "roofs, warmth, the inn's one light — the way a decision does once it is made. "
+    "Ahead, the Northern Road takes the rain quietly. It has a long habit of "
+    "taking things quietly."
+)
+
 #: The anti-loop reply (§7): a repeated or idle action gets a shorter answer
 #: that points at what is still possible instead of re-narrating the room.
 DIMINISH_LINE = (
@@ -527,6 +559,19 @@ _LEDGER = re.compile(r"ledger|guest ?book|books", re.IGNORECASE)
 _CELLAR = re.compile(r"cellar|trapdoor|cellars", re.IGNORECASE)
 _MARKET = re.compile(r"\bmarket\b|\bstalls?\b|\bshops?\b|sella", re.IGNORECASE)
 _MONASTERY = re.compile(r"monastery|chapel|anselm|beacon|monks?", re.IGNORECASE)
+
+#: The prologue's one door: entering town and the Lantern (§intro).
+_ENTER_INN_RE = re.compile(
+    r"\b(enter|go in|get in|go inside|get inside|step in|step inside|inside|"
+    r"in through|through the door|the door|the inn|into town|down into|"
+    r"walk down|head down|go down|descend)\b",
+    re.IGNORECASE,
+)
+#: At the prologue, walking on north is a real direction: the road out of town.
+_NORTH_AWAY_RE = re.compile(
+    r"\b(northern road|north road|head north|keep going|walk on|onward|set off)\b",
+    re.IGNORECASE,
+)
 
 # --- arc routing (solutions + resolution) -----------------------------------
 _SELLA = re.compile(r"\bsella\b|\bfactor\b|\bscales\b", re.IGNORECASE)
@@ -844,8 +889,24 @@ class ActEngine:
 
         The map's beats are location-level ("leave", "return", "travel"); a
         micro-scene has its own doors — upstairs and back down — and the room
-        the player actually stands in decides which one the words name.
+        the player actually stands in decides which one the words name. At
+        the prologue only its one door exists: town and the Lantern (§intro).
         """
+        if self.state.location == PROLOGUE:
+            # The prologue's one door: town and the Lantern. Walking on north
+            # keeps the map honest; everything else rides the narrator live —
+            # Marla is behind a door twenty paces off, not in this scene.
+            if _ENTER_INN_RE.search(text):
+                return "enter_inn"
+            if _NORTH_AWAY_RE.search(text):
+                return "leave"
+            if re.search(_LEAVE_V, text, re.IGNORECASE):
+                return "enter_inn"
+            if re.search(r"\b(look|view|survey|see|watch|town|below|gate)\b", text, re.IGNORECASE):
+                return "prologue_look"
+            if re.search(r"\b(listen|hear|quiet|silence|rain|river|night)\b", text, re.IGNORECASE):
+                return "prologue_listen"
+            return "pipeline"
         if self.state.scene == UPSTAIRS:
             if _DOWNSTAIRS_RE.search(text) and not _UPSTAIRS_RE.search(text):
                 return "downstairs"
@@ -1343,6 +1404,18 @@ class ActEngine:
                           "Behind, the Lantern's light; ahead, the dark that keeps its books badly.",
                 kind="travel",
             )
+        if st.location == PROLOGUE:
+            # From the prologue's ridge "leave" means walking on into the dark
+            # past the town — the road's usual arrival text would misread here.
+            st.location = "northern-road"
+            st.visit_location("northern-road")
+            st.advance_minutes(10)
+            SceneDirector(st).enter("northern-road")
+            return BeatOutcome(
+                ack="You give the town's light your back.",
+                narration=PROLOGUE_NORTH,
+                kind="travel",
+            )
         st.location = "northern-road"
         st.visit_location("northern-road")
         st.advance_minutes(10)
@@ -1364,6 +1437,55 @@ class ActEngine:
             narration=RETURN_NARRATION,
             kind="travel",
             dialogue=[{"speaker": "Marla Voss", "line": self._marla_greeting()}],
+        )
+
+    def _beat_enter_inn(self, text: str) -> BeatOutcome:
+        """Arrive (§intro): the road lets go and the Lantern takes you in.
+
+        Entering from the prologue is a scene transition like any other — the
+        anti-loop never blocks it — and the inn's opening (the room, the
+        welcome) plays exactly once, on this first visit. Reached from
+        anywhere past the prologue it degrades to the usual return greeting.
+        """
+        st = self.state
+        if st.location != PROLOGUE:
+            return self._beat_return(text)
+        st.advance_minutes(5)
+        st.location = "lantern-inn"
+        st.visit_location("lantern-inn")
+        move = SceneDirector(st).enter("lantern-inn")
+        if move.first_visit:
+            narration = INN_ARRIVAL
+            dialogue = [{"speaker": "Marla Voss", "line": INN_WELCOME_LINE}]
+        else:
+            narration = RETURN_NARRATION
+            dialogue = [{"speaker": "Marla Voss", "line": self._marla_greeting()}]
+        return BeatOutcome(
+            ack="You take the last stretch down into Ravenford.",
+            narration=narration,
+            kind="travel",
+            dialogue=dialogue,
+            suggestions=possible_moves(st),
+        )
+
+    def _beat_prologue_look(self, text: str) -> BeatOutcome:
+        """The prologue's view: authored, quiet, and it never moves you (§intro)."""
+        self.state.advance_minutes(2)
+        return BeatOutcome(
+            ack="You look out over the valley.",
+            narration=PROLOGUE_TOWN_VIEW,
+            kind="",
+            suggestions=possible_moves(self.state),
+        )
+
+    def _beat_prologue_listen(self, text: str) -> BeatOutcome:
+        """The prologue's night, heard: authored, and it never moves you (§intro)."""
+        self.state.advance_minutes(2)
+        return BeatOutcome(
+            ack="You hold still and listen.",
+            narration=PROLOGUE_LISTEN,
+            kind="",
+            suggestions=possible_moves(self.state),
         )
 
     def _beat_rest(self, text: str) -> BeatOutcome:

@@ -53,8 +53,18 @@ UPSTAIRS = "lantern-inn:upstairs-room"
 UPSTAIRS_LABEL = "The upstairs room"
 UPSTAIRS_GOAL = "Hear what Marla will not say at the bar"
 
+#: The prologue (§intro): a fresh chronicle opens on the road above Ravenford,
+#: one rainy dusk before the tavern — the arrival first, then the room.
+PROLOGUE = "road-to-ravenford"
+PROLOGUE_LABEL = "The road to Ravenford"
+PROLOGUE_GOAL = "Come in out of the rain"
+
 #: Root scenes: one per map location the slice plays in, keyed by location id.
 ROOT_SCENES: dict[str, dict[str, str]] = {
+    PROLOGUE: {
+        "label": PROLOGUE_LABEL,
+        "goal": PROLOGUE_GOAL,
+    },
     "lantern-inn": {
         "label": "The Lantern Inn — common room",
         "goal": "Take the measure of the room",
@@ -161,7 +171,16 @@ def possible_moves(state: PlayState) -> list[dict[str, str]]:
         out.append({"label": "Back to the room you came from",
                     "command": "I go back the way I came"})
     location = str(getattr(state, "location", ""))
-    if location == "lantern-inn":
+    if location == PROLOGUE:
+        out += [
+            {"label": "Look over the town below",
+             "command": "I look over the town below"},
+            {"label": "Head down to the Lantern",
+             "command": "I head down to the inn and step inside"},
+            {"label": "Listen to the night",
+             "command": "I listen to the rain and the river"},
+        ]
+    elif location == "lantern-inn":
         if stage == "unheard":
             out += [
                 {"label": "Ask Marla about the road",
@@ -368,9 +387,10 @@ class SceneDirector:
         existing = self.get(target)
         first = existing is None
         if existing is None:
+            spec = ROOT_SCENES.get(target, {})
             existing = Scene(
                 id=target,
-                label=label or target.replace("-", " ").replace(":", " — ").capitalize(),
+                label=label or spec.get("label") or target.replace("-", " ").replace(":", " — ").capitalize(),
                 location=location or self.state.location,
                 parent=parent,
                 goal=goal or goal_for(location or self.state.location, self.state.lead_stage, self.state.completed),

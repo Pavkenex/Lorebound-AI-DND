@@ -309,6 +309,13 @@ def test_act_uses_saved_custom_provider(client, fake_openai):
     c = client.post("/campaigns", headers=headers, json={})
     assert c.status_code == 201, c.text
 
+    # The chronicle opens on the prologue's road (§intro); walk in so the
+    # tuned provider narrates an in-tavern act.
+    walk = client.post(
+        "/act", headers=headers, json={"text": "I head down to the inn and step inside"}
+    )
+    assert walk.status_code == 200, walk.text
+
     saved = client.put(
         "/ai/settings",
         headers=headers,

@@ -68,6 +68,12 @@ def _setup(client: TestClient, email: str) -> tuple[dict, str]:
     )
     headers = {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
     c = client.post("/campaigns", headers=headers, json={})
+    # The chronicle opens on the prologue's road (§intro); these tests play
+    # inside the tavern, so the player walks in first.
+    w = client.post(
+        "/act", headers=headers, json={"text": "I head down to the inn and step inside"}
+    )
+    assert w.status_code == 200, w.text
     return headers, c.json()["id"]
 
 
@@ -109,9 +115,9 @@ def test_surfaced_check_waits_for_the_players_throw(client: TestClient):
     assert pending["narration"] is None and pending["mechanics"] is None
     assert headers["x-ai-calls"] == "0"        # an authored check costs nothing
 
-    # Nothing persisted: the die has not been thrown, so the beat has not begun.
+    # Nothing from the pending leg persisted: the die has not been thrown.
     st = _state(cid)
-    assert st.actions_taken == 0 and st.silver == 8
+    assert st.actions_taken == 1 and st.silver == 8  # the walk-in alone landed
     assert all(e["kind"] != "dice" for e in st.feed)
     assert "stole:storeroom-strongbox" not in st.marla_memory
 
@@ -125,7 +131,7 @@ def test_surfaced_check_waits_for_the_players_throw(client: TestClient):
     assert data["mechanics"]["dc"] == 13
     assert data["mechanics"]["outcome"] == "Exceptional"
     st = _state(cid)
-    assert st.actions_taken == 1
+    assert st.actions_taken == 2  # the walk-in + the thrown beat
     assert st.silver == 22                     # 8 + 14
     assert "stole:storeroom-strongbox" in st.marla_memory
     assert any(e["kind"] == "dice" for e in st.feed)  # the chronicle keeps the roll
@@ -173,7 +179,7 @@ def test_pending_leg_never_persists_or_double_counts(client: TestClient):
     _, replay, _ = _call(client, h, STEAL)
     assert first["pending_check"]["token"] == replay["pending_check"]["token"]
     st = _state(cid)
-    assert st.actions_taken == 0               # replays of a pending leg are free
+    assert st.actions_taken == 1               # replays of a pending leg are free
     assert st.silver == 8
 
 
@@ -189,7 +195,7 @@ def test_hidden_checks_roll_behind_the_screen(client: TestClient):
     assert len(verdicts) == 1
     assert re.fullmatch(r"⚄ Insight check — (passed|failed) · \d+ vs DC 13\.", verdicts[0])
     assert any("⚄ Insight check" in (e.get("text") or "") for e in _state(cid).feed)
-    assert _state(cid).actions_taken == 1
+    assert _state(cid).actions_taken == 2  # the walk-in + the quiet check
 
 
 def test_hidden_check_verdict_reports_pass_and_fail(client: TestClient):
@@ -210,7 +216,7 @@ def test_social_checks_without_stakes_never_ask_for_a_die(client: TestClient):
     assert status == 200
     assert "pending_check" not in data         # RP resolves it; no roll (t_2e94122b)
     assert data["narration"]
-    assert _state(cid).actions_taken == 1
+    assert _state(cid).actions_taken == 2  # the walk-in + the social beat
 
 
 def test_pipeline_checks_also_wait_for_the_throw(client: TestClient):
@@ -230,7 +236,7 @@ def test_pipeline_checks_also_wait_for_the_throw(client: TestClient):
     assert data["mechanics"]["outcome"] == "Success"
     assert data["narration"]
     assert int(r.headers["x-ai-calls"]) >= 1   # the resolve leg narrates
-    assert _state(cid).actions_taken == 1
+    assert _state(cid).actions_taken == 2  # the walk-in + the climbing beat
 
 
 def test_seeded_calls_still_resolve_in_one_pass(client: TestClient):

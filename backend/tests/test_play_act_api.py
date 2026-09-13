@@ -55,6 +55,9 @@ def _setup(client: TestClient, email: str) -> tuple[dict, str]:
     headers = {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
     c = client.post("/campaigns", headers=headers, json={})
     assert c.status_code == 201, c.text
+    # The chronicle opens on the prologue's road (§intro); these tests play
+    # inside the tavern, so the player walks in first.
+    _act(client, headers, "I head down to the inn and step inside")
     return headers, c.json()["id"]
 
 
@@ -119,7 +122,7 @@ def test_talk_discovers_then_accepted_and_feed_grows(client: TestClient):
     narrations = [e for e in st.feed if e["kind"] == "narration"]
     assert len(narrations) >= 3
     assert st.feed[-1]["kind"] == "dialogue"
-    assert st.actions_taken == 2
+    assert st.actions_taken == 3  # the walk-in, the talk, and the acceptance
 
 
 def test_notice_board_also_discovers(client: TestClient):
@@ -212,7 +215,7 @@ def test_free_text_falls_back_to_pipeline_with_stub(client: TestClient):
     h, cid = _setup(client, "free@example.com")
     r = _act(client, h, "I hum a marching tune and dry my boots by the hearth")
     assert len(r["narration"]) > 40  # stub narrator produced prose
-    assert _state(cid).actions_taken == 1
+    assert _state(cid).actions_taken == 2  # the walk-in, then the hum
 
 
 def test_rest_restores_and_time_advances(client: TestClient):

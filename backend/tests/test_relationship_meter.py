@@ -62,6 +62,9 @@ def _setup(client: TestClient, email: str) -> tuple[dict, str]:
     headers = {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
     c = client.post("/campaigns", headers=headers, json={})
     assert c.status_code == 201, c.text
+    # The chronicle opens on the prologue's road (§intro); these tests play
+    # inside the tavern, so the player walks in first.
+    _act(client, headers, "I head down to the inn and step inside")
     return headers, c.json()["id"]
 
 

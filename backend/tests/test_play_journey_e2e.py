@@ -69,9 +69,9 @@ def test_full_journey_start_to_finish(client: TestClient):
     cid = c.json()["id"]
 
     st = client.get("/state", headers=h).json()
-    assert st["location"] == "The Lantern Inn, Ravenford"
+    assert st["location"] == "The road to Ravenford"  # the prologue (§intro)
     assert st["lead_stage"] == "unheard"
-    assert len(st["feed"]) == 2  # opening narration + Marla's welcome
+    assert len(st["feed"]) == 1  # the arrival narration alone
     assert st["character"]["name"] == "Kaelis Thorn"
 
     def act(text: str, seed: int = 18, key: str | None = None) -> dict:
@@ -81,6 +81,11 @@ def test_full_journey_start_to_finish(client: TestClient):
         r = client.post("/act", headers=headers, json={"text": text, "seed_roll": seed})
         assert r.status_code == 200, r.text
         return r.json()
+
+    # -- 2b. The walk-in: the road lets go, the Lantern takes you in (§intro).
+    arrive = act("I head down to the inn and step inside")
+    assert arrive["dialogue"][0]["speaker"] == "Marla Voss"
+    assert "Lantern Inn" in client.get("/state", headers=h).json()["location"]
 
     # -- 3. The seven flows (talk / inspect / steal / fight / discover-lead / leave / return)
     talk = act("I ask Marla about the travelers")
