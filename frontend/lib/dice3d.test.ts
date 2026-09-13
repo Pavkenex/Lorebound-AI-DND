@@ -17,6 +17,7 @@ import {
   faceRgb,
   isCrit,
   mulberry32,
+  numeralBasis,
   numeralRgb,
   orientForFace,
   projectPoint,
@@ -32,6 +33,7 @@ import {
   vLen,
   vNorm,
   type Quat,
+  type RenderedFace,
   type Vec3,
 } from "./dice3d.ts";
 
@@ -297,4 +299,57 @@ test("numerals flip to light etching on dark facets, dark on light ones", () => 
   const lightSide = numeralRgb(1.0, "crit-success", false, true);
   assert.ok(darkSide[0] > 200 && darkSide[1] > 200, "dark facet -> light numeral");
   assert.ok(lightSide[0] < 90 && lightSide[1] < 90, "light facet -> dark numeral");
+});
+
+// --- engraved numerals: handedness -------------------------------------------
+
+const DICE_VIEW = { width: 320, height: 320, zoom: 0.165, distance: 4.4 };
+
+type Tri = [readonly [number, number], readonly [number, number], readonly [number, number]];
+
+function projected(face: RenderedFace): Tri {
+  return face.points.map((p) => projectPoint(p, DICE_VIEW)) as Tri;
+}
+
+test("engraved numerals: every visible face gets an orientation-preserving basis", () => {
+  // The mesh winds counter-clockwise seen from outside; the screen y-flip
+  // turns that into an orientation-reversing frame, so the numeral basis must
+  // pair a→c with a→b (positive determinant) or every digit renders mirrored.
+  const mesh = d20Mesh();
+  const orientations: Quat[] = [];
+  for (let n = 1; n <= 20; n++) orientations.push(quatMul(cameraTilt(), orientForFace(mesh, n)));
+  const rnd = mulberry32(20260913);
+  for (let i = 0; i < 40; i++) {
+    orientations.push(quatNorm([rnd() - 0.5, rnd() - 0.5, rnd() - 0.5, rnd() - 0.5]));
+  }
+  let checked = 0;
+  for (const rot of orientations) {
+    for (const face of visibleFaces(mesh, rot, DICE_VIEW.distance)) {
+      const [a, b, c] = projected(face);
+      const [xx, xy, yx, yy] = numeralBasis([a, b, c]);
+      assert.ok(xx * yy - xy * yx > 0, `face ${face.number}: numeral basis is mirrored`);
+      assert.ok(
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < 0,
+        `face ${face.number}: screen winding unexpectedly not reversed`,
+      );
+      checked++;
+    }
+  }
+  assert.ok(checked > 200, `covered enough faces (${checked})`);
+});
+
+test("engraved numerals sit upright on the settled face", () => {
+  const mesh = d20Mesh();
+  for (let n = 1; n <= 20; n++) {
+    const rot = quatMul(cameraTilt(), orientForFace(mesh, n));
+    const front = visibleFaces(mesh, rot, DICE_VIEW.distance).find((f) => f.number === n);
+    assert.ok(front, `settled on ${n}: face ${n} visible`);
+    const [a, b, c] = projected(front!);
+    const [xx, xy, yx, yy] = numeralBasis([a, b, c]);
+    const rl = Math.hypot(xx, xy);
+    const ul = Math.hypot(yx, yy);
+    // Glyph x points screen-right, glyph y screen-down (up = -y).
+    assert.ok(xx / rl > 0.5, `settled on ${n}: glyph x drifts off screen-right (${(xx / rl).toFixed(3)})`);
+    assert.ok(yy / ul > 0.8, `settled on ${n}: glyph y drifts off screen-down (${(yy / ul).toFixed(3)})`);
+  }
 });

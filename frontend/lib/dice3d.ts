@@ -240,13 +240,20 @@ const LIGHT_DIR: Vec3 = vNorm([-0.45, 0.85, 0.8]);
 /**
  * Front-facing, shaded faces of the rotated mesh, sorted back-to-front so a
  * canvas renderer can paint them in order (painter's algorithm).
+ *
+ * "Front-facing" means the eye — on the view axis at [0, 0, distance] — lies
+ * on the outward side of the face plane. A plain normal[2] test is not enough
+ * at this camera distance: near the silhouette a face can have normal[2] > 0
+ * and still be turned away from the eye, and such a face projects with
+ * reversed winding (its engraved numeral would come out mirrored).
  */
-export function visibleFaces(mesh: DieMesh, rot: Quat): RenderedFace[] {
+export function visibleFaces(mesh: DieMesh, rot: Quat, distance = 4.4): RenderedFace[] {
   const out: RenderedFace[] = [];
   for (const face of mesh.faces) {
     const normal = quatRotate(rot, face.normal);
-    if (normal[2] <= 0.02) continue; // back-facing (with a sliver guard)
     const centroid = quatRotate(rot, face.centroid);
+    // dot(normal, eye - centroid) > 0, with eye = [0, 0, distance].
+    if (normal[2] * distance - vDot(normal, centroid) <= 0) continue;
     const points = face.indices.map((i) => quatRotate(rot, mesh.vertices[i])) as [Vec3, Vec3, Vec3];
     const diff = Math.max(0, vDot(normal, LIGHT_DIR));
     out.push({
@@ -276,6 +283,28 @@ export function projectPoint(p: Vec3, view: ViewSpec): readonly [number, number]
   const persp = dist / Math.max(0.3, dist - p[2]);
   const scale = zoom * Math.min(view.width, view.height) * persp;
   return [view.width / 2 + p[0] * scale, view.height / 2 - p[1] * scale];
+}
+
+// --- engraved numerals --------------------------------------------------------
+
+/**
+ * Canvas affine basis `[xx, xy, yx, yy]` for the engraved numeral of a
+ * projected face: glyph x runs along edge a→c, glyph y along edge a→b.
+ *
+ * The mesh is wound counter-clockwise seen from outside; once screen y points
+ * down that winding reads reversed, so text drawn in the raw a→b / a→c order
+ * comes out mirrored. Pairing a→c with a→b keeps the determinant positive,
+ * and the engraved number reads the way it was cut.
+ */
+export function numeralBasis(
+  pts: readonly [
+    readonly [number, number],
+    readonly [number, number],
+    readonly [number, number],
+  ],
+): readonly [number, number, number, number] {
+  const [a, b, c] = pts;
+  return [c[0] - a[0], c[1] - a[1], b[0] - a[0], b[1] - a[1]];
 }
 
 // --- seeded PRNG (deterministic animations) ----------------------------------

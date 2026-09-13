@@ -17,6 +17,7 @@ import {
   faceFillCss,
   facePalette,
   isCrit,
+  numeralBasis,
   numeralRgb,
   orientForFace,
   projectPoint,
@@ -146,7 +147,7 @@ function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
 
   // The die itself, painter order.
   const rot = quatMul(cameraTilt(), scene.quat);
-  const faces = visibleFaces(mesh, rot);
+  const faces = visibleFaces(mesh, rot, view.distance);
   const projected = faces.map((f) => ({
     face: f,
     pts: f.points.map((p) => projectPoint(p, view)) as [readonly [number, number], readonly [number, number], readonly [number, number]],
@@ -194,7 +195,8 @@ function drawScene(ctx: CanvasRenderingContext2D, scene: Scene) {
       const numAlpha = Math.min(1, (areaFrac - 0.04) / 0.03);
       ctx.save();
       ctx.globalAlpha = numAlpha;
-      ctx.transform(b[0] - a[0], b[1] - a[1], c[0] - a[0], c[1] - a[1], a[0] - cx, a[1] - cy);
+      const [xx, xy, yx, yy] = numeralBasis(pts);
+      ctx.transform(xx, xy, yx, yy, a[0] - cx, a[1] - cy);
       ctx.translate(1 / 3, 1 / 3);
       ctx.rotate(-Math.PI / 4);
       ctx.font = '700 0.36px Georgia, "Times New Roman", serif';
