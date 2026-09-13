@@ -334,7 +334,11 @@ export default function AdventurePage() {
             className="input-parch"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Attempt anything — ask Marla about the wagon, inspect the seal, step into the rain…"
+            placeholder={
+              gs.scene?.id === "road-to-ravenford" // the prologue (§intro)
+                ? "Attempt anything — look over the town, listen to the rain, head down to the Lantern…"
+                : "Attempt anything — ask Marla about the wagon, inspect the seal, step into the rain…"
+            }
             aria-label="action input"
             disabled={busy || !!pending}
             autoComplete="off"

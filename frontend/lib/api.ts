@@ -290,6 +290,8 @@ export type LiveGameState = Omit<typeof fixtures.gameState, "npcs"> & {
   lead_stage?: string;
   clues?: string[];
   npcs: NpcEntry[];
+  /** The live scene block (§7): id/label/goal of where the player stands. */
+  scene?: { id: string; label: string; goal?: string; state?: string };
 };
 
 export interface TutorialDoc {
