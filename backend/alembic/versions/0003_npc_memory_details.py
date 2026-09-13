@@ -6,6 +6,7 @@ Revises: 0002_ai_provider_settings
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0003_npc_memory_details"
