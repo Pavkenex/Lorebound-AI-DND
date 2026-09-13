@@ -15,6 +15,14 @@ here are tunable knobs, not contracts.
   can land if the player plays their cards right.
 - Scenes may linger, but never loop or pull the player back; when it is
   naturally time to move on, the story transitions cleanly.
+- **Side stories are first-class:** characters and the world run their own
+  threads; the player may pursue anything to its natural end, and the main
+  quest pulls through consequence and invitation — never by locking doors.
+  When a side story resolves, the story finds its way back to the main
+  thread.
+- **Leverage counts when it matches a need:** money, gifts, favors, or
+  pressure can decide an outcome — or shortcut it outright — when they
+  answer what the character actually wants.
 
 ## 2. Memory — three layers
 
@@ -99,28 +107,50 @@ Each NPC recalls *their* slice; a character who wasn't there doesn't know.
   never whether a miracle is possible.
 - **Long odds are visible:** genuinely hard attempts get a "Long odds" tag
   on the check prompt, so the player knows they are gambling.
+- **Leverage is a legitimate shortcut:** when money answers the character's
+  need (debts, greed, a price they name), paying can decide the outcome —
+  at the extreme, skipping the roll because the price genuinely meets the
+  need. Gifts, favors, and pressure work the same way, each through the
+  character's personality; pressure carries its own price (relationship
+  damage, backfire risk).
 - **Worked example** (from the design discussion): a deeply guarded, cold
   character can still be won over — right approach + right information +
-  timing + a lucky die — but the outcome is always story-shaped and respects
-  the campaign's content settings. Money or force alone never shortcut it.
+  timing + a lucky die — and if the player finds the need this character
+  actually has, that leverage can be the deciding factor. Content follows
+  the campaign's content settings.
 - Anti-cheese: declaring success changes nothing (existing AuthorityEngine
-  rule); only rolls + validated outcomes move state.
+  rule); only rolls + validated outcomes + real leverage move state.
 
 ## 7. Scene flow ("the shield")
 
 - Scene model: `{location, goal (from active leads), beat count,
   last_progress, state: active → resolved → transitioning}` — backed by the
   existing `scenes` / `scene_events` / `player_actions` tables.
+- **Micro-scenes are first-class:** a scene is finer-grained than the map.
+  "The upstairs room", "the back alley", "the cellar corner" are scenes
+  even though the map still reads Lantern Inn. Scenes are not limited to
+  campaign locations — the map tracks travel, scenes track the moment.
+  Sub-scenes arise from the fiction (an invitation, an agreement, player
+  initiative) and resolve back to their parent.
 - Staying in a scene a while is fine. Lingering is allowed.
 - **Anti-loop:** repeat/idle actions get diminishing responses and point at
   what is still possible. A resolved scene never re-runs its opening, and
-  narration never pulls the player back into a scene they've left.
-- **Transition triggers:** (a) the player moves; (b) the scene goal resolves
-  or is clearly exhausted; (c) a story beat/chapter boundary.
+  narration never pulls the player back into a scene they've left. The
+  guard never blocks a live transition — when the fiction opens a door (an
+  NPC says "come upstairs"), the engine takes it.
+- **Transition triggers:** (a) the player moves; (b) the scene goal
+  resolves or is clearly exhausted; (c) a story beat/chapter boundary;
+  (d) a narrative invitation or agreement — NPC or player proposes the
+  new scene.
 - **On transition:** autosave checkpoint + bridging narration + the new
   scene set (clock advances, NPC set changes). Re-entering a scene restores
   its remembered state.
-- Deliverable: no more circling the same evening; transitions feel authored.
+- **Side stories:** the director runs threads beyond the main quest; they
+  reach a natural end (resolution, refusal, a promise for later) and the
+  flow then leads back to the main thread by invitation and consequence,
+  not blockage.
+- Deliverable: no more circling the same evening; scenes open and close the
+  way they do in a story — and a bar conversation can walk upstairs.
 
 ## 8. Integration map
 
@@ -148,7 +178,8 @@ Each NPC recalls *their* slice; a character who wasn't there doesn't know.
 2. Relationship meter: values, deltas, bar + number + chips.
 3. Mood: state, decay, narrator injection, mood chip.
 4. Personality + social checks: DC modifiers, hail-mary rule, Long-odds tag.
-5. Scene director: state machine, anti-loop guard, transitions, autosave.
+5. Scene director: state machine, micro-scenes, anti-loop guard,
+   invitation transitions, autosave.
 6. Content pass: journal/NPC views polished, playtest harness updated.
 
 ## 10. Open questions (settle during build)
