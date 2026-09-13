@@ -8,6 +8,7 @@ venv/
 .env
 node_modules/
 .next/
+.next-archive-*/
 *.tsbuildinfo
 dist/
 coverage/
