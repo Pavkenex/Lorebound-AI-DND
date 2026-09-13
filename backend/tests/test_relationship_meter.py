@@ -173,7 +173,7 @@ def test_steal_deltas_clean_seen_caught(client: TestClient):
     assert _meter_lines(clean) == ["❖ Marla −25 — Wary (-25)"]
     assert _state(cid).attitudes == {"marla": -25}
 
-    h2, cid2 = _setup(client, "rel-steal-seen@example.com")
+    h2, _cid2 = _setup(client, "rel-steal-seen@example.com")
     seen = _act(client, h2, "I steal from the storeroom strongbox", seed=10)
     assert _meter_lines(seen) == ["❖ Marla −30 — Wary (-30)"]
 
@@ -191,7 +191,7 @@ def test_brawl_and_intimidation_deltas(client: TestClient):
     assert _state(cid).attitudes == {"marla": -15, "borin": -15}
 
     # Brawl lost (seed 8): Marla −15, Borin −5 (he kept the upper hand).
-    h2, cid2 = _setup(client, "rel-brawl-lose@example.com")
+    h2, _cid2 = _setup(client, "rel-brawl-lose@example.com")
     lost = _act(client, h2, "I attack Borin", seed=8)
     assert _meter_lines(lost) == ["❖ Marla −15 — Neutral (-15)", "❖ Borin −5 — Neutral (-5)"]
 
