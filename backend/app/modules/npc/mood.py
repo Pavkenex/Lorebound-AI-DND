@@ -36,9 +36,17 @@ NSFW_MOODS: frozenset[str] = frozenset({"flirty", "horny"})
 #: What a gated mood reads as when settings do not allow it (§4).
 MOOD_FALLBACK: dict[str, str] = {"flirty": "warm", "horny": "amused"}
 
-#: Per-character baseline (personality slice 4 supplies real baselines through
-#: this map; everyone rests at :data:`DEFAULT_MOOD` until then).
-MOOD_BASELINES: dict[str, str] = {}
+#: Per-character baseline (slice 4 fills the hook from the authored profiles):
+#: a character at rest reads as their own word, and every live mood decays back
+#: to it. The five Ravenford characters rest as authored; Marla and Borin rest
+#: neutral (their beats author every mood they wear).
+MOOD_BASELINES: dict[str, str] = {
+    "marla": "neutral",
+    "borin": "neutral",
+    "sella": "curious",
+    "tomm": "anxious",
+    "anselm": "anxious",
+}
 
 #: How much intensity fades per hour of in-game time.
 MOOD_DECAY_PER_HOUR = 0.25

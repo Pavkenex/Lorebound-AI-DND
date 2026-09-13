@@ -7,6 +7,8 @@ persistence path (:meth:`PlaySession.store`), so no DB is needed mid-beat.
 """
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,35 @@ ROSTER: tuple[dict[str, str], ...] = (
 )
 
 _HONORIFICS = {"brother", "sister", "sir", "lady", "mother", "father"}
+
+#: How the player's text names each roster character besides their own name —
+#: the alias table the routing and pipeline paths share (slice 4).
+NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "marla": ("marla", "innkeeper", "landlady", "innkeep"),
+    "borin": ("borin", "mercenary", "sellsword"),
+    "sella": ("sella", "factor", "scales"),
+    "tomm": ("tomm", "peddler", "tinker"),
+    "anselm": ("anselm", "porter", "monk", "brother"),
+}
+
+
+def named_npc(text: str, present: list[str] | None = None) -> str | None:
+    """The roster slug the text names, or None.
+
+    Aliases are matched on word boundaries ("the peddler" names Tomm). When
+    ``present`` (display names or slugs) is given, only those characters can
+    match — nobody answers to a shout in an empty room — and the earliest in
+    the roster wins if several are named.
+    """
+    t = str(text or "").lower()
+    allowed = None if present is None else {npc_slug(n) for n in present}
+    for slug, aliases in NAME_ALIASES.items():
+        if allowed is not None and slug not in allowed:
+            continue
+        for alias in aliases:
+            if re.search(rf"\b{re.escape(alias)}\b", t):
+                return slug
+    return None
 
 
 def _has_table(db: Session, table: str) -> bool:
