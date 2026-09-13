@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LAST_SAVE_KEY, RESUME_KEY, creationStateApi, getCampaignId, ensureCampaign } from "../lib/api";
+import { api, LAST_SAVE_KEY, RESUME_KEY, creationStateApi, getCampaignId, ensureCampaign } from "../lib/api";
 import { useStore } from "../lib/store";
 
 interface Resume { label: string; at: string; saveId: string }
@@ -33,17 +33,34 @@ export default function MenuPage() {
 
   function newJourney() {
     try {
-      localStorage.setItem(RESUME_KEY, JSON.stringify({ label: "A new road from Ravenford", at: new Date().toISOString(), saveId: "", campaignId: getCampaignId() }));
       localStorage.removeItem(LAST_SAVE_KEY);
     } catch { /* ignore */ }
-    // Live play when signed in + backend up: make sure a campaign exists first,
-    // then send campaigns without a hero through the choose-your-hero step
-    // (prebuilt sheets or the six-stage wizard) before the road (t_e71475f8).
-    void ensureCampaign().then(async (cid) => {
-      if (!cid) { router.push("/adventure"); return; }
+    // Live play when signed in + backend up: restart the campaign — the run in
+    // progress is checkpointed onto the shelf (“Before the new road”), the world
+    // turns back to its opening scene — then send campaigns without a hero
+    // through the choose-your-hero step (prebuilt sheets or the six-stage
+    // wizard) before the road (t_e71475f8).
+    void (async () => {
+      const cid = await ensureCampaign();
+      if (!cid) {
+        try {
+          localStorage.setItem(RESUME_KEY, JSON.stringify({ label: "A new road from Ravenford", at: new Date().toISOString(), saveId: "", campaignId: getCampaignId() }));
+        } catch { /* ignore */ }
+        router.push("/adventure");
+        return;
+      }
+      const r = await api.restartCampaign(cid);
+      if (r.fromFixture || !r.data.restarted) {
+        // The chronicler is out of reach: walk the road as far as local pages go.
+        router.push("/adventure");
+        return;
+      }
+      try {
+        localStorage.setItem(RESUME_KEY, JSON.stringify({ label: "A new road from Ravenford", at: new Date().toISOString(), saveId: "", campaignId: cid }));
+      } catch { /* ignore */ }
       const doc = await creationStateApi();
       router.push(doc && !doc.applied ? "/create" : "/adventure");
-    });
+    })();
   }
 
   return (

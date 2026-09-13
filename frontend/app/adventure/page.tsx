@@ -29,7 +29,7 @@ interface PendingThrow {
 }
 
 export default function AdventurePage() {
-  const { content, addCost, compactNarration, reducedMotion } = useStore();
+  const { content, addCost, compactNarration, reducedMotion, hydrated } = useStore();
   const [loading, setLoading] = useState(true);
   const [restored, setRestored] = useState<string | null>(null);
   const [gs, setGs] = useState<LiveGameState>(fixtures.gameState);
@@ -59,6 +59,13 @@ export default function AdventurePage() {
         if (s?.label) setRestored(s.label);
       }
     } catch { /* no restored save */ }
+  }, []);
+
+  // The first fetch must carry the *stored* content prefs — wait for the
+  // store to hydrate from localStorage, or the request races the hydration
+  // effect and gates the state with defaults (chips faded, content leaking).
+  useEffect(() => {
+    if (!hydrated) return;
     async function loadState(): Promise<void> {
       const r = await api.gameState(content);
       if (r.fromFixture && getToken()) {
@@ -78,7 +85,7 @@ export default function AdventurePage() {
     }
     void loadState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
@@ -277,6 +284,7 @@ export default function AdventurePage() {
             ❧ The tale of the missing travelers is told — the travelers walk free, and the chronicle marks this chapter complete. The road goes on.
           </div>
         )}
+        <div className="feed-scroll">
         {loading && (
           <div aria-label="Loading chronicle" role="status">
             <div className="skel" style={{ height: 120 }} />
@@ -293,6 +301,8 @@ export default function AdventurePage() {
           />
         )}
         {preserved && error && <p className="sys">Kept: “{preserved}”</p>}
+        <div ref={bottomRef} />
+        </div>
         {pending && (
           <CheckPrompt
             spec={pending.spec}
@@ -336,7 +346,6 @@ export default function AdventurePage() {
             <span className="sys">No wrong verbs. No timed decisions.</span>
           </div>
         </form>
-        <div ref={bottomRef} />
         <div className="toast-stack" aria-live="polite">
           {toasts.map((t, i) => (
             <div className="lead-toast" key={`${i}-${t}`} role="status">

@@ -24,6 +24,10 @@ interface Store extends Prefs {
   totalCost: number;
   lastCached: boolean;
   addCost: (c: CostInfo) => void;
+  /** True once persisted prefs have been loaded from localStorage. Consumers
+   *  that send prefs to the backend must wait for this before their first
+   *  call — a fetch on mount would race hydration and gate with defaults. */
+  hydrated: boolean;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -70,9 +74,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Store>(() => ({
     ...prefs,
     set: (p) => setPrefs((s) => ({ ...s, ...p })),
-    totalCalls, totalCost, lastCached,
+    totalCalls, totalCost, lastCached, hydrated,
     addCost: (c) => { setCalls((n) => n + c.calls); setCost((n) => n + c.costUsd); setCached(c.cached); },
-  }), [prefs, totalCalls, totalCost, lastCached]);
+  }), [prefs, totalCalls, totalCost, lastCached, hydrated]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

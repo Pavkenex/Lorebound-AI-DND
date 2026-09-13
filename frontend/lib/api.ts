@@ -96,6 +96,24 @@ async function post<T>(path: string, body: unknown, fallback: T, prefs?: Content
   }
 }
 
+async function del<T>(path: string, fallback: T): Promise<ApiResult<T>> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    const res = await fetch(`${BASE}${path}`, {
+      method: "DELETE",
+      signal: ctl.signal,
+      headers: { ...authHeaders() },
+    });
+    clearTimeout(t);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as T;
+    return { data, cost: readCost(res), fromFixture: false };
+  } catch {
+    return { data: fallback, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: true };
+  }
+}
+
 /** A surfaced check waiting on the player's throw (two-phase /act, t_84c31095-follow-up). */
 export interface PendingCheck {
   /** Human label, e.g. "Stealth — the storeroom strongbox". */
@@ -531,6 +549,14 @@ export async function applyPrebuiltApi(id: string): Promise<{ ok: boolean; error
   return { ok: true };
 }
 
+/** POST /campaigns/{id}/restart result: the old run's checkpoint + fresh state. */
+export interface RestartDoc {
+  restarted: boolean;
+  campaign_id: string;
+  had_progress: boolean;
+  checkpoint_save_id: string | null;
+}
+
 export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),
@@ -557,5 +583,18 @@ export const api = {
       {},
       { loaded: false, saveId },
       prefs
+    ),
+  /** Remove one save slot from the shelf (owner-scoped server-side). */
+  deleteSave: (saveId: string) =>
+    del<{ deleted: boolean; save_id: string; campaign_id: string }>(
+      `/saves/${encodeURIComponent(saveId)}`,
+      { deleted: false, save_id: saveId, campaign_id: "" }
+    ),
+  /** Begin a new journey: checkpoint the old run, reset state + clock. */
+  restartCampaign: (campaignId: string) =>
+    post<RestartDoc>(
+      `/campaigns/${encodeURIComponent(campaignId)}/restart`,
+      {},
+      { restarted: false, campaign_id: campaignId, had_progress: false, checkpoint_save_id: null }
     ),
 };

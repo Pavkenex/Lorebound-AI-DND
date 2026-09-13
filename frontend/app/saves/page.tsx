@@ -22,6 +22,7 @@ export default function SavesPage() {
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   function load(cid: string) {
     setLoading(true); setError(null);
@@ -75,6 +76,31 @@ export default function SavesPage() {
         : `❧ The chronicle turns back — “${row.label}”. The world remembers where you were.`
     );
     setTimeout(() => router.push("/adventure"), 650);
+  }
+
+  async function doDelete(row: SaveRow) {
+    setError(null); setNotice(null);
+    const r = await api.deleteSave(row.id);
+    addCost(r.cost);
+    setConfirmId(null);
+    if (!r.fromFixture && !r.data.deleted) {
+      setError("The chronicler could not tear that page out. Try again.");
+      return;
+    }
+    setSaves((s) => s.filter((x) => x.id !== row.id));
+    try {
+      // A resume banner must never point at a page that no longer exists.
+      const last = localStorage.getItem(LAST_SAVE_KEY);
+      if (last && (JSON.parse(last) as { saveId?: string })?.saveId === row.id) localStorage.removeItem(LAST_SAVE_KEY);
+      const resume = localStorage.getItem(RESUME_KEY);
+      if (resume && (JSON.parse(resume) as { saveId?: string })?.saveId === row.id) localStorage.removeItem(RESUME_KEY);
+    } catch { /* keys belong to other saves */ }
+    uiBlip(320);
+    setNotice(
+      r.fromFixture
+        ? `✕ “${row.label}” — torn from the local pages.`
+        : `✕ “${row.label}” — gone from the shelf.`
+    );
   }
 
   return (
@@ -151,7 +177,20 @@ export default function SavesPage() {
                   {fmtDate(s.created_at)}
                 </p>
               </div>
-              <button className="btn" onClick={() => loadSave(s)}>Load</button>
+              <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {confirmId === s.id ? (
+                  <>
+                    <span className="sys">Tear this page out?</span>
+                    <button className="btn" onClick={() => doDelete(s)}>Delete</button>
+                    <button className="btn btn-ghost" onClick={() => setConfirmId(null)}>Keep</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn" onClick={() => loadSave(s)}>Load</button>
+                    <button className="btn btn-ghost" onClick={() => setConfirmId(s.id)} aria-label={`Delete save ${s.label}`}>✕ Delete</button>
+                  </>
+                )}
+              </span>
             </article>
           ))}
         </div>

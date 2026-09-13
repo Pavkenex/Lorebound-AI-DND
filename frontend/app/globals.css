@@ -65,6 +65,18 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
 /* shell */
 .shell { display: grid; grid-template-columns: 290px minmax(0,1fr) 300px; min-height: 100vh; }
 .shell > aside { padding: 14px; }
+/* Desktop: the chronicle scrolls inside the page, not with it — the feed gets
+   its own scroll pane so the input, checks and suggestions stay in view. */
+@media (min-width: 1081px) {
+  body:has(.shell) { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  body:has(.shell) > .topnav { flex: 0 0 auto; }
+  body:has(.shell) > main { flex: 1 1 auto; min-height: 0; }
+  .shell { height: 100%; min-height: 0; overflow: hidden; }
+  .shell > aside { overflow-y: auto; }
+  .shell > section[aria-label="Chronicle"] { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .shell > section[aria-label="Chronicle"] > :not(.feed-scroll) { flex: 0 0 auto; }
+  .feed-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+}
 .topnav {
   display: flex; gap: 4px; align-items: center; padding: 8px 14px;
   border-bottom: 1px solid var(--line); background: #191410;
