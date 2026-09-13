@@ -88,9 +88,15 @@ Each NPC recalls *their* slice; a character who wasn't there doesn't know.
 - Every contested social attempt rolls: d20 + skill/approach mods vs DC.
   `DC = ask difficulty + personality/approach modifier + mood modifier −
   relationship credit` (warmth lowers it; hostility raises it).
-- **The dice speak:** a nat-20 always lands something real — often "at a
-  cost" (the check system already supports success-at-a-cost); a nat-1
-  always fails, and can backfire.
+- **The dice speak:** a nat-20 is always a **critical success** (the
+  system's `Exceptional` outcome — it applies even when the DC looked out
+  of reach); a nat-1 always fails critically. "Success at a cost" is
+  unchanged, and is a different band: borderline rolls that just barely
+  meet the DC (margin 0–2), never criticals.
+- Because criticals are unconditional, every rolled contest keeps a 5%
+  story-payoff window. Relationship, mood, personality and play quality
+  move the odds around it — they change what a non-critical result needs,
+  never whether a miracle is possible.
 - **Long odds are visible:** genuinely hard attempts get a "Long odds" tag
   on the check prompt, so the player knows they are gambling.
 - **Worked example** (from the design discussion): a deeply guarded, cold
