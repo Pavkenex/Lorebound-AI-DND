@@ -38,6 +38,8 @@ class PromptContext(BaseModel):
         "suggested_actions[], proposed_events[], proposed_lead_changes[]} — "
         "raw JSON, no code fences, no commentary before or after. "
         "npc_dialogue entries: {\"npc\": \"Name\", \"line\": \"…\"}. "
+        "Every spoken line must appear exactly once in the whole response — "
+        "either woven into the narration or listed in npc_dialogue, never both. "
         "suggested_actions entries: {\"label\": \"…\", \"command\": \"…\"}."
     )
     length: str = "Standard"

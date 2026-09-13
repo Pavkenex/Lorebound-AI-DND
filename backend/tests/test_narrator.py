@@ -1,4 +1,6 @@
 """Narrator schema/prompt/service/metering (t_ad5b30b4, t_6dbf2746, t_eff821f1, t_9f1f24aa)."""
+import json
+
 from app.modules.ai.metering import CALLS_PER_ACTION, MeterRegistry
 from app.modules.ai.providers import StubProvider
 from app.modules.ai.roles import build_role_prompt
@@ -143,3 +145,64 @@ def test_stub_provider_deterministic():
     a = p.generate("prompt here", role="narrator")
     b = p.generate("prompt here", role="narrator")
     assert a.text == b.text and a.model == "stub-deterministic"
+
+
+def test_dialogue_quoted_in_narration_is_not_rendered_twice():
+    """Reported doubling: the closing quote also arrived as a speech block.
+
+    The prose keeps the quoted line; the echoed npc_dialogue entry is dropped
+    so the player reads each spoken line exactly once.
+    """
+    prose = (
+        "Marla works your shoulders with practiced, unsentimental hands, finding "
+        "knots you didn't know you'd earned and pressing them out one by one. When "
+        "she finally steps back, your muscles feel like they belong to a man who "
+        "hasn't been sleeping on the ground. 'That'll be a few coppers,' she says, "
+        "wiping her hands on her apron, 'and you'll want a real bed after that, "
+        "not the bench.'"
+    )
+    echoed = "There. You'll want a real bed after that, not the bench."
+    distinct = "Sit. You carry your tension like a pack mule. Borin — the oil, please."
+    prov = StubProvider(canned={"narrator": json.dumps({
+        "narration": prose,
+        "npc_dialogue": [{"npc": "Marla", "line": distinct},
+                         {"npc": "Marla", "line": echoed}],
+    })})
+    out, _ = narrate(PromptContext(player_action="I ask for a shoulder rub."),
+                     provider=prov)
+    assert out.narration == prose
+    assert [d.line for d in out.npc_dialogue] == [distinct]
+
+
+def test_distinct_dialogue_survives_the_echo_guard():
+    prov = StubProvider(canned={"narrator": json.dumps({
+        "narration": "The rain keeps its counsel. Marla counts her cups twice.",
+        "npc_dialogue": [{"npc": "Marla",
+                          "line": "You'll find no answers in my ledger."}],
+    })})
+    out, _ = narrate(PromptContext(player_action="I ask about the road."),
+                     provider=prov)
+    assert [d.line for d in out.npc_dialogue] == ["You'll find no answers in my ledger."]
+
+
+def test_short_lines_are_never_deduped():
+    """Exclamations like 'Sit.' or 'Aye.' must survive even if the words
+    appear somewhere in the prose — the guard only targets whole sentences."""
+    prov = StubProvider(canned={"narrator": json.dumps({
+        "narration": "Sit, she says, and the fire settles. Aye, answers Borin.",
+        "npc_dialogue": [{"npc": "Marla", "line": "Sit."},
+                         {"npc": "Borin", "line": "Aye."}],
+    })})
+    out, _ = narrate(PromptContext(player_action="I take a seat."), provider=prov)
+    assert [d.line for d in out.npc_dialogue] == ["Sit.", "Aye."]
+
+
+def test_duplicate_dialogue_entries_collapse_to_one():
+    line = "The two travelers walked into that rain three nights back."
+    prov = StubProvider(canned={"narrator": json.dumps({
+        "narration": "She wipes the same cup twice before she answers.",
+        "npc_dialogue": [{"npc": "Marla", "line": line},
+                         {"npc": "Marla", "line": line}],
+    })})
+    out, _ = narrate(PromptContext(player_action="I press her."), provider=prov)
+    assert [d.line for d in out.npc_dialogue] == [line]

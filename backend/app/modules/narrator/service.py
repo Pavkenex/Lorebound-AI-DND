@@ -16,6 +16,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any
 
 from app.modules.ai.metering import MeterRegistry
@@ -44,6 +45,14 @@ TANGLED_NOTE = (
     "The chronicler's words came back tangled in the quill's own notes. "
     "The moment holds — say it again, and the tale will answer."
 )
+
+#: The narrator sometimes quotes an NPC's closing line inside the prose AND
+#: lists it in npc_dialogue, so the player reads the same sentence twice.
+#: A line counts as echoed when this much of it (as one contiguous run of
+#: words) already appears in the narration. Short lines are never touched.
+_DIALOGUE_ECHO_RATIO = 0.85
+_DIALOGUE_ECHO_MIN_WORDS = 6
+_DIALOGUE_ECHO_MIN_RUN = 5
 
 
 @dataclass
@@ -123,6 +132,48 @@ def _normalize_dialogue(raw: Any) -> list[dict[str, str]]:
         if npc and line:
             out.append({"npc": str(npc), "line": str(line)})
     return out
+
+
+def _word_tokens(text: str) -> list[str]:
+    """Case-folded word tokens used for echo comparison (keeps apostrophes)."""
+    return re.findall(r"[a-z0-9']+", text.casefold())
+
+
+def _longest_common_run(a: list[str], b: list[str]) -> int:
+    """Length of the longest contiguous word run shared by both sequences."""
+    match = SequenceMatcher(None, a, b, autojunk=False).find_longest_match(
+        0, len(a), 0, len(b))
+    return match.size
+
+
+def _drop_echoed_dialogue(prose: str,
+                          dialogue: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Drop dialogue entries whose line the narration already tells.
+
+    Each spoken line must render exactly once: when the model closes the
+    prose with a quote and also lists the same line in npc_dialogue, the
+    player would otherwise read it twice (paragraph + speech block). Only
+    near-whole-line echoes are removed; short lines and genuinely distinct
+    dialogue always survive.
+    """
+    prose_tokens = _word_tokens(prose)
+    kept: list[dict[str, str]] = []
+    kept_tokens: list[list[str]] = []
+    for entry in dialogue:
+        tokens = _word_tokens(str(entry.get("line", "")))
+        if len(tokens) >= _DIALOGUE_ECHO_MIN_WORDS:
+            run = _longest_common_run(prose_tokens, tokens)
+            if run >= _DIALOGUE_ECHO_MIN_RUN and run >= _DIALOGUE_ECHO_RATIO * len(tokens):
+                continue  # already inside the narration — drop the echo
+            if any(
+                _longest_common_run(tokens, seen) >= _DIALOGUE_ECHO_RATIO * min(len(tokens), len(seen))
+                for seen in kept_tokens
+                if min(len(tokens), len(seen)) >= _DIALOGUE_ECHO_MIN_WORDS
+            ):
+                continue  # the model said the same thing twice; keep one copy
+        kept.append(entry)
+        kept_tokens.append(tokens)
+    return kept
 
 
 def _normalize_suggestions(raw: Any) -> list[dict[str, str]]:
@@ -245,12 +296,14 @@ def narrate(ctx: PromptContext, provider: Provider | None = None,
                      result.prompt_tokens, result.completion_tokens)
     payload = parse_narrator_payload(result.text)
     prose = payload.narration or render_prose(result.text, ctx.length)
+    # A spoken line must never render twice (prose quote + dialogue echo).
+    dialogue = _drop_echoed_dialogue(prose, payload.dialogue)
     # The model's own suggestions read the scene; scene buttons are the fallback.
     suggested = ([SuggestedActionOut(**s) for s in payload.suggestions]
                  or [SuggestedActionOut(**s) for s in (suggestions or [])])
     out = NarratorOutput(
         narration=prose,
-        npc_dialogue=[NpcDialogue(**d) for d in payload.dialogue],
+        npc_dialogue=[NpcDialogue(**d) for d in dialogue],
         suggested_actions=suggested,
         length=ctx.length,
     )
