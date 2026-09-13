@@ -20,6 +20,14 @@ from typing import Any
 
 from app.content.skills import SKILL_KEYS
 from app.modules.memory.npc_memory import display_name
+from app.modules.npc.mood import (
+    DEFAULT_MOOD,
+    MOOD_DECAY_PER_HOUR,
+    MOOD_SETTLED,
+    baseline_mood,
+    clamp_intensity,
+    mood_word,
+)
 
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
@@ -151,6 +159,11 @@ class PlayState:
     #: Last reason behind each meter move (mirrored to npc_relationships.note).
     attitude_reasons: dict[str, str] = field(default_factory=dict)
 
+    #: Live emotional state per NPC slug (design §4): {mood, intensity 0..1}.
+    #: Decays toward each character's baseline as the clock advances; gated
+    #: words are surfaced per the campaign's content settings, never here.
+    moods: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     # -- sheet-adjacent economy -------------------------------------------
     silver: int = 8  # guilders in the pack
 
@@ -274,11 +287,71 @@ class PlayState:
             )
         return after
 
+    # ---------------------------------------------------------------- mood
+    def mood_of(self, npc: str) -> dict[str, Any]:
+        """Current mood for an NPC slug: ``{mood, intensity}``.
+
+        A character with no live mood reads as their baseline (Neutral by
+        default) at zero intensity — never an invented word.
+        """
+        if not npc:
+            return {"mood": DEFAULT_MOOD, "intensity": 0.0}
+        entry = self.moods.get(npc)
+        if not entry:
+            return {"mood": baseline_mood(npc), "intensity": 0.0}
+        return {
+            "mood": str(entry.get("mood", baseline_mood(npc))),
+            "intensity": clamp_intensity(entry.get("intensity", 0.0)),
+        }
+
+    def set_mood(self, npc: str, mood: str, intensity: float = 0.6) -> dict[str, Any]:
+        """Set one NPC's live mood (engine-authoritative, design §4).
+
+        The word is validated against the curated vocabulary (an unknown word
+        raises) and the intensity clamped to 0..1; an intensity at 0 settles
+        the character straight back to their baseline. Content gating is the
+        *engine's* decision before calling this (:meth:`ActEngine._mood`); the
+        view and the narrator prompt re-gate defensively on surfacing, so one
+        settings flip re-gates every surface at once.
+        """
+        if not npc:
+            return {"mood": DEFAULT_MOOD, "intensity": 0.0}
+        word = mood_word(mood)
+        level = round(clamp_intensity(intensity), 4)
+        if level <= 0:
+            word, level = baseline_mood(npc), 0.0
+        self.moods[npc] = {"mood": word, "intensity": level}
+        return dict(self.moods[npc])
+
+    def _decay_moods(self, minutes: int) -> None:
+        """Fade live moods toward each character's baseline (design §4).
+
+        Linear per-hour decay; once an intensity falls past
+        :data:`MOOD_SETTLED` the character has settled and the word snaps
+        back to the baseline.
+        """
+        if minutes <= 0 or not self.moods:
+            return
+        hours = minutes / 60.0
+        for slug, entry in self.moods.items():
+            try:
+                level = float(entry.get("intensity", 0.0))
+            except (TypeError, ValueError):
+                level = 0.0
+            level -= MOOD_DECAY_PER_HOUR * hours
+            if level <= MOOD_SETTLED:
+                entry["mood"] = baseline_mood(slug)
+                entry["intensity"] = 0.0
+            else:
+                entry["intensity"] = round(level, 4)
+
     def advance_minutes(self, minutes: int) -> None:
         total = self.hour * 60 + self.minute + max(0, minutes)
         extra_days, rem = divmod(total, 24 * 60)
         self.day += extra_days
         self.hour, self.minute = divmod(rem, 60)
+        # The clock is what fades a mood: no time passed, nothing decays.
+        self._decay_moods(max(0, minutes))
 
     def set_lead_stage(self, stage: str) -> bool:
         """Advance the lead stage monotonically. Returns True if it changed."""
