@@ -63,6 +63,7 @@ def _with_present_details(
     nsfw = bool(prefs and prefs.nsfw)
     for npc in npcs:
         slug = npc_slug(npc["name"])
+        npc["slug"] = slug  # the Present list links each character's page
         mems = [m["text"] for m in state.memories_for(slug, limit=3)]
         if mems:
             npc["remembers"] = mems

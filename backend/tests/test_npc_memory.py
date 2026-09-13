@@ -163,6 +163,26 @@ def test_state_payload_carries_remembers(client: TestClient):
     assert "remembers" not in borin  # nothing on him yet — keep payload lean
 
 
+def test_npc_page_serves_the_present_sheet(client: TestClient):
+    """The Present list's click-through: one character, full detail."""
+    h, _cid = _setup(client, "npcmem-page@example.com")
+    _act(client, h, "I ask Marla about the travelers")
+    r = client.get("/npcs/marla", headers=h)
+    assert r.status_code == 200, r.text
+    page = r.json()
+    assert page["slug"] == "marla"
+    assert page["name"] == "Marla Voss"
+    assert isinstance(page["attitude"], int)
+    assert page["band"] in {"Hostile", "Wary", "Neutral", "Warm", "Bonded"}
+    assert isinstance(page["mood"], str)
+    assert any("asked about the travelers" in t for t in page["remembers"])
+
+
+def test_npc_page_unknown_slug_is_a_404(client: TestClient):
+    h, _cid = _setup(client, "npcmem-nopage@example.com")
+    assert client.get("/npcs/ghost", headers=h).status_code == 404
+
+
 def test_memories_mirror_to_table_and_seed_npcs(client: TestClient):
     h, cid = _setup(client, "npcmem-db@example.com")
     _act(client, h, "I ask Marla about the travelers")

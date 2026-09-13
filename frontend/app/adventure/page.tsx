@@ -4,7 +4,7 @@
 // called-check throws (t_84c31095 follow-up): a surfaced check waits for the
 // player's die — the prompt owns the throw, nothing rolls behind the player.
 import { useEffect, useRef, useState } from "react";
-import { api, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type ApiResult, type ActResponse, type PendingCheck } from "../../lib/api";
+import { api, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type ApiResult, type ActResponse, type PendingCheck, type NpcEntry, type NpcDetail } from "../../lib/api";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
@@ -45,6 +45,8 @@ export default function AdventurePage() {
   const [scene, setScene] = useState("tavern interior");
   const [pending, setPending] = useState<PendingThrow | null>(null);
   const [suggestions, setSuggestions] = useState<{ label: string; command: string }[]>([]);
+  const [npcView, setNpcView] = useState<NpcEntry | null>(null); // the open character page
+  const [npcInfo, setNpcInfo] = useState<NpcDetail | null>(null); // its deeper fetch, when live
   const keyRef = useRef(0);
   const sendingRef = useRef(false); // one throw resolves once
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -226,12 +228,28 @@ export default function AdventurePage() {
     void runSubmit(text);
   }
 
+  /** Open one present character's page; live fetches the deeper detail. */
+  function openNpc(entry: NpcEntry) {
+    uiBlip(560);
+    setNpcView(entry);
+    setNpcInfo(null);
+    if (live && entry.slug) {
+      void api.npcDetail(entry.slug, content).then((r) => {
+        if (!r.fromFixture && r.data) setNpcInfo(r.data);
+      });
+    }
+  }
+
   function inspect(name: string) {
     if (busy || pending) return;
     uiBlip(520);
     if (live) {
       // Live: inspecting is a real action — the engine decides what it reveals.
-      void runSubmit(`I look closely at the ${name}`);
+      // Proper nouns take no article: "look at Marla", not "at the Marla".
+      const target = /^[A-Z]/.test(name) || name.toLowerCase().startsWith("the ")
+        ? name
+        : `the ${name}`;
+      void runSubmit(`I look closely at ${target}`);
       return;
     }
     setEvents((e) => [...e, {
@@ -373,7 +391,7 @@ export default function AdventurePage() {
             {gs.npcs.map((n) => (
               <div key={n.name} style={{ margin: "6px 0" }}>
                 <p style={{ margin: 0 }}>
-                  <button className="entity" onClick={() => inspect(n.name)}>{n.name}</button>
+                  <button className="entity" onClick={() => openNpc(n)}>{n.name}</button>
                   <span className="sys"> — {n.note}</span>
                 </p>
                 <span className="att-row">
@@ -403,6 +421,18 @@ export default function AdventurePage() {
         </div>
       </aside>
       <TutorialOverlay />
+      {npcView && (
+        <NpcSheet
+          entry={npcView}
+          detail={npcInfo && npcInfo.slug === npcView.slug ? npcInfo : null}
+          onClose={() => setNpcView(null)}
+          onLook={() => {
+            const name = npcView.name;
+            setNpcView(null);
+            inspect(name);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -468,5 +498,77 @@ function MoodChip({ name, mood, intensity }: { name: string; mood?: string; inte
       <span aria-hidden="true">{chip.emoji}</span>
       <span className="mood-word">{chip.word}</span>
     </span>
+  );
+}
+
+/** One present character's page: meter, mood, and what they remember about
+ *  you. Opens from the Present list; `detail` enriches the panel's own entry
+ *  with the deeper memory list once the live fetch lands. */
+function NpcSheet({ entry, detail, onClose, onLook }: {
+  entry: NpcEntry;
+  detail: NpcDetail | null;
+  onClose: () => void;
+  onLook: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const attitude = detail?.attitude ?? entry.attitude;
+  const band = detail?.band ?? entry.band;
+  const mood = detail?.mood ?? entry.mood;
+  const intensity = detail?.mood_intensity ?? entry.mood_intensity;
+  const remembers = detail?.remembers ?? entry.remembers ?? [];
+  const chip = moodChip(mood, intensity);
+  // A stable hue per name keeps the procedural portrait steady between opens.
+  const hue = (Array.from(entry.name).reduce((a, c) => a + c.charCodeAt(0), 0) * 37) % 360;
+  return (
+    <div
+      className="tut-veil"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${entry.name} — character`}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="parchment npc-sheet">
+        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+          <Portrait name={entry.name} hue={hue} size={72} />
+          <div style={{ minWidth: 0 }}>
+            <p className="sys" style={{ margin: 0 }}>CHARACTER{band ? ` · ${band}` : ""}</p>
+            <h2 style={{ margin: "2px 0" }}>{entry.name}</h2>
+            {entry.note && <p className="sys" style={{ margin: 0 }}>{entry.note}</p>}
+          </div>
+        </div>
+        {typeof attitude === "number" && (
+          <div style={{ marginTop: 14 }}>
+            <p className="sys" style={{ margin: "0 0 2px" }}>RELATIONSHIP</p>
+            <RelationshipMeter name={entry.name} attitude={attitude} band={band} />
+          </div>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <p className="sys" style={{ margin: "0 0 2px" }}>MOOD</p>
+          {chip ? (
+            <MoodChip name={entry.name} mood={mood} intensity={intensity} />
+          ) : (
+            <span className="sys">settled — nothing wearing on them</span>
+          )}
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <p className="sys" style={{ margin: "0 0 2px" }}>REMEMBERS ABOUT YOU</p>
+          {remembers.length > 0 ? (
+            <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+              {remembers.map((m) => <li key={m}>{m}</li>)}
+            </ul>
+          ) : (
+            <span className="sys">Nothing worth carrying — yet.</span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+          <button className="btn" onClick={onLook}>👁 Look them over</button>
+          <button className="btn btn-ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }

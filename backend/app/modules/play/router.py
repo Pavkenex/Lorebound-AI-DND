@@ -28,7 +28,7 @@ from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play import creation, screens
 from app.modules.play.engine import ActEngine, PendingCheckStale
 from app.modules.play.session import PlaySession
-from app.modules.play.view import game_state_payload
+from app.modules.play.view import game_state_payload, npcs_present
 
 router = APIRouter(tags=["play"])
 
@@ -103,6 +103,45 @@ def game_state(
         session.state,
         campaign.id,
         prefs=_parse_prefs(request.headers.get("X-Content-Prefs")),
+    )
+
+
+@router.get("/npcs/{slug}")
+def npc_character(
+    slug: str,
+    request: Request,
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """One present character's page: name, note, meter, mood, memories.
+
+    Present-only by design: the side menu links the characters in the room,
+    and their display name and note come from the same view builder that
+    panel uses. A character who is not here answers 404. Moods surface
+    through the same content gate as every other surface (§4).
+    """
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    prefs = _parse_prefs(request.headers.get("X-Content-Prefs"))
+    for npc in npcs_present(session.state, prefs):
+        if npc.get("slug") == slug:
+            return {
+                "slug": slug,
+                "name": npc["name"],
+                "note": npc.get("note", ""),
+                "attitude": npc.get("attitude", 0),
+                "band": npc.get("band", "Neutral"),
+                "mood": npc.get("mood", "neutral"),
+                "mood_intensity": npc.get("mood_intensity", 0.0),
+                # The panel shows the strongest three; the page carries more.
+                "remembers": [
+                    m["text"] for m in session.state.memories_for(slug, limit=10)
+                ],
+            }
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="no such character here",
     )
 
 

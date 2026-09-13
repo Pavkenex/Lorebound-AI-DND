@@ -268,6 +268,8 @@ export interface SaveRow {
 /** One NPC present at the current location (GET /state npcs[]). */
 export interface NpcEntry {
   name: string;
+  /** Stable slug for the character's page (GET /npcs/{slug}); absent in demo. */
+  slug?: string;
   note: string;
   /** Their strongest memories about the player (top 3), when any. */
   remembers?: string[];
@@ -280,6 +282,19 @@ export interface NpcEntry {
   mood?: string;
   /** Mood strength 0..1 (0 = settled back to their baseline — no chip). */
   mood_intensity?: number;
+}
+
+/** One present character's page (GET /npcs/{slug}): the panel's entry, deeper.
+ *  The memories list carries more than the panel's top three. */
+export interface NpcDetail {
+  slug: string;
+  name: string;
+  note: string;
+  attitude: number;
+  band: string;
+  mood: string;
+  mood_intensity: number;
+  remembers: string[];
 }
 
 /** Live game state (GET /state): the fixture shape plus live-only fields. */
@@ -563,6 +578,8 @@ export const api = {
   health: () => get<{ status: string }>("/health", { status: "fixture" }),
   character: (prefs?: ContentPrefs) => get("/character", fixtures.character, prefs),
   gameState: (prefs?: ContentPrefs) => get<LiveGameState>("/state", fixtures.gameState, prefs),
+  npcDetail: (slug: string, prefs?: ContentPrefs) =>
+    get<NpcDetail | null>(`/npcs/${encodeURIComponent(slug)}`, null, prefs),
   skills: (prefs?: ContentPrefs) => get("/skills", fixtures.skills, prefs),
   journal: (prefs?: ContentPrefs) => get("/journal", fixtures.journal, prefs),
   map: (prefs?: ContentPrefs) => get("/map", fixtures.mapInfo, prefs),

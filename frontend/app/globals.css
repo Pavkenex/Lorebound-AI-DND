@@ -214,6 +214,10 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
 .tut-veil { position: fixed; inset: 0; background: rgba(8,6,3,0.78); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; }
 .tut-card { max-width: 560px; width: 100%; padding: 26px 28px; }
 
+/* Present list → one character's page (NpcSheet) */
+.npc-sheet { max-width: 520px; width: 100%; padding: 24px 26px; max-height: 84vh; overflow: auto; }
+.npc-sheet h2 { margin: 2px 0 0; }
+
 /* scene art */
 .scene-frame { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #0e0b07; }
 .scene-frame svg { display: block; width: 100%; height: auto; }
