@@ -106,6 +106,12 @@ export interface PendingCheck {
   skill_mod?: number;
   total_mod?: number;
   dc: number;
+  /** The band DC before the social terms moved it (systems slice 4, §6). */
+  dc_base?: number | null;
+  /** Why the DC moved — approach, live mood, relationship credit, a vow. */
+  dc_why?: string | null;
+  /** Only a natural 20 passes this check (nothing but a critical reaches it). */
+  long_odds?: boolean;
   difficulty?: string;
   /** Board fingerprint from the calling leg; a moved board rejects the throw (409). */
   token: string;

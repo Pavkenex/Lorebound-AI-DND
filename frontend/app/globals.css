@@ -152,6 +152,10 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
 .check-call strong { color: #fff; }
 .check-odds { margin: 0 0 8px; }
 .check-odds strong { color: var(--gold-hi); }
+/* The DC's own story (systems slice 4, §6): where it moved from and why. */
+.check-shift { color: var(--parch-dim); }
+.check-why { margin: -4px 0 8px; color: var(--parch-dim); font-style: italic; }
+.check-long-odds { margin: -4px 0 8px; color: var(--gold-hi); }
 .check-throw {
   background: none; border: 0; padding: 0; cursor: pointer; border-radius: 10px; line-height: 0;
   margin: 2px auto 0; display: block;
