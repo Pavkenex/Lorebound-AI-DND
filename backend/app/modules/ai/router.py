@@ -117,11 +117,14 @@ def test_settings(
         }
 
     provider = OpenAICompatibleProvider(
-        base_url=_require_http_url(base_url), model=model, api_key=api_key, timeout_s=timeout_s
+        base_url=_require_http_url(base_url), model=model, api_key=api_key, timeout_s=timeout_s,
+        session_id=user.id,
     )
     started = time.perf_counter()
     try:
-        result = provider.generate(TEST_PROMPT, role="narrator", max_tokens=16)
+        # Reasoning-style models spend output budget on hidden reasoning first;
+        # leave enough room that a short "pong" still comes back as text.
+        result = provider.generate(TEST_PROMPT, role="narrator", max_tokens=256)
     except ProviderError as exc:
         return {"ok": False, "error": str(exc)[:300], "latency_ms": int((time.perf_counter() - started) * 1000)}
     latency_ms = int((time.perf_counter() - started) * 1000)

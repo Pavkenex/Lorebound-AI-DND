@@ -152,5 +152,6 @@ def resolve_provider(db: Session, user_id: str) -> Provider:
             model=row.model,
             api_key=row.api_key,
             timeout_s=row.timeout_s,
+            session_id=user_id,
         )
     return StubProvider()

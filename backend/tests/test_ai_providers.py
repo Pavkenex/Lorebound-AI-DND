@@ -34,6 +34,8 @@ def _make_server(state: _State) -> HTTPServer:
                 "body": json.loads(raw.decode("utf-8")),
                 "authorization": self.headers.get("Authorization"),
                 "content_type": self.headers.get("Content-Type"),
+                "x_opencode_session": self.headers.get("x-opencode-session"),
+                "user_agent": self.headers.get("User-Agent"),
             })
             idx = min(captured.count, len(captured.responses) - 1)
             status, payload = captured.responses[idx]
@@ -78,6 +80,7 @@ def test_happy_path_request_shape_and_tokens():
     req = state.requests[0]
     assert req["authorization"] == "Bearer sekret"
     assert req["content_type"] == "application/json"
+    assert req["x_opencode_session"] is None  # only opencode hosts get the header
     body = req["body"]
     assert body["model"] == "test-model"
     assert body["max_tokens"] == 123
@@ -184,3 +187,63 @@ def test_factory_unknown_provider(monkeypatch):
     monkeypatch.setenv("AI_PROVIDER", "bogus-xyz")
     with pytest.raises(ValueError):
         get_provider()
+
+
+def test_opencode_hosts_get_the_session_header(monkeypatch):
+    """opencode.ai rejects headerless requests (400 MissingSessionID).
+
+    The header must ride on every request to an opencode endpoint, with the
+    same value per conversation. The matcher is patched because the local
+    test server does not live on opencode.ai.
+    """
+    from app.modules.ai import providers as providers_mod
+
+    state = _State([(200, _ok_payload())] * 3)
+    server = _make_server(state)
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        monkeypatch.setattr(providers_mod, "_is_opencode_base", lambda url: True)
+        prov = OpenAICompatibleProvider(
+            base_url=base, model="m", api_key="k", timeout_s=5, session_id="user-1")
+        prov.generate("one")
+        prov.generate("two")  # same conversation → same value
+        other = OpenAICompatibleProvider(
+            base_url=base, model="m", api_key="k", timeout_s=5, session_id="user-2")
+        other.generate("three")
+    finally:
+        server.shutdown()
+    first, second, third = (r["x_opencode_session"] for r in state.requests)
+    assert first and second and third
+    assert first == second  # stable → routing + prompt-cache affinity
+    assert first != third   # distinct sessions stay independent
+    assert state.requests[0]["user_agent"] == "lorebound-ai/0.1"
+
+
+def test_opencode_session_value_is_stable_and_scoped():
+    from app.modules.ai.providers import _is_opencode_base, _opencode_session_value
+
+    assert _is_opencode_base("https://opencode.ai/zen/go/v1")
+    assert _is_opencode_base("https://api.opencode.ai/v1")
+    assert not _is_opencode_base("https://opencode.ai.example.com/v1")
+    assert not _is_opencode_base("https://api.openai.com/v1")
+    assert not _is_opencode_base("http://127.0.0.1:8001")
+
+    value = _opencode_session_value("https://opencode.ai/zen/go/v1", "m", "u1")
+    assert value.startswith("lorebound-")
+    assert value == _opencode_session_value("https://opencode.ai/zen/go/v1", "m", "u1")
+    assert value != _opencode_session_value("https://opencode.ai/zen/go/v1", "m", "u2")
+    assert value != _opencode_session_value(
+        "https://opencode.ai/zen/go/v1", "other", "u1")
+
+
+def test_non_opencode_endpoint_sends_no_session_header():
+    state = _State([(200, _ok_payload())])
+    server = _make_server(state)
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        prov = OpenAICompatibleProvider(
+            base_url=base, model="m", api_key="k", timeout_s=5, session_id="user-1")
+        prov.generate("hi")
+    finally:
+        server.shutdown()
+    assert state.requests[0]["x_opencode_session"] is None

@@ -6,12 +6,14 @@ changing callers (t_9f1f24aa).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 
 class ProviderError(RuntimeError):
@@ -63,22 +65,53 @@ class StubProvider:
                               metadata={"role": role, "stub": True})
 
 
+OPENCODE_SESSION_HEADER = "x-opencode-session"
+# OpenCode's docs ask clients to identify themselves by name, not as a generic
+# SDK/HTTP-library user agent (https://opencode.ai/docs/go/).
+_OPENCODE_USER_AGENT = "lorebound-ai/0.1"
+
+
+def _is_opencode_base(base_url: str) -> bool:
+    """True when *base_url* is hosted on opencode.ai (their Zen/Go relay)."""
+    host = (urlsplit(base_url).hostname or "").lower()
+    return host == "opencode.ai" or host.endswith(".opencode.ai")
+
+
+def _opencode_session_value(base_url: str, model: str, session_id: str = "") -> str:
+    """Opaque, stable ``x-opencode-session`` value (routing + prompt-cache affinity).
+
+    opencode.ai rejects requests without the header (``400 MissingSessionID``)
+    and pins a conversation to one upstream backend by it, so the same inputs
+    must always derive the same value.
+    """
+    basis = f"{base_url.rstrip('/')}|{model}|{session_id}"
+    return "lorebound-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
 class OpenAICompatibleProvider:
     """HTTP provider for any OpenAI-compatible chat completions endpoint.
 
     Stdlib ``urllib`` only — no new dependencies. POSTs to
     ``<base_url>/chat/completions`` with system + user messages.
     Retries once on timeout/HTTP error, then raises :class:`ProviderError`.
+
+    Endpoints hosted on opencode.ai additionally send the relay's required
+    ``x-opencode-session`` header, stable per base URL + model + session id.
     """
 
     model_name: str
 
     def __init__(self, base_url: str, model: str, api_key: str = "",
-                 timeout_s: float = 30) -> None:
+                 timeout_s: float = 30, session_id: str = "") -> None:
         self.base_url = base_url.rstrip("/")
         self.model_name = model
         self.api_key = api_key or ""
         self.timeout_s = timeout_s
+        self.session_id = session_id or ""
+        self._opencode_session = (
+            _opencode_session_value(self.base_url, self.model_name, self.session_id)
+            if _is_opencode_base(self.base_url) else ""
+        )
 
     def generate(self, prompt: str, *, role: str = "narrator",
                  max_tokens: int = 600, **kwargs: Any) -> ProviderResult:
@@ -113,6 +146,9 @@ class OpenAICompatibleProvider:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        if self._opencode_session:
+            headers[OPENCODE_SESSION_HEADER] = self._opencode_session
+            headers["User-Agent"] = _OPENCODE_USER_AGENT
         return headers
 
     def _to_result(self, data: dict[str, Any], role: str) -> ProviderResult:
