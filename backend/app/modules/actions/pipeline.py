@@ -48,6 +48,25 @@ def _signed(value: int) -> str:
     return f"+{value}" if value > 0 else f"−{abs(value)}"
 
 
+def scene_line(summary: str, state: dict[str, Any]) -> str:
+    """The narrator's [Scene] line: where the moment happens, its goal (§7/§8).
+
+    Scene flow rides the same prompt block the location does: a micro-scene
+    ("the upstairs room") reads as the scene while the map keeps the inn, and
+    the scene's goal tells the model what this moment is *for*.
+    """
+    label = str(state.get("scene_label") or "").strip()
+    goal = str(state.get("scene_goal") or "").strip()
+    phase = str(state.get("scene_state") or "").strip()
+    parts: list[str] = []
+    if label:
+        parts.append(f"{label} ({phase})" if phase else label)
+    parts.append(f"PC acts: {summary}")
+    if goal:
+        parts.append(f"scene goal: {goal}")
+    return " — ".join(parts)
+
+
 class ActionInput(BaseModel):
     campaign_id: str = "default"
     character_id: str | None = None
@@ -199,7 +218,7 @@ class Pipeline:
 
         prompt_ctx = PromptContext(
             location=world.location or "Unknown",
-            scene=f"PC acts: {intent.summary}",
+            scene=scene_line(intent.summary, state),
             player_character={"name": state.get("pc_name", "the hero")},
             npcs=[_npc_ctx(n) for n in action.scene.npcs_present],
             world_facts=world.facts,

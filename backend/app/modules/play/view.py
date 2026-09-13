@@ -10,6 +10,7 @@ from app.modules.memory.npc_memory import npc_slug
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.npc.mood import surfaced_mood
 from app.modules.play.state import PlayState, attitude_band
+from app.modules.story.scenes import SceneDirector
 
 LOCATION_NAMES: dict[str, str] = {
     "lantern-inn": "The Lantern Inn, Ravenford",
@@ -73,9 +74,17 @@ def _with_present_details(
 
 
 def npcs_present(state: PlayState, prefs: ContentPrefs | None = None) -> list[dict]:
-    """NPCs at the current location with a short note for the UI."""
+    """NPCs at the current location with a short note for the UI.
+
+    A micro-scene narrows the room (§7): upstairs only Marla is there, whatever
+    the common room below is doing.
+    """
+    upstairs = str(getattr(state, "scene", "") or "").endswith(":upstairs-room")
     if state.location == "lantern-inn":
-        return _with_present_details(state, _inn_npcs(state), prefs)
+        inn = _inn_npcs(state)
+        if upstairs:
+            inn = [n for n in inn if n["name"].startswith("Marla")]
+        return _with_present_details(state, inn, prefs)
     if state.location == "market":
         return _with_present_details(state, [
             {"name": "Sella Voss", "note": "guild silver factor, watching the scales"},
@@ -127,6 +136,9 @@ def game_state_payload(
     return {
         "campaign_id": campaign_id,
         "location": location_name(state),
+        # Scene flow (§7): the map tracks travel, the scene tracks the moment —
+        # a micro-scene can be somewhere the map has never heard of.
+        "scene": SceneDirector(state).scene_block(),
         "time": time_label(state),
         "npcs": npcs_present(state, prefs),
         "leads": lead_titles(state),
