@@ -10,7 +10,7 @@ from __future__ import annotations
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from app.modules.campaign.npc import NPC, NPCMemory
+from app.modules.campaign.npc import NPC, NPCMemory, NPCRelationship
 
 #: The five authored Ravenford characters the slice tracks memories for.
 ROSTER: tuple[dict[str, str], ...] = (
@@ -22,6 +22,17 @@ ROSTER: tuple[dict[str, str], ...] = (
 )
 
 _HONORIFICS = {"brother", "sister", "sir", "lady", "mother", "father"}
+
+
+def _has_table(db: Session, table: str) -> bool:
+    """True when ``table`` exists in the schema this session writes to.
+
+    Inspected through the session's own connection: inspecting the *engine*
+    checks a connection in and out of the pool, and on a shared connection
+    (StaticPool in tests) that reset silently rolls back the session's open
+    transaction — flushed writes vanish without an error.
+    """
+    return inspect(db.connection()).has_table(table)
 
 
 def npc_slug(name: str) -> str:
@@ -36,6 +47,21 @@ def npc_slug(name: str) -> str:
     if first.lower() in _HONORIFICS and len(parts) > 1:
         first = parts[1]
     return first.lower()
+
+
+def display_name(slug: str) -> str:
+    """Short display name for a roster slug, for player-visible lines.
+
+    ``marla`` -> ``Marla``; ``anselm`` -> ``Anselm`` (honorific dropped).
+    Unknown slugs fall back to a title-cased reading of the slug itself.
+    """
+    for entry in ROSTER:
+        if entry["slug"] == slug:
+            parts = [p for p in entry["name"].split() if p and p.lower() not in _HONORIFICS]
+            if parts:
+                return parts[0]
+            break
+    return slug.replace("-", " ").capitalize()
 
 
 def ensure_npcs(db: Session, campaign_id: str) -> dict[str, NPC]:
@@ -58,7 +84,7 @@ def sync_npc_memories(db: Session, campaign_id: str, state) -> int:
     Idempotent: a row is inserted only when that (npc, text) pair is not
     already stored. Returns the number of rows added.
     """
-    if not inspect(db.get_bind()).has_table("npc_memories"):
+    if not _has_table(db, "npc_memories"):
         return 0  # partial test schema: nothing to mirror into
     npcs = ensure_npcs(db, campaign_id)
     log = getattr(state, "npc_memory_log", None) or []
@@ -89,3 +115,48 @@ def sync_npc_memories(db: Session, campaign_id: str, state) -> int:
         seen.add((npc.id, text))
         added += 1
     return added
+
+
+def sync_npc_relationships(db: Session, campaign_id: str, state) -> int:
+    """Mirror ``PlayState.attitudes`` into ``npc_relationships``.
+
+    One directed row per NPC toward the player character
+    (``to_entity_id='pc'``), upserted: attitude and the last reason are written
+    only when they changed. Idempotent — re-storing the same state writes
+    nothing. Returns the number of rows inserted or updated.
+    """
+    if not _has_table(db, "npc_relationships"):
+        return 0  # partial test schema: nothing to mirror into
+    attitudes = getattr(state, "attitudes", None) or {}
+    if not attitudes:
+        return 0
+    npcs = ensure_npcs(db, campaign_id)
+    reasons = getattr(state, "attitude_reasons", None) or {}
+    rows = {
+        (row.from_npc_id, row.to_entity_id): row
+        for row in db.query(NPCRelationship).filter(NPCRelationship.campaign_id == campaign_id)
+    }
+    changed = 0
+    for slug, raw in attitudes.items():
+        npc = npcs.get(str(slug))
+        if npc is None:
+            continue
+        attitude = max(-100, min(100, int(raw)))
+        note = str(reasons.get(slug, ""))
+        row = rows.get((npc.id, "pc"))
+        if row is None:
+            db.add(
+                NPCRelationship(
+                    campaign_id=campaign_id,
+                    from_npc_id=npc.id,
+                    to_entity_id="pc",
+                    attitude=attitude,
+                    note=note,
+                )
+            )
+            changed += 1
+        elif row.attitude != attitude or row.note != note:
+            row.attitude = attitude
+            row.note = note
+            changed += 1
+    return changed
