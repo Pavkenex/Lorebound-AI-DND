@@ -247,6 +247,10 @@ export interface NpcEntry {
   note: string;
   /** Their strongest memories about the player (top 3), when any. */
   remembers?: string[];
+  /** Live relationship meter, -100..+100 (systems slice 2). */
+  attitude?: number;
+  /** Band word for the meter: Hostile | Wary | Neutral | Warm | Bonded. */
+  band?: string;
 }
 
 /** Live game state (GET /state): the fixture shape plus live-only fields. */

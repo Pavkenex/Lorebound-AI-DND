@@ -12,6 +12,7 @@ import { Feed } from "../../components/feed";
 import { SceneArt, Portrait } from "../../components/art";
 import { CheckPrompt, type CheckPhase } from "../../components/checkprompt";
 import { ErrorBanner, TutorialOverlay } from "../../components/widgets";
+import { attitudeBand, attitudeBar, attitudeBarClass, formatAttitude } from "../../lib/relationship";
 
 let n = 100;
 const nid = () => `u${n++}`;
@@ -356,15 +357,20 @@ export default function AdventurePage() {
           <div className="parchment card">
             <h3>Present</h3>
             {gs.npcs.map((n) => (
-              <p key={n.name} style={{ margin: "4px 0" }}>
-                <button className="entity" onClick={() => inspect(n.name)}>{n.name}</button>
-                <span className="sys"> — {n.note}</span>
+              <div key={n.name} style={{ margin: "6px 0" }}>
+                <p style={{ margin: 0 }}>
+                  <button className="entity" onClick={() => inspect(n.name)}>{n.name}</button>
+                  <span className="sys"> — {n.note}</span>
+                </p>
+                {typeof n.attitude === "number" && (
+                  <RelationshipMeter name={n.name} attitude={n.attitude} band={n.band} />
+                )}
                 {n.remembers && n.remembers.length > 0 && (
                   <span className="sys" style={{ display: "block", marginLeft: 10, opacity: 0.85 }}>
                     remembers: {n.remembers.join("; ")}
                   </span>
                 )}
-              </p>
+              </div>
             ))}
           </div>
           <div className="parchment card">
@@ -410,5 +416,22 @@ function Bar({ label, pct, cls }: { label: string; pct: number; cls: string }) {
       </div>
       <div className={`bar ${cls}`} role="img" aria-label={label}><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
     </div>
+  );
+}
+
+/** Compact relationship meter for one present NPC: bar + band word + number.
+ *  The backend's band word wins; the local ladder mirrors it as a fallback. */
+function RelationshipMeter({ name, attitude, band }: { name: string; attitude: number; band?: string }) {
+  const word = band ?? attitudeBand(attitude);
+  const { left, width } = attitudeBar(attitude);
+  // A 2px sliver vanishes against the track: any non-zero move keeps a floor.
+  const visualWidth = width === 0 ? 0 : Math.max(width, 2.5);
+  return (
+    <span className="att-line" role="img" aria-label={`${name} — relationship ${word} (${attitude})`}>
+      <span className={`bar bar-att ${attitudeBarClass(attitude)}`}>
+        <i style={{ left: `${left}%`, width: `${visualWidth}%` }} />
+      </span>
+      <span className="sys">{word} {formatAttitude(attitude)}</span>
+    </span>
   );
 }

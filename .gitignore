@@ -15,3 +15,4 @@ htmlcov/
 alembic/versions/__pycache__/
 *.db
 *.sqlite3
+.env*.local
