@@ -152,4 +152,7 @@ def game_state_payload(
         "completed": state.completed,
         "lead_stage": state.lead_stage,
         "clues": list(state.clues),
+        # Saga digest (#4): exposed for a future journal surface; the prompt
+        # already carries it every turn.
+        "saga": state.saga,
     }

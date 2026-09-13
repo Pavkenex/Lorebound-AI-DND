@@ -44,6 +44,10 @@ class PromptContext(BaseModel):
     #: The tail of the player-visible chronicle (newest last): what the player
     #: has already been told — action echoes, prose, spoken lines, notices.
     chronicle: list[dict[str, Any]] = Field(default_factory=list)
+    #: Rolling saga digest (suggestion #4): the shape of the whole tale so
+    #: far in ~180 words, refreshed at checkpoint beats. The chronicle tail
+    #: is the last beats verbatim; this is the memory of act one at act ten.
+    saga: str = ""
     recent_events: list[dict[str, Any]] = Field(default_factory=list)
     player_action: str = ""
     mechanical_result: dict[str, Any] = Field(default_factory=dict)
@@ -117,6 +121,7 @@ def assemble_prompt(
     lead_block = "\n".join(f"- {l.get('title', '?')}: {l.get('status', '')}" for l in ctx.leads) or "- (no active leads)"
     chronicle_block = ("\n".join(_chronicle_entry(e) for e in chronicle)
                        or "- (the chronicle opens here)")
+    saga_block = " ".join(str(ctx.saga or "").split()) or "- (the saga opens here)"
     event_block = "\n".join(f"- {e.get('kind', '?')}: {e.get('payload', e)}" for e in events) or "- (no recent events)"
     pc = ctx.player_character
     pc_block = f"{pc.get('name', 'the hero')} — {pc.get('description', 'an adventurer')}" if pc else "an adventurer"
@@ -133,6 +138,7 @@ def assemble_prompt(
         f"[NPCs present]\n{npc_block}\n\n"
         f"[Established world facts]\n{fact_block}\n\n"
         f"[Active leads]\n{lead_block}\n\n"
+        f"[Story so far (rolling recap, oldest truth first)]\n{saga_block}\n\n"
         f"[Recent chronicle (retrieved, newest last)]\n{chronicle_block}\n\n"
         f"[Recent events (retrieved, newest last)]\n{event_block}\n\n"
         f"[Player action]\n{ctx.player_action}\n\n"

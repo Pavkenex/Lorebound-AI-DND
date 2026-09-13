@@ -230,6 +230,9 @@ class Pipeline:
             # the prompt, so the narrator continues the tale instead of
             # re-deriving the scene from scratch every turn.
             chronicle=list(state.get("chronicle") or []),
+            # Saga digest (#4): the shape of the whole tale so far — act one
+            # still in mind at act ten.
+            saga=str(state.get("saga") or ""),
         )
         suggestions = [s.model_dump() for s in generate_suggestions(action.scene)]
         output, _bundle = narrate(prompt_ctx, provider=self.provider,

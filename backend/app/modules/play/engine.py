@@ -34,7 +34,7 @@ from app.modules.npc.personality import (
 )
 from app.modules.play.session import PlaySession
 from app.modules.play.state import CLUES, OPENING_BEAT, SOLUTIONS
-from app.modules.play.view import npc_names, npcs_present
+from app.modules.play.view import location_name, npc_names, npcs_present
 from app.modules.progression.xp import play_skill_xp
 from app.modules.rules.checks import (
     CheckRequest,
@@ -45,6 +45,7 @@ from app.modules.rules.checks import (
     is_long_odds,
     roll_check,
 )
+from app.modules.story.saga import refresh_saga
 from app.modules.story.scenes import (
     PROLOGUE,
     UPSTAIRS,
@@ -1049,6 +1050,12 @@ class ActEngine:
         if self.state.lead_stage != lead_before:
             # A story-beat boundary moves the scene's aim — never the player.
             director.story_boundary()
+
+        # Saga digest (#4 continuity): checkpoint beats re-roll the rolling
+        # recap so the narrator keeps act one in mind by act ten; idle beats
+        # refresh only on the fallback cadence. Deterministic — no model call.
+        refresh_saga(self.state, location_label=location_name(self.state),
+                     force=bool(transitioned or progress))
 
         # System lines the beat itself wrote (clues found, routes opened, notes)
         # are echoed in the response so the live feed shows them immediately.
@@ -2149,6 +2156,9 @@ class ActEngine:
             # Continuity (§25): the narrator prompt carries the tail of what
             # the player has already read, so the scene advances.
             "chronicle": self._chronicle_tail(),
+            # Saga digest (#4): the rolling recap, refreshed below at
+            # checkpoint beats; the pipeline feeds it straight to the prompt.
+            "saga": st.saga or "",
             "npcs_alive": {"borin": not st.borin_down, "marla": True},
             "location": st.location,
             "known_locations": ["lantern-inn", "northern-road", "market"],

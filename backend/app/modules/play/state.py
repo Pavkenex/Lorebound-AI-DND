@@ -237,6 +237,14 @@ class PlayState:
     feed_seq: int = 0
     feed: list[dict[str, Any]] = field(default_factory=list)
 
+    #: Rolling saga digest (§25 continuity): a short deterministic recap of
+    #: the whole tale so far, refreshed at checkpoint beats; rides every
+    #: narrator prompt as [Story so far]. Model-free and campaign-agnostic
+    #: (see modules/story/saga.py).
+    saga: str = ""
+    #: actions_taken at the last digest refresh (fallback cadence).
+    saga_at: int = 0
+
     # -- progression (five slice skills) ----------------------------------
     skills: dict[str, int] = field(default_factory=lambda: {k: 0 for k in SKILL_KEYS})
     skill_recent: dict[str, list[str]] = field(default_factory=dict)
