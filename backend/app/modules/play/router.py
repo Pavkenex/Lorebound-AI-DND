@@ -87,14 +87,23 @@ def _parse_prefs(raw: str | None) -> ContentPrefs | None:
 
 @router.get("/state")
 def game_state(
+    request: Request,
     campaign_id: str | None = None,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Live game state for the adventure screen (campaign-scoped, read-only)."""
+    """Live game state for the adventure screen (campaign-scoped, read-only).
+
+    ``X-Content-Prefs`` (optional JSON) bounds how moods surface: a gated mood
+    the settings do not allow reads as its fallback word (§4).
+    """
     campaign = _resolve_campaign(db, user, campaign_id)
     session = PlaySession.load(db, campaign.id)
-    return game_state_payload(session.state, campaign.id)
+    return game_state_payload(
+        session.state,
+        campaign.id,
+        prefs=_parse_prefs(request.headers.get("X-Content-Prefs")),
+    )
 
 
 @router.get("/character")

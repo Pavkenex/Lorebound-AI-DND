@@ -19,11 +19,12 @@ from app.modules.actions.pipeline import ActionInput, Pipeline
 from app.modules.actions.suggest import SceneContext
 from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
-from app.modules.memory.npc_memory import npc_slug
+from app.modules.memory.npc_memory import display_name, npc_slug
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.npc.mood import DEFAULT_MOOD, surfaced_mood
 from app.modules.play.session import PlaySession
 from app.modules.play.state import CLUES, SOLUTIONS
-from app.modules.play.view import npc_names
+from app.modules.play.view import npc_names, npcs_present
 from app.modules.rules.checks import (
     CheckRequest,
     CheckResult,
@@ -309,6 +310,16 @@ BORIN_TALK_LINE = (
     "the scales why the guild pays over rate for silver — then ask her where "
     "the carts come back from. You did not hear it here."
 )
+FLIRT_NARRATION = (
+    "You lean in with a slow, unhurried smile and let it sit there — no hurry, "
+    "no hiding the ask. {name} holds your look a moment longer than politeness "
+    "runs, and gives you nothing back but the room going quiet around the two "
+    "of you."
+)
+FLIRT_EMPTY = (
+    "There is no one here to catch your eye — the road keeps its own company "
+    "tonight, and charm needs a witness."
+)
 CONFRONT_QUIET = (
     "The undercroft is quiet now — a cold stair, a smell of lamp oil and rain. "
     "Whatever the guild kept down here, the light and the law have both found "
@@ -369,6 +380,8 @@ _AMBUSH_RE = re.compile(
 _TRACKS_RE = re.compile(r"\b(tracks?|ruts?|wheel|wheels?|mud)\b", re.IGNORECASE)
 _LIGHTS_RE = re.compile(r"\b(lanterns?|lights?|bells?)\b", re.IGNORECASE)
 _WATCH_RE = re.compile(r"\b(watch|wait|follow|tail|shadow|observe|trail|stake out|keep watch)\b", re.IGNORECASE)
+#: Overt romantic interest (systems slice 3): sets a mood, never a world fact.
+_FLIRT_RE = re.compile(r"\b(flirt\w*|wink\w*|make eyes|tease)\b", re.IGNORECASE)
 
 
 def route(text: str) -> str:
@@ -388,6 +401,8 @@ def route(text: str) -> str:
         return "ambush"
     if _CONFRONT_RE.search(t):
         return "confront"
+    if _FLIRT_RE.search(t):
+        return "flirt"
     if _TRACKS_RE.search(t) and re.search(_INSPECT_V + r"|\b(follow|study)\b", t, re.IGNORECASE):
         return "clue_tracks"
     if _LIGHTS_RE.search(t) and _WATCH_RE.search(t):
@@ -539,6 +554,17 @@ class ActEngine:
             self.state.adjust_attitude(npc, delta, reason or text)
         return True
 
+    def _mood(self, npc: str, mood: str, intensity: float = 0.6) -> dict[str, Any]:
+        """Set one NPC's live mood for an event (design §4).
+
+        The engine owns moods, never the model — beats call this the way they
+        call :meth:`_remember`. Gated words (flirty/horny) fall back to their
+        same-family word unless the campaign's content settings allow them, so
+        the save, the chip and the narrator prompt all agree.
+        """
+        nsfw = bool(self.prefs and self.prefs.nsfw)
+        return self.state.set_mood(npc, surfaced_mood(mood, nsfw=nsfw), intensity)
+
     def _narrate_event(self, text: str) -> None:
         self._feed("narration", text=text)
 
@@ -657,6 +683,8 @@ class ActEngine:
                 kind="conversation", delta=+5,
                 reason="asked about the travelers who never came back",
             )
+            # Kindness of attention: the room's warmth is a mood, not just a meter.
+            self._mood("marla", "warm", 0.5)
         elif st.lead_stage == "rumored":
             self._advance_to("accepted")
             out.narration = TALK_ACCEPT_NARRATION
@@ -666,6 +694,7 @@ class ActEngine:
                 kind="promise", sentiment=1, salience=3, delta=+10,
                 reason="promised to look into the missing travelers",
             )
+            self._mood("marla", "warm", 0.7)
         elif st.lead_stage == "investigating":
             out.narration = TALK_INVESTIGATING
         elif st.lead_stage == "solved":
@@ -697,6 +726,8 @@ class ActEngine:
             "marla", "went through her guest ledger page by page",
             kind="curiosity", delta=-5, reason="went through her guest ledger page by page",
         )
+        # Prying where she can see it leaves her watching the room harder.
+        self._mood("marla", "suspicious", 0.4)
         if self._succeeded(result):
             if st.find_clue("ledger"):
                 self._feed("system", text="❧ Clue found — the ledger's unsigned guests.")
@@ -719,6 +750,7 @@ class ActEngine:
                 kind="suspicion", sentiment=-1, salience=2, delta=-5,
                 reason="eyed the barred cellar door more than once",
             )
+            self._mood("marla", "suspicious", 0.5)
         if st.travelers_freed:
             body = (
                 "The cellar door stands open now, hooked back against the wall. Cold "
@@ -774,12 +806,14 @@ class ActEngine:
                     kind="theft", sentiment=-2, salience=4, delta=-30,
                     reason="robbed the storeroom strongbox — and was glimpsed doing it",
                 )
+                self._mood("marla", "suspicious", 0.8)
             else:
                 self._remember(
                     "marla", "was robbed — the storeroom strongbox came up light",
                     kind="theft", sentiment=-2, salience=4, delta=-25,
                     reason="robbed the storeroom strongbox",
                 )
+                self._mood("marla", "suspicious", 0.5)
         elif result.outcome == Outcome.CriticalFailure:
             st.note("saw:sneaking")
             narration = STRONGBOX_CAUGHT
@@ -788,6 +822,7 @@ class ActEngine:
                 kind="theft", sentiment=-2, salience=5, delta=-35,
                 reason="caught red-handed at the storeroom strongbox",
             )
+            self._mood("marla", "angry", 0.8)
         else:
             st.note("heard:noise")
             narration = STRONGBOX_FAIL
@@ -796,6 +831,7 @@ class ActEngine:
                 kind="suspicion", sentiment=-1, salience=2, delta=-5,
                 reason="made a suspicious clatter by the storeroom",
             )
+            self._mood("marla", "suspicious", 0.5)
         return BeatOutcome(ack="Your hand finds the storeroom latch.", narration=narration, kind="steal", mechanics=mech)
 
     def _beat_fight(self, text: str) -> BeatOutcome:
@@ -831,18 +867,22 @@ class ActEngine:
             kind="violence", sentiment=-1, salience=3, delta=-15,
             reason="started a brawl by her hearth",
         )
+        # A brawl by her hearth angers her; the loser stews, the winner smirks.
+        self._mood("marla", "angry", 0.7)
         if st.borin_down:
             self._remember(
                 "borin", "was knocked down in a brawl by the fire",
                 kind="violence", sentiment=-1, salience=2, delta=-15,
                 reason="was knocked down in a brawl by the fire",
             )
+            self._mood("borin", "angry", 0.8)
         else:
             self._remember(
                 "borin", "got the better of them in the brawl by the fire",
                 kind="violence", sentiment=-1, salience=2, delta=-5,
                 reason="brawled with them by the fire",
             )
+            self._mood("borin", "amused", 0.6)
         return BeatOutcome(ack="The hearthlight swings as the fight starts.", narration=narration, kind="fight", mechanics=mech)
 
     def _beat_leave(self, text: str) -> BeatOutcome:
@@ -882,6 +922,8 @@ class ActEngine:
             pc[key] = bar
         if "Bruised" in pc.get("conditions", []) and pc["hp"]["cur"] >= pc["hp"]["max"]:
             pc["conditions"].remove("Bruised")
+        # A long night kept the inn: whoever held the bar is up past their rest.
+        self._mood("marla", "tired", 0.6)
         return BeatOutcome(ack="You take your rest.", narration=REST_NARRATION, kind="rest")
 
     def _beat_travel_market(self, text: str) -> BeatOutcome:
@@ -1036,6 +1078,7 @@ class ActEngine:
                 kind="intimidation", sentiment=-2, salience=3, delta=-20,
                 reason="was frightened into talking about the carts",
             )
+            self._mood("borin", "afraid", 0.7)
             return BeatOutcome(
                 ack="You lean in close.",
                 narration="You do not put a hand on him — you do not need to. You lean in "
@@ -1095,6 +1138,7 @@ class ActEngine:
         if first_ask:
             # Only a real conversation — Borin actually present — moves his meter.
             st.adjust_attitude("borin", +5, "asked about carts north of the oak")
+            self._mood("borin", "amused", 0.4)
         if st.borin_down:
             return BeatOutcome(
                 ack="Borin eyes you over his bruises.",
@@ -1109,6 +1153,42 @@ class ActEngine:
             narration=BORIN_TALK_NARRATION,
             kind="talk",
             dialogue=[{"speaker": "Borin", "line": BORIN_TALK_LINE}],
+        )
+
+    # -- flirt: romantic interest as a mood, never a world fact --------------
+    def _flirt_target(self, text: str) -> str | None:
+        """Who a flirt lands on: the one named, else the first one present.
+
+        Nobody present at this location means nobody catches the eye.
+        """
+        present = [npc_slug(n["name"]) for n in npcs_present(self.state)]
+        if not present:
+            return None
+        for pattern, slug in ((_MARLA, "marla"), (_BORIN, "borin"), (_SELLA, "sella")):
+            if slug in present and pattern.search(text):
+                return slug
+        return present[0]
+
+    def _beat_flirt(self, text: str) -> BeatOutcome:
+        st = self.state
+        st.advance_minutes(5)
+        target = self._flirt_target(text)
+        if target is None:
+            return BeatOutcome(
+                ack="Your charm finds no purchase.", narration=FLIRT_EMPTY, kind="talk"
+            )
+        self._remember(
+            target, "was flirted with, and took their time about answering",
+            kind="flirt", delta=+3, reason="flirted with them",
+        )
+        # Gated at set (_mood consults the campaign's content settings) and
+        # again on every surface (chip + narrator prompt), so one settings
+        # flip re-gates every surface at once.
+        self._mood(target, "flirty", 0.6)
+        return BeatOutcome(
+            ack="You make your interest plain.",
+            narration=FLIRT_NARRATION.format(name=display_name(target)),
+            kind="talk",
         )
 
     def _beat_confront(self, text: str) -> BeatOutcome:
@@ -1155,6 +1235,10 @@ class ActEngine:
             kind="resolve", sentiment=2, salience=4, delta=+35,
             reason="brought two travelers back among the living",
         )
+        # Resolution lifts the whole room: relief, cheer, and a factor's pride.
+        self._mood("marla", "happy", 0.9)
+        self._mood("borin", "happy", 0.6)
+        self._mood("sella", "proud", 0.6)
         st.pc.setdefault("achievements", []).append(f"Freed the missing travelers (Day {st.day})")
         return BeatOutcome(
             ack="You go down into the cold.",
@@ -1212,6 +1296,7 @@ class ActEngine:
             scene=SceneContext(
                 npcs_present=self.present_npcs(),
                 npc_memories=self._npc_memories_for_present(),
+                npc_moods=self._npc_moods_for_present(),
             ),
             seed_roll=self._seed_roll,
         )
@@ -1286,6 +1371,19 @@ class ActEngine:
             mems = self.state.memories_for(npc_slug(name), limit=NARRATOR_MEMORY_LIMIT)
             if mems:
                 out[name] = [m["text"] for m in mems]
+        return out
+
+    def _npc_moods_for_present(self) -> dict[str, dict[str, Any]]:
+        """Live (non-neutral) moods of present NPCs, for the narrator prompt.
+
+        Settled characters are simply absent — the block stays lean, the same
+        way ``remembers`` only appears when there is something to remember.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for name in self.present_npcs():
+            entry = self.state.mood_of(npc_slug(name))
+            if entry["intensity"] > 0 and entry["mood"] != DEFAULT_MOOD:
+                out[name] = entry
         return out
 
     def _pipeline_state(self) -> dict[str, Any]:

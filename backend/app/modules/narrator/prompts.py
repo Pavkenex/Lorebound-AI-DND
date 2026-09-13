@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.npc.mood import surfaced_mood
 
 #: Hard cap on retrieved events per prompt (retrieved context only, §103).
 MAX_RETRIEVED_EVENTS = 8
@@ -62,9 +63,16 @@ def assemble_prompt(
     npcs = ctx.npcs[:MAX_NPCS]
     facts = ctx.world_facts[:MAX_FACTS]
     events = ctx.recent_events[-MAX_RETRIEVED_EVENTS:]
+    # Content settings gate how a mood surfaces in the prompt (§4): a gated
+    # word the settings do not allow must never reach the model either.
+    nsfw = bool(prefs and prefs.nsfw)
 
     def _npc_entry(n: dict[str, Any]) -> str:
         line = f"- {n.get('name', '?')}: {n.get('note', '')}"
+        mood = str(n.get("mood") or "")
+        level = float(n.get("mood_intensity") or 0.0)
+        if mood and level > 0:
+            line += f" | mood: {surfaced_mood(mood, nsfw=nsfw)} ({level:.1f})"
         remembered = [str(m) for m in (n.get("remembers") or [])][:MAX_NPC_MEMORIES]
         if remembered:
             line += " | remembers about the player: " + "; ".join(remembered)

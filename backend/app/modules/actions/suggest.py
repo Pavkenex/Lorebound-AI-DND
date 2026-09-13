@@ -1,6 +1,8 @@
 """Suggested-action buttons: contextual, always alongside free text (t_2aa58729)."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -8,6 +10,8 @@ class SceneContext(BaseModel):
     npcs_present: list[str] = []
     #: NPC first-name -> the strongest memories they keep about the player.
     npc_memories: dict[str, list[str]] = {}
+    #: NPC first-name -> live mood {"mood": word, "intensity": 0..1} (slice 3).
+    npc_moods: dict[str, dict[str, Any]] = {}
     exits: list[str] = []
     items_visible: list[str] = []
     rumors_available: bool = False

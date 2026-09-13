@@ -134,14 +134,26 @@ class Pipeline:
         mech = {"checks": [r.model_dump() for r in results],
                 "world_fact_attempt": intent.world_fact_attempt,
                 "asserted_claims": intent.asserted_claims}
+
+        def _npc_ctx(name: str) -> dict[str, Any]:
+            """One present NPC for the prompt: memories + live mood (slice 3)."""
+            entry: dict[str, Any] = {
+                "name": name,
+                "remembers": list(action.scene.npc_memories.get(name, [])),
+            }
+            mood = action.scene.npc_moods.get(name) or {}
+            word = str(mood.get("mood") or "")
+            level = float(mood.get("intensity") or 0.0)
+            if word and level > 0:
+                entry["mood"] = word
+                entry["mood_intensity"] = level
+            return entry
+
         prompt_ctx = PromptContext(
             location=world.location or "Unknown",
             scene=f"PC acts: {intent.summary}",
             player_character={"name": state.get("pc_name", "the hero")},
-            npcs=[
-                {"name": n, "remembers": list(action.scene.npc_memories.get(n, []))}
-                for n in action.scene.npcs_present
-            ],
+            npcs=[_npc_ctx(n) for n in action.scene.npcs_present],
             world_facts=world.facts,
             recent_events=recent,
             player_action=text,

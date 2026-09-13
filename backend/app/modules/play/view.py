@@ -7,6 +7,8 @@ live ``character`` block and a ``completed`` flag for the slice epilogue.
 from __future__ import annotations
 
 from app.modules.memory.npc_memory import npc_slug
+from app.modules.narrator.prefs import ContentPrefs
+from app.modules.npc.mood import surfaced_mood
 from app.modules.play.state import PlayState, attitude_band
 
 LOCATION_NAMES: dict[str, str] = {
@@ -43,13 +45,19 @@ def _inn_npcs(state: PlayState) -> list[dict]:
     return npcs
 
 
-def _with_present_details(state: PlayState, npcs: list[dict]) -> list[dict]:
-    """Attach each present NPC's strongest memories and live relationship meter.
+def _with_present_details(
+    state: PlayState, npcs: list[dict], prefs: ContentPrefs | None = None
+) -> list[dict]:
+    """Attach each present NPC's strongest memories, meter and live mood.
 
     ``remembers`` appears only when there is something to remember (payload
     stays lean); ``attitude`` + ``band`` are always present — the meter has a
-    default (Neutral 0) the card can render.
+    default (Neutral 0) the card can render. ``mood`` + ``mood_intensity``
+    ride the same contract (slice 3): the mood chip reads them, and content
+    settings gate gated words here so a save from a permissive session never
+    leaks an NSFW chip into a boundary-respecting one.
     """
+    nsfw = bool(prefs and prefs.nsfw)
     for npc in npcs:
         slug = npc_slug(npc["name"])
         mems = [m["text"] for m in state.memories_for(slug, limit=3)]
@@ -58,21 +66,25 @@ def _with_present_details(state: PlayState, npcs: list[dict]) -> list[dict]:
         attitude = state.attitude_for(slug)
         npc["attitude"] = attitude
         npc["band"] = attitude_band(attitude)
+        mood = state.mood_of(slug)
+        npc["mood"] = surfaced_mood(str(mood["mood"]), nsfw=nsfw)
+        npc["mood_intensity"] = round(float(mood["intensity"]), 2)
     return npcs
 
 
-def npcs_present(state: PlayState) -> list[dict]:
+def npcs_present(state: PlayState, prefs: ContentPrefs | None = None) -> list[dict]:
     """NPCs at the current location with a short note for the UI."""
     if state.location == "lantern-inn":
-        return _with_present_details(state, _inn_npcs(state))
+        return _with_present_details(state, _inn_npcs(state), prefs)
     if state.location == "market":
         return _with_present_details(state, [
             {"name": "Sella Voss", "note": "guild silver factor, watching the scales"},
             {"name": "Tomm Ash", "note": "peddler, visibly nervous"},
-        ])
+        ], prefs)
     if state.location == "old-monastery":
         return _with_present_details(
-            state, [{"name": "Brother Anselm", "note": "porter, frightened of the cellar stairs"}]
+            state, [{"name": "Brother Anselm", "note": "porter, frightened of the cellar stairs"}],
+            prefs,
         )
     return []
 
@@ -109,12 +121,14 @@ def character_block(state: PlayState) -> dict:
     return dict(state.pc)
 
 
-def game_state_payload(state: PlayState, campaign_id: str | None = None) -> dict:
+def game_state_payload(
+    state: PlayState, campaign_id: str | None = None, prefs: ContentPrefs | None = None
+) -> dict:
     return {
         "campaign_id": campaign_id,
         "location": location_name(state),
         "time": time_label(state),
-        "npcs": npcs_present(state),
+        "npcs": npcs_present(state, prefs),
         "leads": lead_titles(state),
         "interactables": interactables(state),
         "party": party(state),
