@@ -3,8 +3,18 @@
 // to fixture data so the UI works before other streams land.
 import { fixtures } from "./fixtures";
 import type { ContentPrefs } from "./store-types";
+import { normalizeApiBase } from "./api-base";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+/** Fallback when no explicit URL is configured: same host as the page, backend port 8001.
+ *  Works for localhost dev and IP-based deploys alike; set NEXT_PUBLIC_API_URL for anything else. */
+function defaultApiBase(): string {
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8001`;
+  }
+  return "http://localhost:8001";
+}
+
+const BASE = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL) || defaultApiBase();
 
 export interface CostInfo { calls: number; costUsd: number; cached: boolean }
 export interface ApiResult<T> { data: T; cost: CostInfo; fromFixture: boolean }
