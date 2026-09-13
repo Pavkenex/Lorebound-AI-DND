@@ -96,6 +96,25 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
 .bar-att-bonded > i { background: linear-gradient(90deg, #7a5c3e, var(--gold-hi)); }
 .att-line { display: flex; align-items: center; gap: 6px; margin: 3px 0 2px 10px; }
 
+/* mood chip (systems slice 3, design §4): emoji + word beside the meter */
+.att-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mood-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px;
+  background: rgba(0, 0, 0, 0.16); color: var(--parch-dim); font-size: 0.86em;
+  line-height: 1.5; white-space: nowrap;
+}
+.mood-chip .mood-word { letter-spacing: 0.02em; }
+.mood-chip-happy, .mood-chip-warm, .mood-chip-grateful, .mood-chip-proud, .mood-chip-amused {
+  border-color: #4c5f39; color: #b9c79a;
+}
+.mood-chip-angry, .mood-chip-afraid, .mood-chip-anxious, .mood-chip-sad,
+.mood-chip-lonely, .mood-chip-resentful, .mood-chip-suspicious {
+  border-color: #6b3a33; color: #d8a08f;
+}
+.mood-chip-flirty, .mood-chip-horny { border-color: var(--gold); color: var(--gold-hi); }
+.mood-chip-curious, .mood-chip-tired { border-color: #4a4a63; color: #b6b6cf; }
+
 /* narration hierarchy (t_43e37b1e) */
 .narr { border-left: 3px solid var(--earth); padding: 8px 12px; margin: 10px 0; color: var(--ink); }
 .narr-compact { margin: 4px 0; padding: 4px 8px; }

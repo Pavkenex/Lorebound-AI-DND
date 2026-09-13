@@ -46,8 +46,8 @@ export const fixtures = {
     location: "The Lantern Inn, Ravenford",
     time: "Day 12 · 21:34 · rain",
     npcs: [
-      { name: "Marla Voss", note: "wiping a cup, watching the door" },
-      { name: "Hooded Carter", note: "mud to the knees, won't give a name" },
+      { name: "Marla Voss", note: "wiping a cup, watching the door", mood: "warm", mood_intensity: 0.5 },
+      { name: "Hooded Carter", note: "mud to the knees, won't give a name", mood: "anxious", mood_intensity: 0.4 },
     ],
     leads: ["Missing Travelers", "The Monastery Lights"],
     interactables: ["hearth", "notice board", "cellar door", "Marla", "carter"],

@@ -13,6 +13,7 @@ import { SceneArt, Portrait } from "../../components/art";
 import { CheckPrompt, type CheckPhase } from "../../components/checkprompt";
 import { ErrorBanner, TutorialOverlay } from "../../components/widgets";
 import { attitudeBand, attitudeBar, attitudeBarClass, formatAttitude } from "../../lib/relationship";
+import { moodChip } from "../../lib/mood";
 
 let n = 100;
 const nid = () => `u${n++}`;
@@ -362,9 +363,12 @@ export default function AdventurePage() {
                   <button className="entity" onClick={() => inspect(n.name)}>{n.name}</button>
                   <span className="sys"> — {n.note}</span>
                 </p>
-                {typeof n.attitude === "number" && (
-                  <RelationshipMeter name={n.name} attitude={n.attitude} band={n.band} />
-                )}
+                <span className="att-row">
+                  {typeof n.attitude === "number" && (
+                    <RelationshipMeter name={n.name} attitude={n.attitude} band={n.band} />
+                  )}
+                  <MoodChip name={n.name} mood={n.mood} intensity={n.mood_intensity} />
+                </span>
                 {n.remembers && n.remembers.length > 0 && (
                   <span className="sys" style={{ display: "block", marginLeft: 10, opacity: 0.85 }}>
                     remembers: {n.remembers.join("; ")}
@@ -432,6 +436,24 @@ function RelationshipMeter({ name, attitude, band }: { name: string; attitude: n
         <i style={{ left: `${left}%`, width: `${visualWidth}%` }} />
       </span>
       <span className="sys">{word} {formatAttitude(attitude)}</span>
+    </span>
+  );
+}
+
+/** Mood chip for one present NPC: emoji + word, beside the relationship meter.
+ *  A settled character (intensity 0, or nothing to show) renders no chip. */
+function MoodChip({ name, mood, intensity }: { name: string; mood?: string; intensity?: number }) {
+  const chip = moodChip(mood, intensity);
+  if (!chip) return null;
+  return (
+    <span
+      className={`mood-chip mood-chip-${chip.word}`}
+      role="img"
+      aria-label={`${name} — mood ${chip.label}`}
+      title={`mood: ${chip.label}`}
+    >
+      <span aria-hidden="true">{chip.emoji}</span>
+      <span className="mood-word">{chip.word}</span>
     </span>
   );
 }

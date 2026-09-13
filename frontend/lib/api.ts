@@ -251,6 +251,11 @@ export interface NpcEntry {
   attitude?: number;
   /** Band word for the meter: Hostile | Wary | Neutral | Warm | Bonded. */
   band?: string;
+  /** Live mood word the character is wearing (systems slice 3, §4); already
+   *  gated by the content settings this client sent. Settled reads "neutral". */
+  mood?: string;
+  /** Mood strength 0..1 (0 = settled back to their baseline — no chip). */
+  mood_intensity?: number;
 }
 
 /** Live game state (GET /state): the fixture shape plus live-only fields. */
