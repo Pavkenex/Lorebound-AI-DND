@@ -8,6 +8,8 @@ Contracts (frontend depends on these exact shapes):
   checkpoint="manual"} -> 201 save-row JSON.
 - GET  /saves/{save_id} -> 200 {id, campaign_id, slot, label,
   checkpoint, snapshot dict, created_at}, or 404 for foreign campaigns.
+- DELETE /saves/{save_id} -> 200 {deleted, save_id, campaign_id} (owner-scoped,
+  404 on missing/foreign; removes only the snapshot row, never live state).
 """
 from __future__ import annotations
 
@@ -117,6 +119,29 @@ def get_save(
         "snapshot": snapshot,
         "created_at": row.created_at.isoformat() if row.created_at is not None else None,
     }
+
+
+@router.delete("/saves/{save_id}")
+def delete_save(
+    save_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete one save slot (owner-scoped; 404 for missing or foreign).
+
+    Only the snapshot row goes — the live campaign state is untouched, so
+    pruning the shelf of yesterdays never disturbs the run in progress.
+    """
+    row = db.query(SaveGame).filter(SaveGame.id == save_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="save not found")
+    # Ownership via the parent campaign: 404 (not 403) on foreign campaigns
+    # so existence of another account's save never leaks.
+    scope_campaign(db, user, row.campaign_id)
+    campaign_id = row.campaign_id
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "save_id": save_id, "campaign_id": campaign_id}
 
 
 @router.post("/saves/{save_id}/load")
