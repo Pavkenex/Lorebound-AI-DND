@@ -33,7 +33,8 @@ ROLE_SYSTEM_PROMPTS: dict[str, str] = {
         "rewards, locations, NPCs, or history. NEVER move the player, kill or revive "
         "anyone, or contradict established facts. Describe only what the outcome "
         "object entitles: on Success With Cost include one concrete complication. "
-        "Return the NarratorOutput schema as JSON."
+        "Return the NarratorOutput schema as raw JSON only — no code fences, "
+        "no commentary before or after."
     ),
     Role.ACTOR.value: (
         "You are the NPC Actor. Speak and act ONLY as the assigned NPC, staying in "

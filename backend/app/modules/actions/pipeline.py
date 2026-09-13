@@ -31,7 +31,13 @@ from app.modules.narrator.validator import (
     repair_narration,
     validate_narration,
 )
-from app.modules.rules.checks import CheckResult, apply_social_policy, roll_check
+from app.modules.rules.checks import (
+    CheckResult,
+    CheckSuspension,
+    apply_social_policy,
+    is_trivial,
+    roll_check,
+)
 
 
 class ActionInput(BaseModel):
@@ -68,7 +74,8 @@ class Pipeline:
 
     def orchestrate(self, action: ActionInput,
                     state: dict[str, Any] | None = None,
-                    prefs: ContentPrefs | None = None) -> PipelineResult:
+                    prefs: ContentPrefs | None = None,
+                    suspend_on_check: bool = False) -> PipelineResult:
         state = dict(state or {})
         campaign_id = action.campaign_id
         events: list[GameEvent] = []
@@ -89,6 +96,20 @@ class Pipeline:
                 req, needed = apply_social_policy(req)
                 if not needed:
                     continue  # RP resolves it; no roll (t_2e94122b).
+            if (suspend_on_check and action.seed_roll is None
+                    and not req.hidden and not is_trivial(req.difficulty)):
+                # The player must throw this one: stop before the roll and let
+                # the caller surface a pending check (two-phase /act).
+                raise CheckSuspension({
+                    "label": f"{req.skill} check",
+                    "skill": req.skill,
+                    "attribute": None,
+                    "attribute_mod": req.attribute_mod,
+                    "skill_mod": req.skill_mod,
+                    "total_mod": req.attribute_mod + req.skill_mod,
+                    "dc": req.dc,
+                    "difficulty": req.difficulty,
+                })
             res = roll_check(req, roll=action.seed_roll, rng=self.rng)
             results.append(res)
             if res.surfaced:  # hidden/trivial stay silent.

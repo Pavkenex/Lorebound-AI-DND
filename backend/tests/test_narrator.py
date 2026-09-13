@@ -65,6 +65,50 @@ def test_render_prose_prefers_json_narration_and_trims():
     assert len(render_prose(long_text).split()) <= 250
 
 
+def test_render_prose_tolerates_fences_and_commentary():
+    fenced = 'Here is the JSON:\n```json\n{"narration": "The rain keeps its counsel."}\n```\nDone.'
+    assert render_prose(fenced) == "The rain keeps its counsel."
+    prefixed = 'Sure! {"narration": "The hall empties slowly."} — nothing more.'
+    assert render_prose(prefixed) == "The hall empties slowly."
+
+
+def test_render_prose_never_leaks_json_scaffolding():
+    truncated = ('{"narration": "The lantern gutters twice.", "npc_dialogue": '
+                 '[{"speaker": "Marla", "line": "Hm."}]')
+    assert render_prose(truncated) == "The lantern gutters twice."
+    garbage = '{"narration": , "npc_dialogue": [}'
+    out = render_prose(garbage)
+    assert "npc_dialogue" not in out and "{" not in out and out  # a clean note instead
+
+
+def test_parse_narrator_payload_normalizes_dialogue_and_suggestions():
+    import json as _json
+
+    from app.modules.narrator.service import parse_narrator_payload
+    text = _json.dumps({
+        "narration": "You set your tankard down.",
+        "npc_dialogue": [{"speaker": "Marla", "line": "Private, is it?"},
+                         {"npc": "Borin", "line": "Aye."}],
+        "suggested_actions": ["Hold her gaze.", {"label": "Leave", "command": "I leave."}],
+    })
+    payload = parse_narrator_payload(f"Commentary first.\n```json\n{text}\n```")
+    assert payload.parsed and payload.narration == "You set your tankard down."
+    assert payload.dialogue == [{"npc": "Marla", "line": "Private, is it?"},
+                                {"npc": "Borin", "line": "Aye."}]
+    assert payload.suggestions == [{"label": "Hold her gaze.", "command": "Hold her gaze."},
+                                   {"label": "Leave", "command": "I leave."}]
+
+
+def test_parse_narrator_payload_salvages_truncated_fragment():
+    from app.modules.narrator.service import parse_narrator_payload
+    fragment = ('"narration": "The lantern gutters. Marla counts her cups twice.", '
+                '"npc_dialogue": [ { "speaker": "Borin", "line": "I did not hear it here." }')
+    payload = parse_narrator_payload(fragment)
+    assert payload.parsed
+    assert payload.narration == "The lantern gutters. Marla counts her cups twice."
+    assert payload.dialogue == [{"npc": "Borin", "line": "I did not hear it here."}]
+
+
 def test_narrate_single_call_metered():
     meter = MeterRegistry()
     prov = StubProvider()

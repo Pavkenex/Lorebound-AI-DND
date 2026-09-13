@@ -72,12 +72,19 @@ function DiceBlock({ ev, fresh }: { ev: FeedEvent; fresh?: boolean }) {
           onClick={() => { uiBlip(kind === "crit-success" ? 880 : kind === "crit-miss" ? 220 : 520); setOpen((o) => !o); }}
           title="Toggle roll details"
         >
-          <strong>{r.label}</strong> — {r.dice}
-          {typeof r.d20 === "number" ? ` → ${r.d20}` : ""} = <strong>{r.total}</strong> {rollSummary(r.d20, r.outcome, r.total)}
+          {typeof r.d20 === "number" ? (
+            <>
+              <strong>{r.label}</strong>
+              {typeof r.dc === "number" ? <> — vs <strong>DC {r.dc}</strong></> : null}
+              {" · "}{r.d20}{r.dice.replace(/^d20/, "") ? ` ${r.dice.replace(/^d20/, "")}` : ""} = <strong>{r.total}</strong> {rollSummary(r.d20, r.outcome, r.total)}
+            </>
+          ) : (
+            <><strong>{r.label}</strong> — {r.dice} = <strong>{r.total}</strong> {rollSummary(r.d20, r.outcome, r.total)}</>
+          )}
           <small> {open ? "▾" : "▸"}</small>
         </button>
         {open && r.detail && <p className="sys" style={{ margin: "4px 0 2px" }}>{r.detail}</p>}
-        <span className="sr-only">Dice roll: {r.label}, {r.dice}, total {r.total}.</span>
+        <span className="sr-only">Dice roll: {r.label}, {r.dice}, total {r.total}{typeof r.dc === "number" ? `, difficulty ${r.dc}` : ""}.</span>
       </div>
     </div>
   );

@@ -68,7 +68,17 @@ def _act(client: TestClient, headers: dict, text: str, *, key: str | None = None
         body["seed_roll"] = seed
     r = client.post("/act", headers=h, json=body)
     assert r.status_code == 200, r.text
-    return r.json()
+    data = r.json()
+    if data.get("pending_check"):
+        # Two-phase throw: the pending leg called the check; drain it with a die.
+        r = client.post("/act", headers=h, json={
+            "text": text,
+            "roll": 18,
+            "pending_token": data["pending_check"]["token"],
+        })
+        assert r.status_code == 200, r.text
+        data = r.json()
+    return data
 
 
 def _state(campaign_id: str) -> PlayState:

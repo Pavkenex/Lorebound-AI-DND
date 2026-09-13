@@ -6,7 +6,7 @@
 // settles exactly on the rolled face. Natural 20s get a golden burst, natural
 // 1s a dire slam with shake and embers. Quiet when prefers-reduced-motion or
 // the reducedMotion setting is on: the die just shows its result.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useStore } from "../lib/store";
 import { critStinger, diceClatter, diceSettleSound } from "../lib/audio";
 import {
@@ -273,9 +273,12 @@ export interface DiceProps {
   autoPlay?: boolean;
   /** Fired when a roll animation finishes. */
   onSettled?: () => void;
+  /** When false the die renders inert (no internal click/replay) — for a
+   *  parent-owned throw button, like the called-check prompt. */
+  interactive?: boolean;
 }
 
-export function Dice({ d20, outcome, size = 132, autoPlay = false, onSettled }: DiceProps) {
+export function Dice({ d20, outcome, size = 132, autoPlay = false, onSettled, interactive = true }: DiceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { reducedMotion, muted } = useStore();
   const animRef = useRef<{ plan: RollPlan; fx: FxPlan | null; start: number; rolled: boolean; fxStarted: boolean } | null>(null);
@@ -397,6 +400,13 @@ export function Dice({ d20, outcome, size = 132, autoPlay = false, onSettled }: 
     : kind === "crit-miss" ? `Die showing ${d20} — a natural one, critical miss.`
     : `Die showing ${d20}${outcome ? ` — ${outcome}` : ""}.`;
 
+  const canvas = (
+    <canvas ref={canvasRef} width={size} height={size} style={{ width: size, height: size }} aria-hidden="true" />
+  );
+  if (!interactive) {
+    // Inert: the parent owns the press (e.g. the called-check throw button).
+    return <div className="dice-canvas dice-inert" aria-hidden="true">{canvas}</div>;
+  }
   return (
     <button
       type="button"
@@ -405,44 +415,7 @@ export function Dice({ d20, outcome, size = 132, autoPlay = false, onSettled }: 
       aria-label={`${label} Replay roll.`}
       title="Replay the roll"
     >
-      <canvas ref={canvasRef} width={size} height={size} style={{ width: size, height: size }} aria-hidden="true" />
+      {canvas}
     </button>
-  );
-}
-
-/** Throwable table-die: a real d20 you can hurl any time (t_84c31095).
- *
- * The chronicle rolls its own d20 for checks, but the die is also yours to
- * throw — click the die or the button and it tumbles and settles on a fresh
- * face. Keeps the last few throws so you can see what the bones said.
- */
-export function DiceTray() {
-  const [face, setFace] = useState(20);
-  const [run, setRun] = useState(0);
-  const [history, setHistory] = useState<number[]>([]);
-
-  const throwDice = useCallback(() => {
-    const rolled = 1 + Math.floor(Math.random() * 20);
-    setFace(rolled);
-    setRun((r) => r + 1);
-    setHistory((h) => [rolled, ...h].slice(0, 4));
-  }, []);
-
-  return (
-    <div className="dice-tray">
-      <Dice key={run} d20={face} outcome={null} size={140} autoPlay={run > 0} />
-      <button type="button" className="btn" onClick={throwDice}>
-        🎲 Throw the dice
-      </button>
-      <p className="sys" style={{ margin: 0, textAlign: "center" }} role="status">
-        {history.length === 0
-          ? "Untouched — the d20 waits. Throw it, or let a check call it."
-          : <>Last throw: <strong>{history[0]}</strong>
-            {history.length > 1 ? <> · before: {history.slice(1).join(", ")}</> : null}</>}
-      </p>
-      <p className="sys" style={{ margin: 0, textAlign: "center" }}>
-        Checks roll a d20 in the chronicle on their own; this tray is for your own throws — no cost, no consequences.
-      </p>
-    </div>
   );
 }

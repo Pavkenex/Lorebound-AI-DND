@@ -10,6 +10,7 @@ lead/clue progression, Marla's memory. The provider only writes prose.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +26,7 @@ from app.modules.play.view import npc_names
 from app.modules.rules.checks import (
     CheckRequest,
     CheckResult,
+    CheckSuspension,
     Outcome,
     dc_for_band,
     roll_check,
@@ -318,6 +320,11 @@ class BeatOutcome:
     mechanics: dict[str, Any] | None = None
     dialogue: list[dict[str, str]] = field(default_factory=list)
     new_leads: list[str] = field(default_factory=list)
+    suggestions: list[dict[str, str]] = field(default_factory=list)
+
+
+class PendingCheckStale(Exception):
+    """The board moved between calling a check and throwing the die."""
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +438,8 @@ class ActEngine:
         self.meter = meter or MeterRegistry()
         self.prefs = prefs
         self._seed_roll: int | None = None
+        self._suspend_on_check = False
+        self._act_token: str | None = None
 
     # -- helpers ------------------------------------------------------------
     @property
@@ -442,15 +451,37 @@ class ActEngine:
         value = int(self.state.pc.get("attributes", {}).get(attr, 10))
         return (value - 10) // 2, TRAINED_BONUS
 
+    def _check_spec(self, skill: str, attr_mod: int, skill_mod: int,
+                    dc: int, difficulty: str, label: str) -> dict[str, Any]:
+        """Player-facing description of a check, for the pending-throw prompt."""
+        return {
+            "label": label,
+            "skill": skill.title(),
+            "attribute": SKILL_ATTRIBUTE.get(skill, "Wits"),
+            "attribute_mod": attr_mod,
+            "skill_mod": skill_mod,
+            "total_mod": attr_mod + skill_mod,
+            "dc": dc,
+            "difficulty": difficulty,
+        }
+
     def _check(self, skill: str, difficulty: str, label: str) -> tuple[dict[str, Any], CheckResult]:
-        """Roll one d20 check for a beat; returns (mechanics contract, result)."""
+        """Roll one d20 check for a beat; returns (mechanics contract, result).
+
+        With ``suspend_on_check`` (and no seeded die) the roll is deferred —
+        the beat raises :class:`CheckSuspension` so the player throws the die;
+        the second call carries the thrown face as ``seed_roll``.
+        """
         attr_mod, skill_mod = self._modifiers(skill)
+        dc = dc_for_band(difficulty) or 10
+        if self._suspend_on_check and self._seed_roll is None:
+            raise CheckSuspension(self._check_spec(skill, attr_mod, skill_mod, dc, difficulty, label))
         request = CheckRequest(
             campaign_id=self.session.campaign_id,
             skill=skill.title(),
             attribute_mod=attr_mod,
             skill_mod=skill_mod,
-            dc=dc_for_band(difficulty) or 10,
+            dc=dc,
             difficulty=difficulty,
         )
         result = roll_check(request, roll=self._seed_roll)
@@ -468,6 +499,9 @@ class ActEngine:
             "detail": result.cost,
             "d20": result.roll,
             "outcome": result.outcome.value,
+            "dc": result.dc,
+            "skill": skill.title(),
+            "attribute": SKILL_ATTRIBUTE.get(skill, "Wits"),
         }
         return mech, result
 
@@ -489,22 +523,65 @@ class ActEngine:
     def _advance_to(self, stage: str) -> bool:
         return self.state.set_lead_stage(stage)
 
+    # -- pending throws -------------------------------------------------------
+    def _pending_token(self, text: str) -> str:
+        """Fingerprint of (campaign, action text, board) — the throw's anchor."""
+        material = f"{self.session.campaign_id}|{text}|{self.state.to_json()}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
+
+    def _pending_payload(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """The contract for a check that waits on the player's own throw."""
+        return {
+            "ack": "The bones are called for — one throw, and the tale moves.",
+            "mechanics": None,
+            "pending_check": {**spec, "token": self._act_token},
+            "narration": None,
+            "dialogue": [],
+            "newLeads": [],
+            "suggestions": [],
+            "system": [],
+        }
+
     # -- public API ----------------------------------------------------------
-    def act(self, text: str, seed_roll: int | None = None) -> tuple[dict[str, Any], str | None]:
-        """Resolve one action. Returns (frontend-contract response, checkpoint kind)."""
+    def act(
+        self,
+        text: str,
+        seed_roll: int | None = None,
+        *,
+        suspend_on_check: bool = False,
+        pending_token: str | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Resolve one action. Returns (frontend-contract response, checkpoint kind).
+
+        Two-phase throws: with ``suspend_on_check`` the engine stops before the
+        action's first surfaced check and returns a ``pending_check`` payload
+        instead of rolling. The player throws the die; the caller calls again
+        with that face as ``seed_roll`` and the payload's ``pending_token`` to
+        resolve the beat. A stale token means the board moved — nothing lands.
+        """
         self._seed_roll = seed_roll if seed_roll is not None else None
+        self._suspend_on_check = suspend_on_check
         t = (text or "").strip()
         self.state.actions_taken += 1
         self._feed("system", text=f"❧ {t}")
+        # Fingerprint the moment the check was called from: the board must be
+        # untouched between the call and the throw for the die to land home.
+        self._act_token = self._pending_token(t)
+        if pending_token is not None and pending_token != self._act_token:
+            raise PendingCheckStale("the board has moved since the check was called")
 
         beat = route(t)
         handler = getattr(self, f"_beat_{beat}")
         seq_before = self.state.feed_seq
-        if beat == "pipeline":
-            outcome, checkpoint = handler(t)
-        else:
-            outcome = handler(t)
-            checkpoint = outcome.kind
+        try:
+            if beat == "pipeline":
+                outcome, checkpoint = handler(t)
+            else:
+                outcome = handler(t)
+                checkpoint = outcome.kind
+        except CheckSuspension as suspension:
+            # Nothing persists on a pending throw: no checkpoint, no feed write.
+            return self._pending_payload(suspension.spec), None
 
         # System lines the beat itself wrote (clues found, routes opened, notes)
         # are echoed in the response so the live feed shows them immediately.
@@ -521,6 +598,7 @@ class ActEngine:
             "narration": outcome.narration,
             "dialogue": outcome.dialogue,
             "newLeads": outcome.new_leads,
+            "suggestions": outcome.suggestions,
             "system": system_lines,
         }
         # Mirror the response into the chronicle feed so a page reload
@@ -530,6 +608,7 @@ class ActEngine:
             self._feed("dice", roll={
                 "label": m["label"], "dice": m["roll"], "total": m["total"],
                 "detail": m.get("detail"), "d20": m.get("d20"), "outcome": m.get("outcome"),
+                "dc": m.get("dc"),
             })
         self._narrate_event(outcome.narration)
         for d in outcome.dialogue:
@@ -1025,7 +1104,12 @@ class ActEngine:
         )
         self._seed_roll = None
         try:
-            result = pipeline.orchestrate(action, state=self._pipeline_state(), prefs=self.prefs)
+            result = pipeline.orchestrate(
+                action, state=self._pipeline_state(), prefs=self.prefs,
+                suspend_on_check=self._suspend_on_check,
+            )
+        except CheckSuspension:
+            raise  # two-phase throw: the player's die resolves this check
         except Exception:  # noqa: BLE001 - provider failure never loses the turn
             out = BeatOutcome(
                 ack="The chronicler's quill falters.",
@@ -1040,13 +1124,16 @@ class ActEngine:
         mechanics = None
         for check in result.checks:
             if check.surfaced:
+                snapshot = check.request_snapshot
                 mechanics = {
-                    "label": f"{check.request_snapshot.skill} check",
+                    "label": f"{snapshot.skill} check",
                     "roll": "d20",
                     "total": check.total,
                     "detail": check.cost,
                     "d20": check.roll,
                     "outcome": check.outcome.value if hasattr(check.outcome, "value") else check.outcome,
+                    "dc": snapshot.dc,
+                    "skill": snapshot.skill,
                 }
                 break
 
@@ -1056,6 +1143,9 @@ class ActEngine:
             narration=narration,
             kind="",  # free text: persist, no autosave churn
             mechanics=mechanics,
+            dialogue=[{"speaker": d.npc, "line": d.line} for d in result.narration.npc_dialogue],
+            suggestions=[{"label": s.label, "command": s.command}
+                         for s in result.narration.suggested_actions],
         )
         # world-fact attempts are recorded but change nothing (authority invariant)
         if result.intent.world_fact_attempt:

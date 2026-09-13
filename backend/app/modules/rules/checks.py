@@ -7,9 +7,23 @@ from __future__ import annotations
 
 import random
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
+
+
+class CheckSuspension(Exception):
+    """Control-flow signal: a surfaced check awaits the player's own throw.
+
+    Raised by the play engine / action pipeline when a real roll would happen
+    and the player is the one who must throw it. The caller turns ``spec``
+    into a pending-check payload; a later call carrying the thrown die
+    (``seed_roll``) resolves the beat normally. See ``play/engine.act``.
+    """
+
+    def __init__(self, spec: dict[str, Any]) -> None:
+        super().__init__(str(spec.get("label", "check")))
+        self.spec = dict(spec)
 
 # --- Difficulty bands (GDD §19-20) -------------------------------------------
 

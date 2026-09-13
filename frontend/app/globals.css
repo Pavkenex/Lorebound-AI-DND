@@ -111,9 +111,33 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
 .dice-demo { display: flex; gap: 18px; flex-wrap: wrap; }
 .dice-demo-cell { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 168px; }
 .dice-demo-note { margin: 0; text-align: center; min-height: 2.8em; }
-/* Throwable tray (t_84c31095) */
-.dice-tray { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.dice-tray .dice-canvas { margin-top: 2px; }
+/* Called-check throw (t_84c31095 follow-up): the die waits for the player. */
+.check-prompt {
+  margin-top: 12px;
+  border: 1px solid var(--gold);
+  box-shadow: 0 0 18px rgba(201, 162, 39, 0.22);
+  text-align: center;
+}
+.check-call { margin: 0 0 2px; color: var(--gold-hi); }
+.check-call strong { color: #fff; }
+.check-odds { margin: 0 0 8px; }
+.check-odds strong { color: var(--gold-hi); }
+.check-throw {
+  background: none; border: 0; padding: 0; cursor: pointer; border-radius: 10px; line-height: 0;
+  margin: 2px auto 0; display: block;
+}
+.check-throw.settled, .check-throw:disabled { cursor: default; }
+.check-throw:not(.settled):not(:disabled):hover { filter: drop-shadow(0 0 9px rgba(201, 162, 39, 0.4)); }
+.dice-inert { cursor: default; }
+.dice-inert:hover { filter: none; }
+.check-hint { margin: 8px 0 0; }
+/* Model-proposed quick actions, after a resolved beat. */
+.suggest-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.suggest-chip {
+  border: 1px dashed var(--parch-dim); border-radius: 999px; background: #1a1409;
+  color: var(--parch-1); font: inherit; font-size: 0.92em; padding: 5px 12px; cursor: pointer; text-align: left;
+}
+.suggest-chip:hover { border-color: var(--gold); color: #fff; }
 .entity { color: var(--gold-hi); text-decoration: underline dotted; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; }
 .entity:hover { color: #fff; }
 .lead-toast {

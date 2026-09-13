@@ -81,7 +81,7 @@ export function A11yControls() {
 
 const STEPS = [
   { h: "Act with words", p: "Type anything — “ask Marla about the wagon”, “inspect the seal”, “draw my bow”. There are no wrong verbs. Press Enter; the world answers." },
-  { h: "Checks & the dice", p: "When risk appears a real die tumbles into the chronicle and lands on your roll — natural 20s and natural 1s get their own flourishes. Click the die to replay; open the line for detail. You can also throw the d20 yourself any time from the Dice tray beside your sheet." },
+  { h: "Checks & the dice", p: "When an action turns on a real roll, the chronicle calls the check and a die rises for you to throw: press it, and the face that settles is the face the world reads. The line shows your skill, the DC, and the outcome; natural 20s and natural 1s get their own flourishes. Quiet checks roll behind the screen, and when no check is called there is no die at all." },
   { h: "Journal", p: "Every discovery becomes a LEAD. Open the Journal to trace the Missing Caravan thread — caravan → wagon → silver powder → guild → monastery." },
 ];
 

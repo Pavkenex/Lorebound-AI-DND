@@ -1,21 +1,33 @@
 "use client";
 // Adventure screen: three-column layout (t_87bd1163), visual hierarchy (t_43e37b1e),
-// optimistic ack + streaming + error recovery (t_18510814), tutorial (t_d2dd38a0).
+// optimistic ack + streaming + error recovery (t_18510814), tutorial (t_d2dd38a0),
+// called-check throws (t_84c31095 follow-up): a surfaced check waits for the
+// player's die — the prompt owns the throw, nothing rolls behind the player.
 import { useEffect, useRef, useState } from "react";
-import { api, streamNarration, submitAction, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState } from "../../lib/api";
+import { api, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type ApiResult, type ActResponse, type PendingCheck } from "../../lib/api";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
 import { Feed } from "../../components/feed";
 import { SceneArt, Portrait } from "../../components/art";
-import { DiceTray } from "../../components/dice3d";
+import { CheckPrompt, type CheckPhase } from "../../components/checkprompt";
 import { ErrorBanner, TutorialOverlay } from "../../components/widgets";
 
 let n = 100;
 const nid = () => `u${n++}`;
 
+/** A called check waiting on the player's throw. */
+interface PendingThrow {
+  text: string;
+  /** Idempotency stem: the resolve leg uses `${key}-roll`. */
+  key: string;
+  spec: PendingCheck;
+  face: number | null;
+  phase: CheckPhase;
+}
+
 export default function AdventurePage() {
-  const { content, addCost, compactNarration } = useStore();
+  const { content, addCost, compactNarration, reducedMotion } = useStore();
   const [loading, setLoading] = useState(true);
   const [restored, setRestored] = useState<string | null>(null);
   const [gs, setGs] = useState<LiveGameState>(fixtures.gameState);
@@ -29,7 +41,10 @@ export default function AdventurePage() {
   const [preserved, setPreserved] = useState(""); // failed input kept for retry
   const [toasts, setToasts] = useState<string[]>([]);
   const [scene, setScene] = useState("tavern interior");
+  const [pending, setPending] = useState<PendingThrow | null>(null);
+  const [suggestions, setSuggestions] = useState<{ label: string; command: string }[]>([]);
   const keyRef = useRef(0);
+  const sendingRef = useRef(false); // one throw resolves once
   const bottomRef = useRef<HTMLDivElement>(null);
   // Dice events created in this session roll their 3D animation on mount (t_ae0e86a6).
   const freshDiceRef = useRef<Set<string>>(new Set());
@@ -73,49 +88,66 @@ export default function AdventurePage() {
     setTimeout(() => setToasts((t) => t.slice(1)), 9000);
   }
 
-  async function runSubmit(text: string) {
-    const key = `${Date.now()}-${keyRef.current++}`;
-    setBusy(true); setError(null);
-    setAck(`You steel yourself — “${text}”`);
-    try {
-      const r = await submitAction(text, content, key);
-      addCost(r.cost);
-      setAck(r.data.ack);
-      // Mechanics resolve fast; narration streams into its slot.
-      const pending: FeedEvent[] = [];
-      for (const s of r.data.system ?? [])
-        pending.push({ id: nid(), kind: "system", text: s });
-      if (r.data.mechanics) {
-        const diceId = nid();
-        freshDiceRef.current.add(diceId);
-        pending.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome } });
-      }
-      let full = "";
-      setStreaming("");
-      for await (const chunk of streamNarration(r.data.narration)) {
+  /** Fold one resolved response into the chronicle + panels (both legs share it). */
+  function applyActResult(r: ApiResult<ActResponse>, text: string, opts?: { settledDice?: boolean }) {
+    setAck(r.data.ack);
+    setSuggestions(r.data.suggestions ?? []);
+    // Mechanics resolve fast; narration streams into its slot.
+    const pendingEvents: FeedEvent[] = [];
+    for (const s of r.data.system ?? [])
+      pendingEvents.push({ id: nid(), kind: "system", text: s });
+    if (r.data.mechanics) {
+      const diceId = nid();
+      // A die the player just threw in the prompt shows settled here, not re-rolled.
+      if (!opts?.settledDice) freshDiceRef.current.add(diceId);
+      pendingEvents.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome, dc: r.data.mechanics.dc } });
+    }
+    let full = "";
+    setStreaming("");
+    void (async () => {
+      for await (const chunk of streamNarration(r.data.narration ?? "")) {
         full = chunk;
         if (!compactNarration) setStreaming(chunk);
       }
       setStreaming(null);
-      pending.push({ id: nid(), kind: "narration", text: full || r.data.narration });
+      pendingEvents.push({ id: nid(), kind: "narration", text: full || (r.data.narration ?? "") });
       for (const d of r.data.dialogue ?? [])
-        pending.push({ id: nid(), kind: "dialogue", speaker: d.speaker, text: d.line });
+        pendingEvents.push({ id: nid(), kind: "dialogue", speaker: d.speaker, text: d.line });
       for (const l of r.data.newLeads ?? []) {
-        pending.push({ id: nid(), kind: "lead", lead: l });
+        pendingEvents.push({ id: nid(), kind: "lead", lead: l });
         pushToast(l);
       }
-      setEvents((e) => [...e, { id: nid(), kind: "system", text: `❧ ${text}` }, ...pending]);
-      setAck(null);
-      // Refresh the surrounding panels (location, clock, NPCs, leads, sheet) from
-      // the authoritative state — the local feed already shows what happened.
-      api.gameState(content).then((r2) => {
-        if (!r2.fromFixture) {
-          if (r2.data.campaign_id) setCampaignId(r2.data.campaign_id);
-          setGs(r2.data); addCost(r2.cost);
-        }
-      });
-      if (text.toLowerCase().match(/road|hollow|forest|wreck|travel|leave|north/)) setScene("forest road");
-      else if (text.toLowerCase().match(/monastery|chapel|beacon|monk/)) setScene("monastery");
+      setEvents((e) => [...e, { id: nid(), kind: "system", text: `❧ ${text}` }, ...pendingEvents]);
+    })();
+    // Refresh the surrounding panels (location, clock, NPCs, leads, sheet) from
+    // the authoritative state — the local feed already shows what happened.
+    api.gameState(content).then((r2) => {
+      if (!r2.fromFixture) {
+        if (r2.data.campaign_id) setCampaignId(r2.data.campaign_id);
+        setGs(r2.data); addCost(r2.cost);
+      }
+    });
+    if (text.toLowerCase().match(/road|hollow|forest|wreck|travel|leave|north/)) setScene("forest road");
+    else if (text.toLowerCase().match(/monastery|chapel|beacon|monk/)) setScene("monastery");
+  }
+
+  async function runSubmit(text: string) {
+    if (busy || pending) return;
+    const key = `${Date.now()}-${keyRef.current++}`;
+    setBusy(true); setError(null);
+    setSuggestions([]);
+    setAck(`You steel yourself — “${text}”`);
+    try {
+      const r = await submitAction(text, content, key);
+      addCost(r.cost);
+      if (r.data.pending_check) {
+        // The engine has called a check and is holding the beat: the die waits
+        // for the player's throw. Nothing has happened yet — nothing persists.
+        setPending({ text, key, spec: r.data.pending_check, face: null, phase: "ready" });
+        setAck(null);
+        return;
+      }
+      applyActResult(r, text);
     } catch {
       // A killed call never loses game state: action + mechanics stand, narration retries.
       setError("The sending failed before the chronicler could answer.");
@@ -126,10 +158,56 @@ export default function AdventurePage() {
     }
   }
 
+  /** Send the settled face back to resolve the called check. */
+  async function sendThrow(p: PendingThrow) {
+    if (sendingRef.current || p.face == null) return;
+    sendingRef.current = true;
+    setPending({ ...p, phase: "sending" });
+    try {
+      const r = await rollCheck(p.text, p.face, p.spec.token, content, `${p.key}-roll`);
+      if (r.conflict) {
+        // check_expired: the board moved — the throw had no target, nothing was taken.
+        setPending(null);
+        setError("The moment moved on — that throw had no target, so nothing happened. Say it again.");
+        return;
+      }
+      if (r.fromFixture) {
+        // Thrown, but the sending failed: keep the die and offer the same face again.
+        setPending({ ...p, phase: "retry" });
+        return;
+      }
+      addCost(r.cost);
+      setPending(null);
+      applyActResult(r, p.text, { settledDice: true });
+    } finally {
+      sendingRef.current = false;
+    }
+  }
+
+  /** Press on the die: pick the face (the settle is physics), then send it. */
+  function onThrow() {
+    const p = pending;
+    if (!p || p.phase !== "ready") return;
+    const face = 1 + Math.floor(Math.random() * 20);
+    if (reducedMotion) {
+      void sendThrow({ ...p, face });
+      return;
+    }
+    setPending({ ...p, face, phase: "thrown" });
+  }
+
+  function onSettled() {
+    if (pending?.phase === "thrown") void sendThrow(pending);
+  }
+
+  function onRetry() {
+    if (pending?.phase === "retry") void sendThrow(pending);
+  }
+
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || pending) return;
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setError("You seem to be off the road (offline). Your words are kept below — retry when ready.");
       setPreserved(text);
@@ -140,6 +218,7 @@ export default function AdventurePage() {
   }
 
   function inspect(name: string) {
+    if (busy || pending) return;
     uiBlip(520);
     if (live) {
       // Live: inspecting is a real action — the engine decides what it reveals.
@@ -180,10 +259,6 @@ export default function AdventurePage() {
           <h3>Party</h3>
           {gs.party.map((p) => <p key={p.name} style={{ margin: "4px 0" }}>{p.name} <span className="sys">· {p.hp}</span></p>)}
         </div>
-        <div className="parchment card" style={{ marginTop: 12 }}>
-          <h3>The dice</h3>
-          <DiceTray />
-        </div>
       </aside>
 
       {/* CENTER — chronicle */}
@@ -216,6 +291,30 @@ export default function AdventurePage() {
           />
         )}
         {preserved && error && <p className="sys">Kept: “{preserved}”</p>}
+        {pending && (
+          <CheckPrompt
+            spec={pending.spec}
+            phase={pending.phase}
+            face={pending.face}
+            onThrow={onThrow}
+            onSettled={onSettled}
+            onRetry={onRetry}
+          />
+        )}
+        {!pending && suggestions.length > 0 && !busy && (
+          <div className="suggest-row" aria-label="Suggested next moves">
+            {suggestions.map((s) => (
+              <button
+                key={s.label}
+                type="button"
+                className="suggest-chip"
+                onClick={() => { if (!busy && !pending) void runSubmit(s.command); }}
+              >
+                ✦ {s.label}
+              </button>
+            ))}
+          </div>
+        )}
         <form onSubmit={onSubmit} style={{ marginTop: 12 }}>
           <label className="sr-only" htmlFor="act">What do you do?</label>
           <input
@@ -225,12 +324,12 @@ export default function AdventurePage() {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Attempt anything — ask Marla about the wagon, inspect the seal, step into the rain…"
             aria-label="action input"
-            disabled={busy}
+            disabled={busy || !!pending}
             autoComplete="off"
           />
           <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-            <button className="btn" type="submit" disabled={busy || !input.trim()}>
-              {busy ? "The quill moves…" : "Act ↵"}
+            <button className="btn" type="submit" disabled={busy || !!pending || !input.trim()}>
+              {busy ? "The quill moves…" : pending ? "The die waits…" : "Act ↵"}
             </button>
             <span className="sys">No wrong verbs. No timed decisions.</span>
           </div>

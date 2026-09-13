@@ -96,6 +96,21 @@ async function post<T>(path: string, body: unknown, fallback: T, prefs?: Content
   }
 }
 
+/** A surfaced check waiting on the player's throw (two-phase /act, t_84c31095-follow-up). */
+export interface PendingCheck {
+  /** Human label, e.g. "Stealth — the storeroom strongbox". */
+  label: string;
+  skill: string;
+  attribute?: string | null;
+  attribute_mod?: number;
+  skill_mod?: number;
+  total_mod?: number;
+  dc: number;
+  difficulty?: string;
+  /** Board fingerprint from the calling leg; a moved board rejects the throw (409). */
+  token: string;
+}
+
 export interface ActResponse {
   ack: string;
   mechanics?: {
@@ -106,9 +121,13 @@ export interface ActResponse {
     outcome?: string;
     dc?: number;
   } | null;
-  narration: string;
+  /** Present when the action waits on the player's throw; nothing persisted yet. */
+  pending_check?: PendingCheck | null;
+  narration: string | null;
   dialogue?: { speaker: string; line: string }[];
   newLeads?: string[];
+  /** Quick actions proposed for the next move (model's, else scene buttons). */
+  suggestions?: { label: string; command: string }[];
   /** Engine system lines for the live feed (clues found, routes opened). */
   system?: string[];
 }
@@ -155,6 +174,50 @@ export async function submitAction(
       cost: { calls: 0, costUsd: 0, cached: true },
       fromFixture: true,
     };
+  }
+}
+
+/** Throw the called check's die: sends the settled face to resolve the beat.
+ *
+ * Deliberately NOT the submitAction fallback: a throw that fails to send is
+ * never faked into a resolution — it returns fromFixture so the UI offers a
+ * resend of the SAME face, and a 409 (moved board) returns conflict: true. */
+export async function rollCheck(
+  text: string, roll: number, token: string, prefs?: ContentPrefs, idempotencyKey?: string
+): Promise<ApiResult<ActResponse> & { conflict?: boolean }> {
+  const key = idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const cid = getCampaignId();
+  const empty: ActResponse = { ack: "", mechanics: null, narration: null, dialogue: [], newLeads: [], system: [] };
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 25000);
+    const res = await fetch(`${BASE}/act`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": key,
+        ...prefsHeaders(prefs),
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        text,
+        roll,
+        pending_token: token,
+        campaign_id: cid === "demo-campaign" ? undefined : cid,
+        prefs: prefs ? { nsfw: prefs.nsfw } : undefined,
+      }),
+    });
+    clearTimeout(t);
+    if (res.status === 409) {
+      // check_expired: the board moved between the call and the throw.
+      return { data: empty, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: false, conflict: true };
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as ActResponse;
+    return { data, cost: readCost(res), fromFixture: false };
+  } catch {
+    return { data: empty, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: true };
   }
 }
 

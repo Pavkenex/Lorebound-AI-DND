@@ -34,8 +34,11 @@ class PromptContext(BaseModel):
     player_action: str = ""
     mechanical_result: dict[str, Any] = Field(default_factory=dict)
     output_schema: str = (
-        "Return JSON NarratorOutput: {narration, npc_dialogue[], "
-        "suggested_actions[], proposed_events[], proposed_lead_changes[]}."
+        "Return ONLY the JSON object NarratorOutput: {narration, npc_dialogue[], "
+        "suggested_actions[], proposed_events[], proposed_lead_changes[]} — "
+        "raw JSON, no code fences, no commentary before or after. "
+        "npc_dialogue entries: {\"npc\": \"Name\", \"line\": \"…\"}. "
+        "suggested_actions entries: {\"label\": \"…\", \"command\": \"…\"}."
     )
     length: str = "Standard"
 
