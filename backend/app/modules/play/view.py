@@ -7,7 +7,7 @@ live ``character`` block and a ``completed`` flag for the slice epilogue.
 from __future__ import annotations
 
 from app.modules.memory.npc_memory import npc_slug
-from app.modules.play.state import PlayState
+from app.modules.play.state import PlayState, attitude_band
 
 LOCATION_NAMES: dict[str, str] = {
     "lantern-inn": "The Lantern Inn, Ravenford",
@@ -43,26 +43,35 @@ def _inn_npcs(state: PlayState) -> list[dict]:
     return npcs
 
 
-def _with_remembers(state: PlayState, npcs: list[dict]) -> list[dict]:
-    """Attach each present NPC's strongest memories about the player (top 3)."""
+def _with_present_details(state: PlayState, npcs: list[dict]) -> list[dict]:
+    """Attach each present NPC's strongest memories and live relationship meter.
+
+    ``remembers`` appears only when there is something to remember (payload
+    stays lean); ``attitude`` + ``band`` are always present — the meter has a
+    default (Neutral 0) the card can render.
+    """
     for npc in npcs:
-        mems = [m["text"] for m in state.memories_for(npc_slug(npc["name"]), limit=3)]
+        slug = npc_slug(npc["name"])
+        mems = [m["text"] for m in state.memories_for(slug, limit=3)]
         if mems:
             npc["remembers"] = mems
+        attitude = state.attitude_for(slug)
+        npc["attitude"] = attitude
+        npc["band"] = attitude_band(attitude)
     return npcs
 
 
 def npcs_present(state: PlayState) -> list[dict]:
     """NPCs at the current location with a short note for the UI."""
     if state.location == "lantern-inn":
-        return _with_remembers(state, _inn_npcs(state))
+        return _with_present_details(state, _inn_npcs(state))
     if state.location == "market":
-        return _with_remembers(state, [
+        return _with_present_details(state, [
             {"name": "Sella Voss", "note": "guild silver factor, watching the scales"},
             {"name": "Tomm Ash", "note": "peddler, visibly nervous"},
         ])
     if state.location == "old-monastery":
-        return _with_remembers(
+        return _with_present_details(
             state, [{"name": "Brother Anselm", "note": "porter, frightened of the cellar stairs"}]
         )
     return []
