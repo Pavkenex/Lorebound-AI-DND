@@ -19,9 +19,19 @@ from app.modules.actions.pipeline import ActionInput, Pipeline
 from app.modules.actions.suggest import SceneContext
 from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
-from app.modules.memory.npc_memory import display_name, npc_slug
+from app.modules.memory.npc_memory import display_name, named_npc, npc_slug
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.npc.mood import DEFAULT_MOOD, surfaced_mood
+from app.modules.npc.personality import (
+    Price,
+    SocialContext,
+    approach_for_skill,
+    biased_mood,
+    disposition_for,
+    profile_for,
+    scale_relationship_delta,
+    social_adjustment,
+)
 from app.modules.play.session import PlaySession
 from app.modules.play.state import CLUES, SOLUTIONS
 from app.modules.play.view import npc_names, npcs_present
@@ -31,6 +41,7 @@ from app.modules.rules.checks import (
     CheckSuspension,
     Outcome,
     dc_for_band,
+    is_long_odds,
     roll_check,
 )
 
@@ -326,6 +337,68 @@ CONFRONT_QUIET = (
     "it. You do not need to go down again."
 )
 
+# --- leverage: a need, named in coin (systems slice 4, §6) ------------------
+
+OFFER_EMPTY = (
+    "You weigh the coin in your palm, but there is no one here to take it — a "
+    "price needs a person, and the road keeps its own company tonight."
+)
+OFFER_NO_PRICE = (
+    "{name} does not even look at your hand. Coin is not what {name} wants, and "
+    "both of you can hear the offer land wrong — the ask has to be made in the "
+    "only currency {name} trades in."
+)
+OFFER_SHORT = (
+    "You count the purse twice: {purse} guilders against a price of {cost}. "
+    "{name} watches the arithmetic cross your face and lets it fail — ask it the "
+    "hard way, then."
+)
+OFFER_PAID_SELLA = (
+    "Sella does not touch the coin. She notes it, the way a factor notes "
+    "everything, and the number goes into a column with your name at the top of "
+    "it. \"The guild rents the old monastery cellar — the one the order calls "
+    "sealed,\" she says, and closes the ledger on the sentence. \"Your travelers "
+    "are under that hill. You have not bought this from me; you have bought the "
+    "guild's silence about my having said it.\""
+)
+OFFER_PAID_BORIN = (
+    "Borin takes the coin without counting it and grins at nothing in particular. "
+    "\"Carts,\" he says. \"North of the oak. Nights. Since Midwinter. You paid for "
+    "what I would have told you for the asking, friend — but I will drink to the "
+    "difference.\""
+)
+OFFER_PAID_TOMM = (
+    "Tomm's hand closes on the coin before his conscience can comment. \"The "
+    "guild's men buy silver over rate,\" he says, fast and low. \"And the carts "
+    "that carry it turn north of the oak — nights, since Midwinter. I never told "
+    "you that.\""
+)
+OFFER_PAID: dict[str, str] = {
+    "sella": OFFER_PAID_SELLA,
+    "borin": OFFER_PAID_BORIN,
+    "tomm": OFFER_PAID_TOMM,
+}
+#: Fallback for a price the roster does not author prose for.
+OFFER_PAID_ANY = (
+    "{name} takes the coin and pays out exactly what coin buys — a word, and "
+    "not a kind one."
+)
+OFFER_WON = (
+    "{name} studies you a moment longer than the offer deserved, and gives the "
+    "thing you could not buy anyway — a word out of the column, told the way "
+    "favors are told."
+)
+
+#: Difficulty of the contested ask when coin does not decide it (§6). A guarded
+#: factor and a monastery porter are harder to talk round than a friendly room.
+SOCIAL_DIFFICULTY: dict[str, str] = {
+    "marla": "Moderate",
+    "borin": "Moderate",
+    "tomm": "Moderate",
+    "sella": "Difficult",
+    "anselm": "Difficult",
+}
+
 
 @dataclass
 class BeatOutcome:
@@ -382,6 +455,23 @@ _LIGHTS_RE = re.compile(r"\b(lanterns?|lights?|bells?)\b", re.IGNORECASE)
 _WATCH_RE = re.compile(r"\b(watch|wait|follow|tail|shadow|observe|trail|stake out|keep watch)\b", re.IGNORECASE)
 #: Overt romantic interest (systems slice 3): sets a mood, never a world fact.
 _FLIRT_RE = re.compile(r"\b(flirt\w*|wink\w*|make eyes|tease)\b", re.IGNORECASE)
+#: Leverage (systems slice 4, §6): an offer of coin, either word order — or a
+#: payment aimed at a named character ("I pay the factor for the truth").
+_OFFER_RE = re.compile(
+    r"\b(?:offer\w*|pay|pays|paid|brib\w*|gift\w*|tip|tips|tipped|slip|slips|hand over|purchase|buy|buys|bought)\b"
+    r"[^.]{0,60}\b(?:guilders?|silver|coin|coins|money|purse|price|fee|payment|bribe)\b"
+    r"|\b(?:guilders?|silver|coin|coins|money|purse)\b[^.]{0,60}\b(?:offer\w*|pay|brib\w*|buy|buys|bought|purchase|tip)\b"
+    r"|\b(?:pay|pays|paid|brib\w*|slip|slips|tip|tips|tipped)\b[^.]{0,60}"
+    r"\b(?:marla|borin|sella|tomm|anselm|innkeeper|peddler|factor|porter|mercenary|monk)\b",
+    re.IGNORECASE,
+)
+#: An offer that is really an ask for something (§6): only these can fall
+#: through to a contested check when coin is not what the character wants.
+_ASK_RE = re.compile(
+    r"\b(truth|answers?|information|tells?|told|talk|word|words|secret|name|names|"
+    r"know\w*|where|what|why|who|help|story|rumou?rs?)\b",
+    re.IGNORECASE,
+)
 
 
 def route(text: str) -> str:
@@ -397,6 +487,8 @@ def route(text: str) -> str:
         return "persuade"
     if _INTIMIDATE_RE.search(t) and (_SELLA.search(t) or _BORIN.search(t)):
         return "intimidate"
+    if _OFFER_RE.search(t):
+        return "offer"
     if _AMBUSH_RE.search(t):
         return "ambush"
     if _CONFRONT_RE.search(t):
@@ -471,30 +563,70 @@ class ActEngine:
         return (value - 10) // 2, TRAINED_BONUS
 
     def _check_spec(self, skill: str, attr_mod: int, skill_mod: int,
-                    dc: int, difficulty: str, label: str) -> dict[str, Any]:
-        """Player-facing description of a check, for the pending-throw prompt."""
+                    dc: int, difficulty: str, label: str, *,
+                    dc_base: int | None = None, dc_why: str = "") -> dict[str, Any]:
+        """Player-facing description of a check, for the pending-throw prompt.
+
+        ``dc`` is the DC as adjusted (social checks carry the §6 shift);
+        ``dc_base`` is the band's own value and ``dc_why`` the reason the two
+        differ, so the player sees why the odds are what they are.
+        ``long_odds`` marks a check only a natural 20 can pass (§6).
+        """
+        total_mod = attr_mod + skill_mod
         return {
             "label": label,
             "skill": skill.title(),
             "attribute": SKILL_ATTRIBUTE.get(skill, "Wits"),
             "attribute_mod": attr_mod,
             "skill_mod": skill_mod,
-            "total_mod": attr_mod + skill_mod,
+            "total_mod": total_mod,
             "dc": dc,
+            "dc_base": int(dc if dc_base is None else dc_base),
+            "dc_why": dc_why or None,
+            "long_odds": is_long_odds(dc, total_mod),
             "difficulty": difficulty,
         }
 
-    def _check(self, skill: str, difficulty: str, label: str) -> tuple[dict[str, Any], CheckResult]:
+    def _social_context(self, npc: str, skill: str, approach: str = "") -> SocialContext:
+        """What a social check knows about its target right now (§6).
+
+        The mood is read through the same content gate every surface uses, so
+        the odds the player is shown match the chip and the narrator.
+        """
+        nsfw = bool(self.prefs and self.prefs.nsfw)
+        mood = self.state.mood_of(npc)
+        return SocialContext(
+            slug=npc,
+            approach=approach or approach_for_skill(skill),
+            mood=surfaced_mood(str(mood["mood"]), nsfw=nsfw),
+            mood_intensity=float(mood["intensity"]),
+            attitude=self.state.attitude_for(npc),
+        )
+
+    def _check(self, skill: str, difficulty: str, label: str, *,
+               npc: str = "", approach: str = "") -> tuple[dict[str, Any], CheckResult]:
         """Roll one d20 check for a beat; returns (mechanics contract, result).
 
         With ``suspend_on_check`` (and no seeded die) the roll is deferred —
         the beat raises :class:`CheckSuspension` so the player throws the die;
         the second call carries the thrown face as ``seed_roll``.
+
+        A social check aimed at ``npc`` is adjusted per §6 (approach + mood −
+        relationship credit) and reports the reason alongside the DC.
         """
         attr_mod, skill_mod = self._modifiers(skill)
-        dc = dc_for_band(difficulty) or 10
+        base_dc = dc_for_band(difficulty) or 10
+        dc, why = base_dc, ""
+        if npc:
+            adjustment = social_adjustment(
+                self._social_context(npc, skill, approach), base_dc
+            )
+            dc, why = adjustment.adjusted_dc, adjustment.why
         if self._suspend_on_check and self._seed_roll is None:
-            raise CheckSuspension(self._check_spec(skill, attr_mod, skill_mod, dc, difficulty, label))
+            raise CheckSuspension(self._check_spec(
+                skill, attr_mod, skill_mod, dc, difficulty, label,
+                dc_base=base_dc, dc_why=why,
+            ))
         request = CheckRequest(
             campaign_id=self.session.campaign_id,
             skill=skill.title(),
@@ -519,6 +651,7 @@ class ActEngine:
             "d20": result.roll,
             "outcome": result.outcome.value,
             "dc": result.dc,
+            "dc_why": why or None,
             "skill": skill.title(),
             "attribute": SKILL_ATTRIBUTE.get(skill, "Wits"),
         }
@@ -547,9 +680,12 @@ class ActEngine:
         The meter move is tied to the memory write (design §2+§3): the same
         interaction sites do both, a repeated beat that writes no new memory
         moves nothing, and the engine — never the model — owns the value.
+        Personality weights the size of the move (§5): a proud character takes
+        an insult double, a lonely one over-weights attention.
         """
         if not self.state.remember(npc, text, kind=kind, sentiment=sentiment, salience=salience):
             return False
+        delta = scale_relationship_delta(npc, kind, delta)
         if delta:
             self.state.adjust_attitude(npc, delta, reason or text)
         return True
@@ -558,12 +694,16 @@ class ActEngine:
         """Set one NPC's live mood for an event (design §4).
 
         The engine owns moods, never the model — beats call this the way they
-        call :meth:`_remember`. Gated words (flirty/horny) fall back to their
-        same-family word unless the campaign's content settings allow them, so
-        the save, the chip and the narrator prompt all agree.
+        call :meth:`_remember`. The raw event mood is first read through the
+        character's personality (§5: a proud character's fear curdles into a
+        grudge, a wary one's sudden warmth reads as a play); gated words
+        (flirty/horny) then fall back to their same-family word unless the
+        campaign's content settings allow them, so the save, the chip and the
+        narrator prompt all agree.
         """
         nsfw = bool(self.prefs and self.prefs.nsfw)
-        return self.state.set_mood(npc, surfaced_mood(mood, nsfw=nsfw), intensity)
+        word = biased_mood(npc, mood)
+        return self.state.set_mood(npc, surfaced_mood(word, nsfw=nsfw), intensity)
 
     def _narrate_event(self, text: str) -> None:
         self._feed("narration", text=text)
@@ -1024,7 +1164,10 @@ class ActEngine:
                           "the road has been swallowing first.",
                 kind="talk",
             )
-        mech, result = self._check("persuasion", "Difficult", "Persuasion — Sella Voss")
+        mech, result = self._check(
+            "persuasion", "Difficult", "Persuasion — Sella Voss",
+            npc="sella", approach=approach_for_skill("persuasion", text),
+        )
         out = BeatOutcome(ack="You make your case quietly.", narration=SELLA_PERSUADE_FAIL, kind="talk", mechanics=mech)
         if self._succeeded(result):
             self._advance_to("investigating")
@@ -1050,12 +1193,36 @@ class ActEngine:
                               "the story first — then choose who sweats.",
                     kind="talk",
                 )
-            mech, result = self._check("intimidation", "Difficult", "Intimidation — Sella Voss")
+            mech, result = self._check(
+                "intimidation", "Difficult", "Intimidation — Sella Voss",
+                npc="sella", approach="pressure",
+            )
+            profile = profile_for("sella")
             out = BeatOutcome(ack="You lean into the space between you.", narration=SELLA_INTIMIDATE_FAIL, kind="talk", mechanics=mech)
             if self._succeeded(result):
                 self._advance_to("investigating")
                 self._unlock("lean-on-them")
                 out.narration = SELLA_INTIMIDATE_SUCCESS
+                # Pressure is not free (§6): she does as she is told, and the
+                # fear is weighted by her pride — a grudge, not a lesson.
+                self._remember(
+                    "sella", "was made afraid, and did as she was told",
+                    kind="intimidation", sentiment=-2, salience=3,
+                    delta=profile.pressure.hit, reason="was made afraid",
+                )
+                self._mood("sella", "afraid", 0.6)
+            else:
+                backfire = profile.pressure.backfire
+                line = "was threatened and did not bend"
+                if result.outcome == Outcome.CriticalFailure:
+                    backfire *= 2
+                    line = "was threatened, and the guild heard about it"
+                    self._feed("system", text="❧ The grey gloves have taken an interest.")
+                self._remember(
+                    "sella", line, kind="intimidation", sentiment=-1, salience=2,
+                    delta=backfire, reason=line,
+                )
+                self._mood("sella", "amused", 0.4)
             return out
 
         # Borin: he can be cowed (slice NPC: "backs down if beaten or cowed").
@@ -1069,13 +1236,18 @@ class ActEngine:
                           "fascinating.",
                 kind="talk",
             )
-        mech, result = self._check("intimidation", "Moderate", "Intimidation — Borin")
+        mech, result = self._check(
+            "intimidation", "Moderate", "Intimidation — Borin",
+            npc="borin", approach="pressure",
+        )
+        profile = profile_for("borin")
         if self._succeeded(result):
             st.borin_down = True
             st.note("cowed:borin")
             self._remember(
                 "borin", "was frightened into talking about the carts",
-                kind="intimidation", sentiment=-2, salience=3, delta=-20,
+                kind="intimidation", sentiment=-2, salience=3,
+                delta=profile.pressure.hit,  # authored on the profile (§5)
                 reason="was frightened into talking about the carts",
             )
             self._mood("borin", "afraid", 0.7)
@@ -1089,6 +1261,17 @@ class ActEngine:
                 mechanics=mech,
                 dialogue=[{"speaker": "Borin", "line": "Carts. North of the oak. That is all you get from me."}],
             )
+        # A failed attempt is not free either (§6): he remembers who pushed.
+        backfire = profile.pressure.backfire
+        line = "was leaned on and did not blink"
+        if result.outcome == Outcome.CriticalFailure:
+            backfire *= 2
+            line = "was leaned on badly, and the story of it got around"
+        self._remember(
+            "borin", line, kind="intimidation", sentiment=-1, salience=2,
+            delta=backfire, reason=line,
+        )
+        self._mood("borin", "amused", 0.4)
         return BeatOutcome(
             ack="You test the room.",
             narration="Borin has been intimidated by professionals, and you are not, tonight, "
@@ -1156,18 +1339,18 @@ class ActEngine:
         )
 
     # -- flirt: romantic interest as a mood, never a world fact --------------
-    def _flirt_target(self, text: str) -> str | None:
-        """Who a flirt lands on: the one named, else the first one present.
+    def _named_present(self, text: str, *, fallback: bool = True) -> str | None:
+        """The present character the text names — else, by default, the first present.
 
-        Nobody present at this location means nobody catches the eye.
+        Nobody present at this location means nobody answers to it at all; a
+        beat that needs a *named* recipient asks for ``fallback=False``.
         """
         present = [npc_slug(n["name"]) for n in npcs_present(self.state)]
         if not present:
             return None
-        for pattern, slug in ((_MARLA, "marla"), (_BORIN, "borin"), (_SELLA, "sella")):
-            if slug in present and pattern.search(text):
-                return slug
-        return present[0]
+        return named_npc(text, present) or (present[0] if fallback else None)
+
+    _flirt_target = _named_present
 
     def _beat_flirt(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1190,6 +1373,92 @@ class ActEngine:
             narration=FLIRT_NARRATION.format(name=display_name(target)),
             kind="talk",
         )
+
+    # -- leverage: a need named in coin (systems slice 4, §6) ----------------
+    def _offer_target(self, text: str) -> str | None:
+        """Who an offer lands on: the one named, else the first one present.
+
+        An offer names its recipient — paying for a peddler's word at the inn
+        is offering coin to nobody.
+        """
+        return self._named_present(text, fallback=False)
+
+    def _leverage_state(self, target: str) -> None:
+        """The state a bought (or won) answer moves — routes, notes, a rumour."""
+        if target == "sella":
+            self._advance_to("investigating")
+            self._unlock("talk-it-out")
+        elif target in ("borin", "tomm"):
+            self._feed(
+                "system",
+                text="❧ Word bought — the carts turn north of the oak, nights, since Midwinter.",
+            )
+
+    def _leverage_paid(self, target: str, price: Price) -> BeatOutcome:
+        """The shortcut: the purse meets the price, so no die is thrown (§6)."""
+        st = self.state
+        name = display_name(target)
+        st.silver -= price.cost
+        self._feed("system", text=f"❧ Coin answers — {name}'s price met (−{price.cost} guilders).")
+        self._remember(
+            target, f"took {price.cost} guilders and told what coin buys",
+            kind="leverage", sentiment=1, salience=2, delta=+5,
+            reason=f"was paid {price.cost} guilders",
+        )
+        self._mood(target, "warm", 0.5)
+        self._leverage_state(target)
+        return BeatOutcome(
+            ack="You put the coin down first.",
+            narration=OFFER_PAID.get(target, OFFER_PAID_ANY).format(name=name),
+            kind="talk",
+        )
+
+    def _beat_offer(self, text: str) -> BeatOutcome:
+        """Leverage (§6): coin answers a real need — or it buys nothing at all.
+
+        When the character has a price and the purse meets it, the price
+        decides the outcome and no die is thrown. When the purse is short, or
+        coin is simply not what they want, the offer moves no state: the ask
+        still has to be won as its own contested social check.
+        """
+        st = self.state
+        st.advance_minutes(5)
+        target = self._offer_target(text)
+        if target is None:
+            return BeatOutcome(
+                ack="Your coin finds no taker.", narration=OFFER_EMPTY, kind="talk"
+            )
+        if target == "sella" and st.lead_stage == "unheard":
+            # The arc rail holds: coin cannot buy an answer you cannot ask for.
+            return BeatOutcome(
+                ack="You would not know what to ask.",
+                narration="Coin gets you nothing yet — you do not know enough to make a "
+                          "guild factor nervous. Learn what the road has been swallowing "
+                          "first.",
+                kind="talk",
+            )
+        profile = profile_for(target)
+        price = profile.price
+        name = display_name(target)
+        if price is not None and st.silver >= price.cost:
+            return self._leverage_paid(target, price)
+        if price is not None:
+            narration = OFFER_SHORT.format(name=name, cost=price.cost, purse=st.silver)
+        else:
+            narration = OFFER_NO_PRICE.format(name=name)
+            if not _ASK_RE.search(text):
+                return BeatOutcome(ack="Your coin lands wrong.", narration=narration, kind="talk")
+        mech, result = self._check(
+            "persuasion", SOCIAL_DIFFICULTY.get(target, "Moderate"),
+            f"Persuasion — {display_name(target)}", npc=target, approach="coin",
+        )
+        out = BeatOutcome(ack="You ask it the hard way.", narration=narration, kind="talk",
+                          mechanics=mech)
+        if self._succeeded(result):
+            self._leverage_state(target)
+            out.narration = (SELLA_PERSUADE_SUCCESS if target == "sella"
+                             else OFFER_WON.format(name=name))
+        return out
 
     def _beat_confront(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1297,6 +1566,8 @@ class ActEngine:
                 npcs_present=self.present_npcs(),
                 npc_memories=self._npc_memories_for_present(),
                 npc_moods=self._npc_moods_for_present(),
+                npc_attitudes=self._npc_attitudes_for_present(),
+                npc_dispositions=self._npc_dispositions_for_present(),
             ),
             seed_roll=self._seed_roll,
         )
@@ -1384,6 +1655,19 @@ class ActEngine:
             entry = self.state.mood_of(npc_slug(name))
             if entry["intensity"] > 0 and entry["mood"] != DEFAULT_MOOD:
                 out[name] = entry
+        return out
+
+    def _npc_attitudes_for_present(self) -> dict[str, int]:
+        """The live relationship meter of present NPCs (§3, into the pipeline)."""
+        return {name: self.state.attitude_for(npc_slug(name)) for name in self.present_npcs()}
+
+    def _npc_dispositions_for_present(self) -> dict[str, str]:
+        """The authored disposition line of present NPCs, for the narrator (§5)."""
+        out: dict[str, str] = {}
+        for name in self.present_npcs():
+            line = disposition_for(npc_slug(name))
+            if line:
+                out[name] = line
         return out
 
     def _pipeline_state(self) -> dict[str, Any]:
