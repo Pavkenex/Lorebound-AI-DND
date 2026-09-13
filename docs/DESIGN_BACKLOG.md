@@ -9,10 +9,10 @@ move to kanban cards when picked up._
 | # | Item | Ruling |
 |---|------|--------|
 | 1 | **Relationship-gated content** — warmth unlocks NPC-initiated offers (personal favors at Warm, stick-their-neck-out at Bonded) | OPEN — question raised: "aren't they already more open based on relationship?" See §1 below. |
-| 2 | **Promises become oaths** — journal Oaths section, soft windows; kept → warmth + treasured memory; lapsed → trust damage they open with | AGREED — build when the token/free-model situation is settled. |
+| 2 | **Promises become oaths** — journal Oaths section, soft windows; kept → warmth + treasured memory; lapsed → trust damage they open with | AGREED — next up. |
 | 3 | **Downtime & training** — town hours, trainers, novelty decay; turns already-written systems into a second loop | PARKED — needs a more detailed, campaign-agnostic design (characters differ per campaign; handle generally). |
 | 4 | **Story-so-far digest** — rolling ~200-word recap carried in the prompt | OPEN — question raised: "isn't that what world memories are for?" See §4 below. |
-| 5 | **Fail forward everywhere** — extend success-at-cost / hail-mary to stealth/investigation/combat; crit-fail opens a branch | AGREED — build when the token/free-model situation is settled. |
+| 5 | **Fail forward everywhere** — extend success-at-cost / hail-mary to stealth/investigation/combat; crit-fail opens a branch | AGREED — next up. |
 | 6 | **Nightly self-play ritual** — golden-chronicle transcripts + soak bot against the real relay | PARKED — "some other time" (token budget). |
 | 7 | **Cheap delights** — rp_quality → Inspiration; saga export PDF/EPUB; tabbed mobile shell | UNSORTED — not yet ruled on. |
 
@@ -39,17 +39,20 @@ only *open up* at Warm/Bonded (the "warm unlocks" half of suggestion 1).
 ## Free-model route — status 2026-09-13
 
 - **muse-spark\* uses `/v1/responses`** (not `/chat/completions` — that wire 500s). Hermes knows this (`muse-spark` → `codex_responses` in `hermes_cli/models.py`).
-- **Works & bills $0: `muse-spark-1.3-contributor-free`** (provider `opencode-zen`; key `OPENCODE_ZEN_API_KEY`, now also in `/opt/data/.env`).
-- **Gate:** `-contributor*` = Meta's data-training tier ("trains on your prompts and completions"; do not use for confidential data). Hermes refuses unattended use until `security.allow_data_training_tiers_noninteractive: true` is set — **user consent pending**.
-- Non-contributor `muse-spark-1.3` = paid; account balance is empty (401). Keyless free tier: only inside the OpenCode app (400 otherwise).
-- Probes: `/opt/data/scratch/probe_muse{_responses,_final,_quality,_retry}.sh`.
+- **`muse-spark-1.3-contributor-free`** (provider `opencode-zen`; key `OPENCODE_ZEN_API_KEY` in `/opt/data/.env`) — verified **$0**.
+- **Flipped 2026-09-13 (user consented)**: default = `muse-spark-1.3-contributor-free`, fallback = `muse-spark-1.2-contributor-free` (also $0). `security.allow_data_training_tiers_noninteractive: true` set. Both watch-crons (`kanban-cleared-watch`, `spacesage-ui-watch`) pinned to the same model so nothing keeps using the paid snapshot.
+- **Gate + standing rule:** `-contributor*` = Meta's data-training tier (Meta may train on prompts/completions). **Standing rule (Matija): never let API keys, credentials, or overly private material into muse prompts — secret handling stays server-side.**
+- Non-contributor `muse-spark-1.3` = paid; account balance empty (401). Keyless free tier: only inside the OpenCode app (400 otherwise).
+- Probes: `/opt/data/scratch/probe_muse{_responses,_final,_quality,_retry}.sh`, `probe_muse_12free.sh`.
+- **Verified end-to-end 2026-09-13:** unattended one-shot ran a real tool call on muse (~12s), no refusal.
 
-### To flip (once consented)
+### Flip (done 2026-09-13)
 
 ```bash
 hermes config set model.default muse-spark-1.3-contributor-free
 hermes config set model.provider opencode-zen
 hermes config set security.allow_data_training_tiers_noninteractive true
+# + fallback repointed via /opt/data/scratch/set_fallback.py
 ```
 
 Revert: `hermes config set model.default deepseek-v4.1-flash && hermes config set model.provider opencode-go`.
