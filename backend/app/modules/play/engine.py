@@ -71,6 +71,9 @@ TRAINED_BONUS = 2
 
 #: How many of an NPC's memories about the player reach the narrator prompt.
 NARRATOR_MEMORY_LIMIT = 3
+#: Recent chronicle entries the narrator prompt carries for continuity (§25):
+#: the model continues the live tale instead of restarting the scene.
+NARRATOR_CHRONICLE_LIMIT = 8
 
 SUCCESS_OUTCOMES = {Outcome.Success, Outcome.SuccessWithCost, Outcome.Exceptional}
 
@@ -1984,12 +1987,34 @@ class ActEngine:
                 out[name] = line
         return out
 
+    def _chronicle_tail(self) -> list[dict[str, Any]]:
+        """The tail of the player-visible chronicle, for narrator continuity.
+
+        The narrator must continue the live tale, never restart it: the last
+        beats the player has already read — their own action echoes, the prose,
+        the spoken lines, the notices — ride the prompt the way the retrieved
+        memory slices do. A bounded tail, never the transcript (§25).
+        """
+        out: list[dict[str, Any]] = []
+        for event in self.state.feed:
+            kind = str(event.get("kind") or "")
+            if kind not in ("narration", "dialogue", "system"):
+                continue
+            entry: dict[str, Any] = {"kind": kind, "text": str(event.get("text") or "")}
+            if kind == "dialogue" and event.get("speaker"):
+                entry["speaker"] = str(event["speaker"])
+            out.append(entry)
+        return out[-NARRATOR_CHRONICLE_LIMIT:]
+
     def _pipeline_state(self) -> dict[str, Any]:
         st = self.state
         pc = st.pc
         scene = SceneDirector(st).scene_block()
         return {
             "inventory": list(pc.get("equipment", [])),
+            # Continuity (§25): the narrator prompt carries the tail of what
+            # the player has already read, so the scene advances.
+            "chronicle": self._chronicle_tail(),
             "npcs_alive": {"borin": not st.borin_down, "marla": True},
             "location": st.location,
             "known_locations": ["lantern-inn", "northern-road", "market"],

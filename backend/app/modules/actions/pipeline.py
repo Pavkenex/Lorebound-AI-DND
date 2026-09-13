@@ -226,6 +226,10 @@ class Pipeline:
             player_action=text,
             mechanical_result=mech,
             length=action.length,
+            # Continuity (§25): the last beats the player has already read ride
+            # the prompt, so the narrator continues the tale instead of
+            # re-deriving the scene from scratch every turn.
+            chronicle=list(state.get("chronicle") or []),
         )
         suggestions = [s.model_dump() for s in generate_suggestions(action.scene)]
         output, _bundle = narrate(prompt_ctx, provider=self.provider,

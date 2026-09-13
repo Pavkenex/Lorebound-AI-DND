@@ -2,9 +2,10 @@
 
 Assembled per request from: system rules, campaign tone, current location,
 current scene, player character, relevant NPCs, relevant world facts,
-relevant leads, recent events, player action, mechanical result, output
-schema. The full conversation transcript is NEVER appended — only retrieved
-context. This module therefore takes no transcript argument by design.
+relevant leads, the recent chronicle tail, recent events, player action,
+mechanical result, output schema. The full conversation transcript is NEVER
+appended — only retrieved context slices (the chronicle tail is a bounded
+slice of it). This module therefore takes no transcript argument by design.
 """
 from __future__ import annotations
 
@@ -22,6 +23,13 @@ MAX_FACTS = 10
 MAX_NPCS = 5
 #: Memories about the player rendered per NPC in the prompt (strongest first).
 MAX_NPC_MEMORIES = 3
+#: Recent chronicle entries (narration/dialogue/notices) that ride the prompt.
+#: Continuity lives here: without this tail the model re-derives the scene
+#: every turn — the player sits down and the NPC invites them to sit again.
+MAX_RETRIEVED_CHRONICLE = 8
+#: One chronicle line longer than this is elided head+tail (the closing beat
+#: of a narration matters as much as its opening).
+CHRONICLE_LINE_LIMIT = 600
 
 
 class PromptContext(BaseModel):
@@ -33,6 +41,9 @@ class PromptContext(BaseModel):
     npcs: list[dict[str, Any]] = Field(default_factory=list)
     world_facts: list[str] = Field(default_factory=list)
     leads: list[dict[str, Any]] = Field(default_factory=list)
+    #: The tail of the player-visible chronicle (newest last): what the player
+    #: has already been told — action echoes, prose, spoken lines, notices.
+    chronicle: list[dict[str, Any]] = Field(default_factory=list)
     recent_events: list[dict[str, Any]] = Field(default_factory=list)
     player_action: str = ""
     mechanical_result: dict[str, Any] = Field(default_factory=dict)
@@ -54,6 +65,25 @@ class PromptBundle(BaseModel):
     retrieved_counts: dict[str, int] = Field(default_factory=dict)
 
 
+def _elide(text: str, limit: int = CHRONICLE_LINE_LIMIT) -> str:
+    """Whitespace-normalized text, elided head+tail past ``limit`` chars."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    head = text[: limit // 2].rsplit(" ", 1)[0]
+    tail = text[-(limit // 2):].split(" ", 1)[-1]
+    return f"{head} … {tail}"
+
+
+def _chronicle_entry(entry: dict[str, Any]) -> str:
+    """One chronicle line: dialogue keeps its speaker, everything else is text."""
+    text = _elide(str(entry.get("text") or ""))
+    speaker = str(entry.get("speaker") or "").strip()
+    if str(entry.get("kind") or "") == "dialogue" and speaker:
+        return f'- {speaker}: "{text}"'
+    return f"- {text}"
+
+
 def assemble_prompt(
     ctx: PromptContext,
     role_system: str = "",
@@ -63,6 +93,7 @@ def assemble_prompt(
     npcs = ctx.npcs[:MAX_NPCS]
     facts = ctx.world_facts[:MAX_FACTS]
     events = ctx.recent_events[-MAX_RETRIEVED_EVENTS:]
+    chronicle = ctx.chronicle[-MAX_RETRIEVED_CHRONICLE:]
     # Content settings gate how a mood surfaces in the prompt (§4): a gated
     # word the settings do not allow must never reach the model either.
     nsfw = bool(prefs and prefs.nsfw)
@@ -84,6 +115,8 @@ def assemble_prompt(
     npc_block = "\n".join(_npc_entry(n) for n in npcs) or "- (none present)"
     fact_block = "\n".join(f"- {f}" for f in facts) or "- (no established facts)"
     lead_block = "\n".join(f"- {l.get('title', '?')}: {l.get('status', '')}" for l in ctx.leads) or "- (no active leads)"
+    chronicle_block = ("\n".join(_chronicle_entry(e) for e in chronicle)
+                       or "- (the chronicle opens here)")
     event_block = "\n".join(f"- {e.get('kind', '?')}: {e.get('payload', e)}" for e in events) or "- (no recent events)"
     pc = ctx.player_character
     pc_block = f"{pc.get('name', 'the hero')} — {pc.get('description', 'an adventurer')}" if pc else "an adventurer"
@@ -100,6 +133,7 @@ def assemble_prompt(
         f"[NPCs present]\n{npc_block}\n\n"
         f"[Established world facts]\n{fact_block}\n\n"
         f"[Active leads]\n{lead_block}\n\n"
+        f"[Recent chronicle (retrieved, newest last)]\n{chronicle_block}\n\n"
         f"[Recent events (retrieved, newest last)]\n{event_block}\n\n"
         f"[Player action]\n{ctx.player_action}\n\n"
         f"[Mechanical result]\n{ctx.mechanical_result}\n\n"
@@ -110,5 +144,5 @@ def assemble_prompt(
     )
     return PromptBundle(system=system, user=user, retrieved_counts={
         "npcs": len(npcs), "facts": len(facts), "events": len(events),
-        "leads": len(ctx.leads),
+        "leads": len(ctx.leads), "chronicle": len(chronicle),
     })
