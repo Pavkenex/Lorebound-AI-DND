@@ -84,3 +84,17 @@ auto-brings the Chronicle pane so the die stays throwable with one thumb.
 Desktop untouched. Verified via `next build` + SSR markup (`tabbar`,
 `data-tab="tale"`); no browser on this box, so phone-pixel check is still owed.
 **Still open:** saga export (PDF/EPUB at arc end).
+
+## Narrator quality fix 2026-09-13 (`f1c0914`)
+
+Player report: "mumbling words, barely understandable, barely any context".
+Found it: every narrator call used the provider default of **600 tokens**,
+while a Standard reply (≤250 words prose + dialogue + suggestions +
+proposals, all as raw JSON) needs ~900. The model wrote the story first,
+ran out of road mid-JSON, and the salvage paths served the fragment.
+Fix: explicit `NARRATOR_MAX_TOKENS = 1200`, style direction added to the role
+prompt (concrete sensory detail, varied rhythm, strong plain verbs — never
+purple), and ceiling hits are flagged on the bundle + logged
+(`lorebound.narrator`), never shown. 4 new tests, suite 445 green.
+To prove it on prod: watch the logs for "narrator ceiling hit" after
+redeploy — silence means replies fit again.
