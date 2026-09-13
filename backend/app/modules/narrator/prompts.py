@@ -19,6 +19,8 @@ MAX_RETRIEVED_EVENTS = 8
 #: Safety cap on facts/NPCs to keep prompts small (GDD §105: no unnecessary calls).
 MAX_FACTS = 10
 MAX_NPCS = 5
+#: Memories about the player rendered per NPC in the prompt (strongest first).
+MAX_NPC_MEMORIES = 3
 
 
 class PromptContext(BaseModel):
@@ -61,7 +63,14 @@ def assemble_prompt(
     facts = ctx.world_facts[:MAX_FACTS]
     events = ctx.recent_events[-MAX_RETRIEVED_EVENTS:]
 
-    npc_block = "\n".join(f"- {n.get('name', '?')}: {n.get('note', '')}" for n in npcs) or "- (none present)"
+    def _npc_entry(n: dict[str, Any]) -> str:
+        line = f"- {n.get('name', '?')}: {n.get('note', '')}"
+        remembered = [str(m) for m in (n.get("remembers") or [])][:MAX_NPC_MEMORIES]
+        if remembered:
+            line += " | remembers about the player: " + "; ".join(remembered)
+        return line
+
+    npc_block = "\n".join(_npc_entry(n) for n in npcs) or "- (none present)"
     fact_block = "\n".join(f"- {f}" for f in facts) or "- (no established facts)"
     lead_block = "\n".join(f"- {l.get('title', '?')}: {l.get('status', '')}" for l in ctx.leads) or "- (no active leads)"
     event_block = "\n".join(f"- {e.get('kind', '?')}: {e.get('payload', e)}" for e in events) or "- (no recent events)"

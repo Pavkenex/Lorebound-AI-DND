@@ -6,6 +6,7 @@ live ``character`` block and a ``completed`` flag for the slice epilogue.
 """
 from __future__ import annotations
 
+from app.modules.memory.npc_memory import npc_slug
 from app.modules.play.state import PlayState
 
 LOCATION_NAMES: dict[str, str] = {
@@ -42,17 +43,28 @@ def _inn_npcs(state: PlayState) -> list[dict]:
     return npcs
 
 
+def _with_remembers(state: PlayState, npcs: list[dict]) -> list[dict]:
+    """Attach each present NPC's strongest memories about the player (top 3)."""
+    for npc in npcs:
+        mems = [m["text"] for m in state.memories_for(npc_slug(npc["name"]), limit=3)]
+        if mems:
+            npc["remembers"] = mems
+    return npcs
+
+
 def npcs_present(state: PlayState) -> list[dict]:
     """NPCs at the current location with a short note for the UI."""
     if state.location == "lantern-inn":
-        return _inn_npcs(state)
+        return _with_remembers(state, _inn_npcs(state))
     if state.location == "market":
-        return [
+        return _with_remembers(state, [
             {"name": "Sella Voss", "note": "guild silver factor, watching the scales"},
             {"name": "Tomm Ash", "note": "peddler, visibly nervous"},
-        ]
+        ])
     if state.location == "old-monastery":
-        return [{"name": "Brother Anselm", "note": "porter, frightened of the cellar stairs"}]
+        return _with_remembers(
+            state, [{"name": "Brother Anselm", "note": "porter, frightened of the cellar stairs"}]
+        )
     return []
 
 

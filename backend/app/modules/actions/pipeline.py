@@ -138,7 +138,10 @@ class Pipeline:
             location=world.location or "Unknown",
             scene=f"PC acts: {intent.summary}",
             player_character={"name": state.get("pc_name", "the hero")},
-            npcs=[{"name": n} for n in action.scene.npcs_present],
+            npcs=[
+                {"name": n, "remembers": list(action.scene.npc_memories.get(n, []))}
+                for n in action.scene.npcs_present
+            ],
             world_facts=world.facts,
             recent_events=recent,
             player_action=text,

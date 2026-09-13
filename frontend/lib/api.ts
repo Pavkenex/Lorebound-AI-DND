@@ -241,13 +241,22 @@ export interface SaveRow {
   created_at: string;
 }
 
+/** One NPC present at the current location (GET /state npcs[]). */
+export interface NpcEntry {
+  name: string;
+  note: string;
+  /** Their strongest memories about the player (top 3), when any. */
+  remembers?: string[];
+}
+
 /** Live game state (GET /state): the fixture shape plus live-only fields. */
-export type LiveGameState = typeof fixtures.gameState & {
+export type LiveGameState = Omit<typeof fixtures.gameState, "npcs"> & {
   campaign_id?: string | null;
   character?: typeof fixtures.character;
   completed?: boolean;
   lead_stage?: string;
   clues?: string[];
+  npcs: NpcEntry[];
 };
 
 export interface TutorialDoc {

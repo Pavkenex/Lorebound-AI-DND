@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.events import EventKind, GameEvent, event_log
 from app.modules.campaign.service import autosave
+from app.modules.memory.npc_memory import sync_npc_memories
 from app.modules.play.models import PlayActionRow, PlayStateRow
 from app.modules.play.state import PlayState, seeded_state
 
@@ -69,6 +70,9 @@ class PlaySession:
             db.add(row)
         else:
             row.state_json = payload
+        # Mirror structured NPC memories into the npc_memories table (idempotent;
+        # the save file stays authoritative, the table is for querying beyond it).
+        sync_npc_memories(db, self.campaign_id, self.state)
         db.commit()
         self.persisted = True
 

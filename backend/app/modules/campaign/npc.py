@@ -24,6 +24,8 @@ class NPC(Base):
 
 
 class NPCMemory(Base):
+    """One thing an NPC remembers about the player (structured, kind-tagged)."""
+
     __tablename__ = "npc_memories"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
@@ -33,6 +35,13 @@ class NPCMemory(Base):
     npc_id: Mapped[str] = mapped_column(String(36), ForeignKey("npcs.id", ondelete="CASCADE"), nullable=False)
     memory: Mapped[str] = mapped_column(Text, nullable=False)
     salience: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Interaction kind (theft, violence, promise, resolve, ...) for filtering.
+    kind: Mapped[str] = mapped_column(String(32), default="", server_default="", nullable=False)
+    #: How it felt to the NPC: -2 severe negative .. +2 strong positive.
+    sentiment: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    #: In-world clock stamp of when it happened.
+    day: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    hour: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
 
 class NPCGoal(Base):

@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 class SceneContext(BaseModel):
     npcs_present: list[str] = []
+    #: NPC first-name -> the strongest memories they keep about the player.
+    npc_memories: dict[str, list[str]] = {}
     exits: list[str] = []
     items_visible: list[str] = []
     rumors_available: bool = False

@@ -23,6 +23,10 @@ from app.content.skills import SKILL_KEYS
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
 
+#: Cap on structured NPC memories in the save; the weakest (lowest salience,
+#: then oldest) fall out first.
+NPC_MEMORY_CAP = 200
+
 #: Lead stage order for the slice mystery (index = progress).
 LEAD_STAGES: tuple[str, ...] = ("unheard", "rumored", "accepted", "investigating", "solved")
 
@@ -106,6 +110,10 @@ class PlayState:
 
     # -- NPC memory / world flags -----------------------------------------
     marla_memory: list[str] = field(default_factory=list)
+    #: Structured per-NPC memories about the player (mirrored to npc_memories
+    #: on store). Entries: {npc, text, kind, sentiment, salience, day, hour};
+    #: ``npc`` is the slug from modules/memory/npc_memory.py.
+    npc_memory_log: list[dict[str, Any]] = field(default_factory=list)
     borin_down: bool = False
     sella_trust: int = 0
 
@@ -148,6 +156,54 @@ class PlayState:
         """Append a Marla-memory tag exactly once."""
         if tag not in self.marla_memory:
             self.marla_memory.append(tag)
+
+    def remember(
+        self,
+        npc: str,
+        text: str,
+        *,
+        kind: str = "",
+        sentiment: int = 0,
+        salience: int = 2,
+    ) -> bool:
+        """Record one structured memory an NPC keeps about the player.
+
+        Deduped on exact (npc, text): a repeated beat adds nothing twice.
+        Capped at :data:`NPC_MEMORY_CAP`; overflow drops the weakest entries
+        first (lowest salience, then oldest).
+        """
+        text = text.strip()
+        if not npc or not text:
+            return False
+        for memory in self.npc_memory_log:
+            if memory.get("npc") == npc and memory.get("text") == text:
+                return False
+        self.npc_memory_log.append(
+            {
+                "npc": npc,
+                "text": text,
+                "kind": kind,
+                "sentiment": int(sentiment),
+                "salience": int(salience),
+                "day": self.day,
+                "hour": self.hour,
+            }
+        )
+        overflow = len(self.npc_memory_log) - NPC_MEMORY_CAP
+        if overflow > 0:
+            weakest = sorted(
+                range(len(self.npc_memory_log)),
+                key=lambda i: (self.npc_memory_log[i]["salience"], i),
+            )
+            for idx in sorted(weakest[:overflow], reverse=True):
+                del self.npc_memory_log[idx]
+        return True
+
+    def memories_for(self, npc: str, limit: int = 3) -> list[dict[str, Any]]:
+        """An NPC's strongest memories about the player: salience desc, newest first."""
+        found = [(i, m) for i, m in enumerate(self.npc_memory_log) if m.get("npc") == npc]
+        found.sort(key=lambda pair: (-int(pair[1].get("salience", 0)), -pair[0]))
+        return [m for _, m in found[: max(0, limit)]]
 
     def advance_minutes(self, minutes: int) -> None:
         total = self.hour * 60 + self.minute + max(0, minutes)

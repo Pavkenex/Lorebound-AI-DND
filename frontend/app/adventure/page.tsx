@@ -359,6 +359,11 @@ export default function AdventurePage() {
               <p key={n.name} style={{ margin: "4px 0" }}>
                 <button className="entity" onClick={() => inspect(n.name)}>{n.name}</button>
                 <span className="sys"> — {n.note}</span>
+                {n.remembers && n.remembers.length > 0 && (
+                  <span className="sys" style={{ display: "block", marginLeft: 10, opacity: 0.85 }}>
+                    remembers: {n.remembers.join("; ")}
+                  </span>
+                )}
               </p>
             ))}
           </div>
