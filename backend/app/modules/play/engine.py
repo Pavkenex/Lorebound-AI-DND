@@ -1231,8 +1231,9 @@ class ActEngine:
                 break
         st.note(f"inspected:{target}")
         st.advance_minutes(5)
+        seen = target if target.startswith("the ") else f"the {target}"
         body = (
-            f"You give the {target} the traveler's once-over — useful habits, nothing "
+            f"You give {seen} the traveler's once-over — useful habits, nothing "
             "the room is ready to surrender yet. The rain keeps its own counsel "
             "outside; inside, only the fire and Marla's patience move."
         )
@@ -1861,7 +1862,9 @@ class ActEngine:
             elif tag == "shared:lead":
                 memories.append("the missing travelers you promised to find")
             elif tag.startswith("inspected:"):
-                memories.append(f"your poking around the {tag.split(':', 1)[1]}")
+                what = tag.split(":", 1)[1]
+                what = what if what.startswith("the ") else f"the {what}"
+                memories.append(f"your poking around {what}")
             elif tag.startswith("saw:"):
                 memories.append("how you eyed her strongbox")
             elif tag.startswith("resolved:"):
