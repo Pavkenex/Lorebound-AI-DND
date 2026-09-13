@@ -32,6 +32,9 @@ CHECKPOINT_BY_KIND: dict[str, str] = {
     "travel": "travel",
     "rest": "rest",
     "resolve": "scene_transition",
+    # Scene flow (§7): entering/leaving a scene (micro-scene moves, a scene
+    # goal resolving) checkpoints the transition.
+    "scene": "scene_transition",
 }
 
 

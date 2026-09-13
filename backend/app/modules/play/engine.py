@@ -44,6 +44,14 @@ from app.modules.rules.checks import (
     is_long_odds,
     roll_check,
 )
+from app.modules.story.scenes import (
+    UPSTAIRS,
+    UPSTAIRS_GOAL,
+    UPSTAIRS_LABEL,
+    SceneDirector,
+    invitation_open,
+    possible_moves,
+)
 
 # ---------------------------------------------------------------------------
 # Skill mapping: slice skills -> PC attribute + trained bonus
@@ -88,6 +96,11 @@ TALK_ACCEPT_NARRATION = (
 TALK_ACCEPT_LINE = (
     "Find out what happened to them. Bring me word — or better. Keep your tab "
     "open here and I'll keep your lamp lit, Aric's luck to you."
+)
+TALK_INVITE_LINE = (
+    "And — the rain is keeping the room cold. If you want the rest of it away "
+    "from the bar, you may come up when I bank the fire. The stair is mine; "
+    "tonight I am choosing to lend it."
 )
 TALK_REPEAT = (
     "Marla gives you the same hard look and the same thin patience: the road is "
@@ -389,6 +402,81 @@ OFFER_WON = (
     "favors are told."
 )
 
+# --- scene flow: micro-scenes, transitions, the anti-loop guard (§7) --------
+
+UPSTAIRS_OPENING = (
+    "The stairs climb narrow and steep, and the inn's noise falls away behind "
+    "you like a coat left on the rail. Marla's room is low-browed and warm: a "
+    "chair turned to a small fire, a window holding the whole wet street, and "
+    "a bed with the same neat corners she keeps in her ledger. She does not "
+    "sit first."
+)
+UPSTAIRS_LINE = (
+    "Sit, if you like. Below stairs I am the Lantern and every soul is owed my "
+    "face; up here I am only Marla. Ask me what you climbed up to ask."
+)
+UPSTAIRS_RETURN_ACTIVE = (
+    "The stairs take your weight again, and the room above the common room "
+    "takes you back exactly as you left it — the little fire down to one red "
+    "eye, the chair still angled at it, and the question still lying in the "
+    "warmth where you set it down."
+)
+UPSTAIRS_AFTERMATH = (
+    "The upstairs room again, and quieter than memory: embers in the little "
+    "grate, rain still walking the window, and the thing Marla told you here "
+    "already said. Above the common room, nothing is waiting on you now."
+)
+UPSTAIRS_ALREADY = (
+    "You are already above stairs — the inn's noise somewhere below your feet, "
+    "and the room holding your full attention."
+)
+UPSTAIRS_ELSEWHERE = (
+    "There is no stair of hers to climb from here. The way up lives in the "
+    "Lantern's common room, and it is hers to lend."
+)
+UPSTAIRS_REFUSED = (
+    "Marla's hand finds the stair rail before your foot does. \"Not my stairs,\" "
+    "she says, \"not yet. Ask me something worth answering first — then we will "
+    "see whose room you are standing in.\""
+)
+UPSTAIRS_WORD = (
+    "Marla sets her back against the door and says it the way she says the "
+    "accounts — flat, and once. She came north with the caravan that burned: "
+    "she was the one who walked out of that fire, and she has been paying the "
+    "road back in beds and soup ever since. \"That is the whole of what I "
+    "have,\" she says. \"I wanted it said in a room with a door on it.\""
+)
+UPSTAIRS_WORD_LINE = (
+    "You asked what I need? I need the road to stop taking. Fourteen years "
+    "behind this bar, and theirs are the first names I have not been able to "
+    "drink away."
+)
+UPSTAIRS_WORD_AGAIN = (
+    "The word has been said once, and this room keeps what it is given. Marla "
+    "watches the window instead of repeating herself, which is answer enough."
+)
+DOWNSTAIRS_NARRATION = (
+    "You take the stairs back down into lamplight and the smell of wet peat, "
+    "and the common room gathers you up as if you had only stepped out for a "
+    "moment — the same low fire, the same cups, Marla's eye finding you at once."
+)
+DOWNSTAIRS_ALREADY = (
+    "Down is exactly where you stand: the bar, the fire, and a room that asks "
+    "nothing of you this hour."
+)
+
+#: The anti-loop reply (§7): a repeated or idle action gets a shorter answer
+#: that points at what is still possible instead of re-narrating the room.
+DIMINISH_LINE = (
+    "You have been over that ground already, and nothing here says it twice. "
+    "Still open: {options}."
+)
+DIMINISH_ACK = "You linger a moment; the room has nothing new to give it."
+
+#: A scene transition reads as a scene change, not a new map pin (§7). The
+#: glyph is its own: ❧ marks clues/echoes, ❖ the relationship meter.
+SCENE_MARK = "▸ Scene — {label}"
+
 #: Difficulty of the contested ask when coin does not decide it (§6). A guarded
 #: factor and a monastery porter are harder to talk round than a friendly room.
 SOCIAL_DIFFICULTY: dict[str, str] = {
@@ -472,6 +560,37 @@ _ASK_RE = re.compile(
     r"know\w*|where|what|why|who|help|story|rumou?rs?)\b",
     re.IGNORECASE,
 )
+
+# --- scene flow routing (slice 5, §7) ---------------------------------------
+#: The stairs up to Marla's room: a micro-scene inside the inn, reached by
+#: asking, by following her, or by taking her up on the invitation. The guard
+#: never blocks it — an invitation is a transition trigger.
+_UPSTAIRS_RE = re.compile(
+    r"\b(upstairs|up the stairs|up those stairs|take the stairs|up to the room|"
+    r"marla'?s room|her room|the room above)\b"
+    r"|\b(go|going|head|heading|walk|walking|step|come|coming|lead|leading|"
+    r"follow|following)\b[^.]{0,20}\bup\b[^.]{0,12}\b(stairs|steps|room)\b",
+    re.IGNORECASE,
+)
+#: Back down: leaving the micro-scene resolves it back to its parent scene.
+_DOWNSTAIRS_RE = re.compile(
+    r"\b(downstairs|down the stairs|back down|go(es)? down|heading down|"
+    r"leave the room|back to the bar|back to the common room|return to the bar|"
+    r"the common room|the bar)\b",
+    re.IGNORECASE,
+)
+
+
+def _action_key(beat: str, text: str) -> str:
+    """Fingerprint of one action inside a scene (the anti-loop's repeat key).
+
+    The same beat plus the same words is a repeat; three different inspections
+    are only a run of idle beats. Normalized so punctuation and casing never
+    split a repeat in two.
+    """
+    norm = re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower())
+    norm = " ".join(norm.split())
+    return f"{beat}:{norm[:60]}"
 
 
 def route(text: str) -> str:
@@ -716,6 +835,66 @@ class ActEngine:
     def _advance_to(self, stage: str) -> bool:
         return self.state.set_lead_stage(stage)
 
+    # -- scene flow (§7) ------------------------------------------------------
+    def _route(self, text: str) -> str:
+        """Route an action scene-aware: micro-scene moves win over map beats.
+
+        The map's beats are location-level ("leave", "return", "travel"); a
+        micro-scene has its own doors — upstairs and back down — and the room
+        the player actually stands in decides which one the words name.
+        """
+        if self.state.scene == UPSTAIRS:
+            if _DOWNSTAIRS_RE.search(text) and not _UPSTAIRS_RE.search(text):
+                return "downstairs"
+            return route(text)
+        if _UPSTAIRS_RE.search(text):
+            return "upstairs"
+        return route(text)
+
+    def _progress_markers(self) -> tuple[Any, ...]:
+        """The story markers whose change means a beat made progress (§7).
+
+        Progress is what a scene does *within* itself: a clue found, a lead
+        advanced, a note recorded, a route opened, the world changed, the sheet
+        or a relationship moved. Never the clock (every idle beat advances it)
+        and never the transition itself — entering a scene is its opening, not
+        its progress, which is what lets a room walked out of mid-flow read as
+        unfinished rather than resolved.
+        """
+        st = self.state
+        pc = st.pc or {}
+        hp = pc.get("hp") or {}
+        return (
+            st.lead_stage,
+            tuple(st.clues),
+            tuple(st.marla_memory),
+            st.solution_path,
+            st.travelers_freed,
+            st.completed,
+            st.borin_down,
+            st.silver,
+            int(hp.get("cur", 0) or 0),
+            tuple(sorted((str(k), int(v)) for k, v in st.attitudes.items())),
+            tuple(sorted((str(k), len(v)) for k, v in st.moods.items())),
+            len(st.npc_memory_log),
+            tuple(sorted((str(k), int(v)) for k, v in st.skills.items())),
+        )
+
+    def _diminish(self, outcome: BeatOutcome) -> None:
+        """Replace a looping reply with a shorter one that points forward (§7).
+
+        A repeated or idle action gets a diminishing answer naming what is
+        still possible — never the same prose again, and never the scene's
+        opening. Everything the beat actually did to the state stands: only
+        the room's voice changes.
+        """
+        options = possible_moves(self.state)
+        names = " · ".join(m["label"] for m in options[:3]) or "the road ahead"
+        outcome.ack = DIMINISH_ACK
+        outcome.narration = DIMINISH_LINE.format(options=names)
+        outcome.dialogue = []
+        outcome.suggestions = options
+
     # -- pending throws -------------------------------------------------------
     def _pending_token(self, text: str) -> str:
         """Fingerprint of (campaign, action text, board) — the throw's anchor."""
@@ -751,6 +930,12 @@ class ActEngine:
         instead of rolling. The player throws the die; the caller calls again
         with that face as ``seed_roll`` and the payload's ``pending_token`` to
         resolve the beat. A stale token means the board moved — nothing lands.
+
+        Every resolved beat is also scene bookkeeping (§7): the director counts
+        it, notes whether it moved the story, answers repeated/idle actions
+        with a diminishing reply pointing at what is still possible, and knows
+        which scene the player stands in — while a transition itself is never
+        blocked by that guard.
         """
         self._seed_roll = seed_roll if seed_roll is not None else None
         self._suspend_on_check = suspend_on_check
@@ -763,7 +948,12 @@ class ActEngine:
         if pending_token is not None and pending_token != self._act_token:
             raise PendingCheckStale("the board has moved since the check was called")
 
-        beat = route(t)
+        director = SceneDirector(self.state)
+        director.ensure()  # a legacy save boots into its map location's scene
+        lead_before = self.state.lead_stage
+        scene_before = self.state.scene
+        markers_before = self._progress_markers()
+        beat = self._route(t)
         handler = getattr(self, f"_beat_{beat}")
         seq_before = self.state.feed_seq
         try:
@@ -775,6 +965,25 @@ class ActEngine:
         except CheckSuspension as suspension:
             # Nothing persists on a pending throw: no checkpoint, no feed write.
             return self._pending_payload(suspension.spec), None
+
+        # -- scene bookkeeping (§7): count the beat, note progress, guard loops
+        transitioned = scene_before != self.state.scene
+        if transitioned:
+            # A transition names the new scene for the chronicle; its bridging
+            # narration is the beat's own (§7: on transition — bridging prose,
+            # a clock that moved, a room that changed).
+            self._feed("system", text=SCENE_MARK.format(label=director.current().label))
+        progress = self._progress_markers() != markers_before
+        key = _action_key(beat, t)
+        director.note_beat(key=key, progress=progress)
+        if not progress and not transitioned and director.diminishing(key):
+            # Repeated or idle: the room answers shorter and points forward.
+            # A live transition is never guarded — the fiction opened a door
+            # and the engine takes it (user ruling, §7).
+            self._diminish(outcome)
+        if self.state.lead_stage != lead_before:
+            # A story-beat boundary moves the scene's aim — never the player.
+            director.story_boundary()
 
         # System lines the beat itself wrote (clues found, routes opened, notes)
         # are echoed in the response so the live feed shows them immediately.
@@ -810,6 +1019,8 @@ class ActEngine:
 
     # -- beats ---------------------------------------------------------------
     def _beat_talk(self, text: str) -> BeatOutcome:
+        if self.state.scene == UPSTAIRS:
+            return self._talk_upstairs(text)
         st = self.state
         st.note("talked:travelers")
         st.advance_minutes(5)
@@ -828,7 +1039,14 @@ class ActEngine:
         elif st.lead_stage == "rumored":
             self._advance_to("accepted")
             out.narration = TALK_ACCEPT_NARRATION
-            out.dialogue = [{"speaker": "Marla Voss", "line": TALK_ACCEPT_LINE}]
+            out.dialogue = [
+                {"speaker": "Marla Voss", "line": TALK_ACCEPT_LINE},
+                # The invitation (§7, trigger d): an NPC proposing the new
+                # scene — the guard must never block taking it.
+                {"speaker": "Marla Voss", "line": TALK_INVITE_LINE},
+            ]
+            out.suggestions = [{"label": "Take the stairs with her",
+                                "command": "I follow Marla upstairs"}]
             self._remember(
                 "marla", "promised to look into the missing travelers",
                 kind="promise", sentiment=1, salience=3, delta=+10,
@@ -840,6 +1058,93 @@ class ActEngine:
         elif st.lead_stage == "solved":
             out.narration = TALK_SOLVED
         return out
+
+    # -- micro-scenes: the inn's upstairs room (§7) ---------------------------
+    def _beat_upstairs(self, text: str) -> BeatOutcome:
+        """Enter the upstairs room — a scene, not a map move (§7).
+
+        The stair is Marla's to lend. Before she has told you anything the
+        fiction answers with a refusal (not a wall — asking her opens it); once
+        she has, going up is a transition the anti-loop guard never blocks.
+        """
+        st = self.state
+        st.advance_minutes(5)
+        if st.scene == UPSTAIRS:
+            return BeatOutcome(ack="You are already upstairs.", narration=UPSTAIRS_ALREADY, kind="")
+        if st.location != "lantern-inn":
+            return BeatOutcome(ack="No stairs lead up from here.", narration=UPSTAIRS_ELSEWHERE, kind="")
+        if not invitation_open(st):
+            return BeatOutcome(
+                ack="Marla's hand finds the stair rail.", narration=UPSTAIRS_REFUSED, kind=""
+            )
+        director = SceneDirector(st)
+        move = director.enter(
+            UPSTAIRS,
+            label=UPSTAIRS_LABEL,
+            location="lantern-inn",
+            parent="lantern-inn",
+            goal=UPSTAIRS_GOAL,
+        )
+        dialogue: list[dict[str, str]] = []
+        if move.first_visit:
+            narration = UPSTAIRS_OPENING
+            dialogue = [{"speaker": "Marla Voss", "line": UPSTAIRS_LINE}]
+        else:
+            # A remembered room never re-runs its opening: a finished room
+            # reads as aftermath, one walked out of mid-flow as you left it.
+            narration = UPSTAIRS_AFTERMATH if director.ended(UPSTAIRS) else UPSTAIRS_RETURN_ACTIVE
+        return BeatOutcome(
+            ack="You take the stairs.",
+            narration=narration,
+            kind="scene",
+            dialogue=dialogue,
+            suggestions=possible_moves(st),
+        )
+
+    def _beat_downstairs(self, text: str) -> BeatOutcome:
+        """Leave the micro-scene: it resolves back to its parent scene (§7)."""
+        st = self.state
+        st.advance_minutes(5)
+        if st.scene != UPSTAIRS:
+            return BeatOutcome(ack="You are already down.", narration=DOWNSTAIRS_ALREADY, kind="")
+        SceneDirector(st).enter("lantern-inn")
+        return BeatOutcome(
+            ack="You take the stairs down.",
+            narration=DOWNSTAIRS_NARRATION,
+            kind="scene",
+            suggestions=possible_moves(st),
+        )
+
+    def _talk_upstairs(self, text: str) -> BeatOutcome:
+        """Marla's private word — the upstairs scene's goal (§7).
+
+        The room exists for this: what she will not say at the bar. Telling it
+        resolves the scene, so the room is remembered as finished and a return
+        visit finds the aftermath, never the opening again.
+        """
+        st = self.state
+        st.advance_minutes(10)
+        director = SceneDirector(st)
+        if director.resolve_current():
+            self._remember(
+                "marla", "told you, behind a closed door, what the road took from her",
+                kind="conversation", sentiment=1, salience=3, delta=+5,
+                reason="told you what she would not say at the bar",
+            )
+            self._mood("marla", "warm", 0.6)
+            return BeatOutcome(
+                ack="Marla says it once, and plainly.",
+                narration=UPSTAIRS_WORD,
+                kind="scene",
+                dialogue=[{"speaker": "Marla Voss", "line": UPSTAIRS_WORD_LINE}],
+                suggestions=possible_moves(st),
+            )
+        return BeatOutcome(
+            ack="The room has said what it had.",
+            narration=UPSTAIRS_WORD_AGAIN,
+            kind="talk",
+            suggestions=possible_moves(st),
+        )
 
     def _beat_inspect_board(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1037,6 +1342,8 @@ class ActEngine:
         st.location = "northern-road"
         st.visit_location("northern-road")
         st.advance_minutes(10)
+        # The map moves and the scene moves with it (§7, trigger a).
+        SceneDirector(st).enter("northern-road")
         return BeatOutcome(ack="You step out into the rain.", narration=LEAVE_NARRATION, kind="travel")
 
     def _beat_return(self, text: str) -> BeatOutcome:
@@ -1045,6 +1352,9 @@ class ActEngine:
         st.visit_location("lantern-inn")
         st.visits += 1
         st.advance_minutes(10)
+        # Coming back restores the inn's remembered scene — a sub-scene left
+        # standing (the upstairs room) resolves back into it here.
+        SceneDirector(st).enter("lantern-inn")
         return BeatOutcome(
             ack="The door gives way to firelight.",
             narration=RETURN_NARRATION,
@@ -1071,6 +1381,7 @@ class ActEngine:
         st.location = "market"
         st.visit_location("market")
         st.advance_minutes(15)
+        SceneDirector(st).enter("market")
         return BeatOutcome(ack="You take the market road.", narration=MARKET_NARRATION, kind="travel")
 
     def _beat_travel_monastery(self, text: str) -> BeatOutcome:
@@ -1078,6 +1389,7 @@ class ActEngine:
         st.location = "old-monastery"
         st.visit_location("old-monastery")
         st.advance_minutes(25)
+        SceneDirector(st).enter("old-monastery")
         return BeatOutcome(ack="You climb the monastery path.", narration=MONASTERY_NARRATION, kind="travel")
 
     # -- arc beats: clues, solutions, resolution -----------------------------
@@ -1309,6 +1621,8 @@ class ActEngine:
         pc["hp"] = hp
         st.note("fought:road-carriers")
         st.location = "lantern-inn"
+        # Waking back at the inn is a transition too (§7, trigger a).
+        SceneDirector(st).enter("lantern-inn")
         return BeatOutcome(ack="The mud gets its say.", narration=AMBUSH_LOSE, kind="fight", mechanics=mech)
 
     def _beat_talk_borin(self, text: str) -> BeatOutcome:
@@ -1673,6 +1987,7 @@ class ActEngine:
     def _pipeline_state(self) -> dict[str, Any]:
         st = self.state
         pc = st.pc
+        scene = SceneDirector(st).scene_block()
         return {
             "inventory": list(pc.get("equipment", [])),
             "npcs_alive": {"borin": not st.borin_down, "marla": True},
@@ -1680,4 +1995,9 @@ class ActEngine:
             "known_locations": ["lantern-inn", "northern-road", "market"],
             "facts": [],
             "pc_name": pc.get("name", "the hero"),
+            # Scene flow (§7/§8): the narrator sees where the moment happens,
+            # what the scene is for, and how far it has moved.
+            "scene_label": scene["label"],
+            "scene_goal": scene["goal"],
+            "scene_state": scene["state"],
         }
