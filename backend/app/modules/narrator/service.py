@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -45,6 +46,13 @@ TANGLED_NOTE = (
     "The chronicler's words came back tangled in the quill's own notes. "
     "The moment holds — say it again, and the tale will answer."
 )
+#: Narrator completion budget. A Standard reply (≤250 words of prose plus
+#: dialogue, suggestions and proposals, all as JSON) needs ~900 tokens; the
+#: old 600-token default cut replies mid-JSON and the salvage paths served
+#: the fragment — the "mumbling". Headroom is cheaper than confusion.
+NARRATOR_MAX_TOKENS = 1200
+
+_log = logging.getLogger("lorebound.narrator")
 
 #: The narrator sometimes quotes an NPC's closing line inside the prose AND
 #: lists it in npc_dialogue, so the player reads the same sentence twice.
@@ -290,10 +298,18 @@ def narrate(ctx: PromptContext, provider: Provider | None = None,
     """Single narration call. Returns (output, prompt_bundle for tests)."""
     prov: Provider = provider or get_provider()
     bundle = assemble_prompt(ctx, role_system=build_role_prompt(Role.NARRATOR.value), prefs=prefs)
-    result = prov.generate(f"{bundle.system}\n\n{bundle.user}", role=Role.NARRATOR.value)
+    result = prov.generate(f"{bundle.system}\n\n{bundle.user}", role=Role.NARRATOR.value,
+                           max_tokens=NARRATOR_MAX_TOKENS)
     if meter is not None:
         meter.record(campaign_id, Role.NARRATOR.value,
                      result.prompt_tokens, result.completion_tokens)
+    if result.completion_tokens >= NARRATOR_MAX_TOKENS:
+        # Ran into the ceiling: the reply was probably cut mid-JSON and the
+        # player got salvage. Logged (never shown) so the budget can be
+        # re-tuned from evidence instead of complaints.
+        bundle.ceiling_hit = True
+        _log.warning("narrator ceiling hit (campaign=%s, model=%s, prompt_tokens=%s)",
+                     campaign_id, result.model, result.prompt_tokens)
     payload = parse_narrator_payload(result.text)
     prose = payload.narration or render_prose(result.text, ctx.length)
     # A spoken line must never render twice (prose quote + dialogue echo).

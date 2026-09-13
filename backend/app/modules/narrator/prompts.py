@@ -67,6 +67,9 @@ class PromptBundle(BaseModel):
     system: str
     user: str
     retrieved_counts: dict[str, int] = Field(default_factory=dict)
+    #: True when the completion ran into the token ceiling — the reply was
+    #: probably cut mid-JSON and served from salvage. Logged, never shown.
+    ceiling_hit: bool = False
 
 
 def _elide(text: str, limit: int = CHRONICLE_LINE_LIMIT) -> str:

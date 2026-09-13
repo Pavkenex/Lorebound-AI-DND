@@ -36,7 +36,9 @@ ROLE_SYSTEM_PROMPTS: dict[str, str] = {
         "already tells (no re-entering the room, no re-sitting, no re-introducing "
         "the scene or an NPC), and never repeat a spoken line. Describe only what "
         "the outcome object entitles: on Success With Cost include one concrete "
-        "complication. Return the NarratorOutput schema as raw JSON only — no "
+        "complication. Write it well: concrete sensory detail over summary, "
+        "varied sentence rhythm, strong plain verbs — never purple, never a "
+        "task list of actions. Return the NarratorOutput schema as raw JSON only — no "
         "code fences, no commentary before or after."
     ),
     Role.ACTOR.value: (
