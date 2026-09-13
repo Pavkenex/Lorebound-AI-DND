@@ -22,14 +22,16 @@ MAX_RETRIEVED_EVENTS = 8
 MAX_FACTS = 10
 MAX_NPCS = 5
 #: Memories about the player rendered per NPC in the prompt (strongest first).
-MAX_NPC_MEMORIES = 3
+MAX_NPC_MEMORIES = 4
 #: Recent chronicle entries (narration/dialogue/notices) that ride the prompt.
 #: Continuity lives here: without this tail the model re-derives the scene
 #: every turn — the player sits down and the NPC invites them to sit again.
-MAX_RETRIEVED_CHRONICLE = 8
+#: Sized so a full scene (~a dozen beats) stays in view; the saga digest
+#: behind it already covers everything older.
+MAX_RETRIEVED_CHRONICLE = 12
 #: One chronicle line longer than this is elided head+tail (the closing beat
 #: of a narration matters as much as its opening).
-CHRONICLE_LINE_LIMIT = 600
+CHRONICLE_LINE_LIMIT = 800
 
 
 class PromptContext(BaseModel):

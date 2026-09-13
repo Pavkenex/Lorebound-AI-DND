@@ -252,5 +252,5 @@ def test_narrator_prompt_renders_remembers():
     ctx_many = PromptContext(npcs=[{"name": "Marla", "remembers": ["a", "b", "c", "d", "e"]}])
     rendered = assemble_prompt(ctx_many).user
     line = next(l for l in rendered.splitlines() if l.startswith("- Marla"))
-    assert "remembers about the player: a; b; c" in line
-    assert "d" not in line
+    assert "remembers about the player: a; b; c; d" in line
+    assert line.count(";") == 3  # exactly four memories, no fifth
