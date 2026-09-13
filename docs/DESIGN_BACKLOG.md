@@ -11,7 +11,7 @@ move to kanban cards when picked up._
 | 1 | **Relationship-gated content** — warmth unlocks NPC-initiated offers (personal favors at Warm, stick-their-neck-out at Bonded) | OPEN — question raised: "aren't they already more open based on relationship?" See §1 below. |
 | 2 | **Promises become oaths** — journal Oaths section, soft windows; kept → warmth + treasured memory; lapsed → trust damage they open with | AGREED — next up. |
 | 3 | **Downtime & training** — town hours, trainers, novelty decay; turns already-written systems into a second loop | PARKED — needs a more detailed, campaign-agnostic design (characters differ per campaign; handle generally). |
-| 4 | **Story-so-far digest** — rolling ~200-word recap carried in the prompt | OPEN — question raised: "isn't that what world memories are for?" See §4 below. |
+| 4 | **Story-so-far digest** — rolling ~200-word recap carried in the prompt | BUILT 2026-09-13 (`d57e504`) — deterministic, model-free, campaign-agnostic; see §4 below. |
 | 5 | **Fail forward everywhere** — extend success-at-cost / hail-mary to stealth/investigation/combat; crit-fail opens a branch | AGREED — next up. |
 | 6 | **Nightly self-play ritual** — golden-chronicle transcripts + soak bot against the real relay | PARKED — "some other time" (token budget). |
 | 7 | **Cheap delights** — rp_quality → Inspiration; saga export PDF/EPUB; tabbed mobile shell | UNSORTED — not yet ruled on. |
@@ -35,6 +35,14 @@ only *open up* at Warm/Bonded (the "warm unlocks" half of suggestion 1).
 - NPC memories are per-character one-liners; nothing summarizes the campaign so far.
 
 → The digest idea is NOT covered by existing "world memories". If/when built, the empty `world_facts` slot is its natural home (§25 continuity).
+
+**Built 2026-09-13** (`d57e504`, all green — 431 backend tests + ruff, live-verified):
+`PlayState.saga`/`saga_at` + `story/saga.py` (pure builder: hero, location/day,
+quest line from lead/clues/solution, top-3 bonds, top-3 salient memories; capped
+~1100 chars). Refreshes on checkpoint beats (transition/progress) + every 12 idle
+actions; rides every narrator prompt as `[Story so far]`; exposed on `/state` for
+a future journal surface. No model call, no hardcoded names — works for any
+campaign/cast.
 
 ## Free-model route — status 2026-09-13
 
