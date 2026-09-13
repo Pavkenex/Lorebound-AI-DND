@@ -516,6 +516,29 @@ class ActEngine:
     def _feed(self, kind: str, **payload: Any) -> None:
         self.state.append_feed(kind, **payload)
 
+    def _remember(
+        self,
+        npc: str,
+        text: str,
+        *,
+        delta: int = 0,
+        reason: str = "",
+        kind: str = "",
+        sentiment: int = 0,
+        salience: int = 2,
+    ) -> bool:
+        """Record one NPC memory and, when it is new, move their meter.
+
+        The meter move is tied to the memory write (design §2+§3): the same
+        interaction sites do both, a repeated beat that writes no new memory
+        moves nothing, and the engine — never the model — owns the value.
+        """
+        if not self.state.remember(npc, text, kind=kind, sentiment=sentiment, salience=salience):
+            return False
+        if delta:
+            self.state.adjust_attitude(npc, delta, reason or text)
+        return True
+
     def _narrate_event(self, text: str) -> None:
         self._feed("narration", text=text)
 
@@ -629,14 +652,19 @@ class ActEngine:
             out.narration = TALK_FIRST
             out.dialogue = [{"speaker": "Marla Voss", "line": TALK_LINE_FIRST}]
             self._discover_lead(out)
-            st.remember("marla", "asked about the travelers who never came back", kind="conversation")
+            self._remember(
+                "marla", "asked about the travelers who never came back",
+                kind="conversation", delta=+5,
+                reason="asked about the travelers who never came back",
+            )
         elif st.lead_stage == "rumored":
             self._advance_to("accepted")
             out.narration = TALK_ACCEPT_NARRATION
             out.dialogue = [{"speaker": "Marla Voss", "line": TALK_ACCEPT_LINE}]
-            st.remember(
+            self._remember(
                 "marla", "promised to look into the missing travelers",
-                kind="promise", sentiment=1, salience=3,
+                kind="promise", sentiment=1, salience=3, delta=+10,
+                reason="promised to look into the missing travelers",
             )
         elif st.lead_stage == "investigating":
             out.narration = TALK_INVESTIGATING
@@ -665,7 +693,10 @@ class ActEngine:
         out = BeatOutcome(
             ack="You turn the ledger pages.", narration=LEDGER_NARRATION, kind="inspect", mechanics=mech
         )
-        st.remember("marla", "went through her guest ledger page by page", kind="curiosity")
+        self._remember(
+            "marla", "went through her guest ledger page by page",
+            kind="curiosity", delta=-5, reason="went through her guest ledger page by page",
+        )
         if self._succeeded(result):
             if st.find_clue("ledger"):
                 self._feed("system", text="❧ Clue found — the ledger's unsigned guests.")
@@ -683,9 +714,10 @@ class ActEngine:
         st.note("inspected:cellar-door")
         st.advance_minutes(5)
         if st.lead_stage in ("accepted", "investigating") and not st.travelers_freed:
-            st.remember(
+            self._remember(
                 "marla", "eyed the barred cellar door more than once",
-                kind="suspicion", sentiment=-1, salience=2,
+                kind="suspicion", sentiment=-1, salience=2, delta=-5,
+                reason="eyed the barred cellar door more than once",
             )
         if st.travelers_freed:
             body = (
@@ -737,28 +769,32 @@ class ActEngine:
             if result.outcome == Outcome.SuccessWithCost:
                 st.note("saw:sneaking")
                 narration = STRONGBOX_COST
-                st.remember(
+                self._remember(
                     "marla", "was robbed at the storeroom — and glimpsed who did it",
-                    kind="theft", sentiment=-2, salience=4,
+                    kind="theft", sentiment=-2, salience=4, delta=-30,
+                    reason="robbed the storeroom strongbox — and was glimpsed doing it",
                 )
             else:
-                st.remember(
+                self._remember(
                     "marla", "was robbed — the storeroom strongbox came up light",
-                    kind="theft", sentiment=-2, salience=4,
+                    kind="theft", sentiment=-2, salience=4, delta=-25,
+                    reason="robbed the storeroom strongbox",
                 )
         elif result.outcome == Outcome.CriticalFailure:
             st.note("saw:sneaking")
             narration = STRONGBOX_CAUGHT
-            st.remember(
+            self._remember(
                 "marla", "caught them red-handed at the storeroom strongbox",
-                kind="theft", sentiment=-2, salience=5,
+                kind="theft", sentiment=-2, salience=5, delta=-35,
+                reason="caught red-handed at the storeroom strongbox",
             )
         else:
             st.note("heard:noise")
             narration = STRONGBOX_FAIL
-            st.remember(
+            self._remember(
                 "marla", "heard a suspicious clatter by the storeroom",
-                kind="suspicion", sentiment=-1, salience=2,
+                kind="suspicion", sentiment=-1, salience=2, delta=-5,
+                reason="made a suspicious clatter by the storeroom",
             )
         return BeatOutcome(ack="Your hand finds the storeroom latch.", narration=narration, kind="steal", mechanics=mech)
 
@@ -789,20 +825,23 @@ class ActEngine:
             hp["cur"] = max(1, hp["cur"] - 6)
             narration = FIGHT_LOSE
         pc["hp"] = hp
-        st.remember(
+        self._remember(
             "marla",
             "started a brawl by her hearth" + (" — and won it" if st.borin_down else ""),
-            kind="violence", sentiment=-1, salience=3,
+            kind="violence", sentiment=-1, salience=3, delta=-15,
+            reason="started a brawl by her hearth",
         )
         if st.borin_down:
-            st.remember(
+            self._remember(
                 "borin", "was knocked down in a brawl by the fire",
-                kind="violence", sentiment=-1, salience=2,
+                kind="violence", sentiment=-1, salience=2, delta=-15,
+                reason="was knocked down in a brawl by the fire",
             )
         else:
-            st.remember(
+            self._remember(
                 "borin", "got the better of them in the brawl by the fire",
-                kind="violence", sentiment=-1, salience=2,
+                kind="violence", sentiment=-1, salience=2, delta=-5,
+                reason="brawled with them by the fire",
             )
         return BeatOutcome(ack="The hearthlight swings as the fight starts.", narration=narration, kind="fight", mechanics=mech)
 
@@ -992,9 +1031,10 @@ class ActEngine:
         if self._succeeded(result):
             st.borin_down = True
             st.note("cowed:borin")
-            st.remember(
+            self._remember(
                 "borin", "was frightened into talking about the carts",
-                kind="intimidation", sentiment=-2, salience=3,
+                kind="intimidation", sentiment=-2, salience=3, delta=-20,
+                reason="was frightened into talking about the carts",
             )
             return BeatOutcome(
                 ack="You lean in close.",
@@ -1048,10 +1088,13 @@ class ActEngine:
     def _beat_talk_borin(self, text: str) -> BeatOutcome:
         st = self.state
         st.note("talked:borin")
-        st.remember("borin", "was asked about carts north of the oak", kind="conversation")
+        first_ask = st.remember("borin", "was asked about carts north of the oak", kind="conversation")
         st.advance_minutes(5)
         if st.location != "lantern-inn":
             return BeatOutcome(ack="You look for Borin.", narration="Wherever Borin is drinking tonight, it is not here.", kind="talk")
+        if first_ask:
+            # Only a real conversation — Borin actually present — moves his meter.
+            st.adjust_attitude("borin", +5, "asked about carts north of the oak")
         if st.borin_down:
             return BeatOutcome(
                 ack="Borin eyes you over his bruises.",
@@ -1097,17 +1140,20 @@ class ActEngine:
         st.travelers_freed = True
         st.completed = True
         st.note("resolved:travelers")
-        st.remember(
+        self._remember(
             "marla", "saw the missing travelers brought home safe out of the dark",
-            kind="resolve", sentiment=2, salience=5,
+            kind="resolve", sentiment=2, salience=5, delta=+35,
+            reason="brought the missing travelers home safe",
         )
-        st.remember(
+        self._remember(
             "borin", "heard the travelers were pulled out of the dark below the monastery",
-            kind="resolve", sentiment=2, salience=4,
+            kind="resolve", sentiment=2, salience=4, delta=+35,
+            reason="pulled the travelers out of the dark below the monastery",
         )
-        st.remember(
+        self._remember(
             "sella", "counted two travelers back among the living, and knows who did it",
-            kind="resolve", sentiment=2, salience=4,
+            kind="resolve", sentiment=2, salience=4, delta=+35,
+            reason="brought two travelers back among the living",
         )
         st.pc.setdefault("achievements", []).append(f"Freed the missing travelers (Day {st.day})")
         return BeatOutcome(

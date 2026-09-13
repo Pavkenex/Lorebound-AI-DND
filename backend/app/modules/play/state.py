@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.content.skills import SKILL_KEYS
+from app.modules.memory.npc_memory import display_name
 
 #: Player-visible feed is a tail; older entries fall out of view, not the DB history.
 FEED_CAP = 60
@@ -83,6 +84,34 @@ OPENING_BEAT: str = (
 )
 
 
+#: Relationship meter bounds (design §3): -100 (Hostile) .. +100 (Bonded).
+ATTITUDE_MIN = -100
+ATTITUDE_MAX = 100
+
+#: Band ladder: (band word, low, high) — the range behind each word.
+ATTITUDE_BANDS: tuple[tuple[str, int, int], ...] = (
+    ("Hostile", -100, -60),
+    ("Wary", -59, -20),
+    ("Neutral", -19, 19),
+    ("Warm", 20, 59),
+    ("Bonded", 60, 100),
+)
+
+
+def clamp_attitude(value: int) -> int:
+    """Keep a relationship value inside -100..+100."""
+    return max(ATTITUDE_MIN, min(ATTITUDE_MAX, int(value)))
+
+
+def attitude_band(value: int) -> str:
+    """Band word for a relationship value: Hostile .. Bonded."""
+    v = clamp_attitude(value)
+    for band, low, high in ATTITUDE_BANDS:
+        if low <= v <= high:
+            return band
+    return "Neutral"  # unreachable: the band ladder covers the whole range
+
+
 def default_pc_sheet() -> dict[str, Any]:
     """Deep-ish copy of the default protagonist sheet."""
     return json.loads(json.dumps(DEFAULT_PC))
@@ -116,6 +145,11 @@ class PlayState:
     npc_memory_log: list[dict[str, Any]] = field(default_factory=list)
     borin_down: bool = False
     sella_trust: int = 0
+
+    #: Relationship meter per NPC slug (design §3): -100..+100, default Neutral.
+    attitudes: dict[str, int] = field(default_factory=dict)
+    #: Last reason behind each meter move (mirrored to npc_relationships.note).
+    attitude_reasons: dict[str, str] = field(default_factory=dict)
 
     # -- sheet-adjacent economy -------------------------------------------
     silver: int = 8  # guilders in the pack
@@ -204,6 +238,41 @@ class PlayState:
         found = [(i, m) for i, m in enumerate(self.npc_memory_log) if m.get("npc") == npc]
         found.sort(key=lambda pair: (-int(pair[1].get("salience", 0)), -pair[0]))
         return [m for _, m in found[: max(0, limit)]]
+
+    # ------------------------------------------------- relationship meter
+    def attitude_for(self, npc: str) -> int:
+        """Current relationship value for an NPC (default 0 — Neutral)."""
+        return clamp_attitude(self.attitudes.get(npc, 0))
+
+    def attitude_band_for(self, npc: str) -> str:
+        """Band word for an NPC's current relationship value."""
+        return attitude_band(self.attitude_for(npc))
+
+    def adjust_attitude(self, npc: str, delta: int, reason: str = "") -> int:
+        """Move one NPC's relationship meter; returns the new value.
+
+        Engine-authoritative (design §3): beats call this, never the model.
+        Clamped to -100..+100. The move is echoed to the chronicle as a system
+        line so the player feels the meter move; the line reports the delta
+        actually applied, so a capped meter stays honest and a zero-effect
+        move writes no line. ``reason`` becomes the last cause, mirrored to
+        ``npc_relationships.note`` on store.
+        """
+        if not npc:
+            return 0
+        before = self.attitude_for(npc)
+        after = clamp_attitude(before + int(delta))
+        self.attitudes[npc] = after
+        if reason:
+            self.attitude_reasons[npc] = str(reason)
+        applied = after - before
+        if applied:
+            sign = "+" if applied > 0 else "\u2212"
+            self.append_feed(
+                "system",
+                text=f"❖ {display_name(npc)} {sign}{abs(applied)} — {attitude_band(after)} ({after})",
+            )
+        return after
 
     def advance_minutes(self, minutes: int) -> None:
         total = self.hour * 60 + self.minute + max(0, minutes)
