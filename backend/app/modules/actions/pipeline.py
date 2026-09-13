@@ -20,6 +20,7 @@ from app.modules.actions.interpreter import Intent, parse, sanitize_for_narrator
 from app.modules.actions.suggest import SceneContext, generate_suggestions
 from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider
+from app.modules.memory.npc_memory import named_npc, npc_slug
 from app.modules.narrator.authority import AuthorityEngine, EngineProposal
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.narrator.prompts import PromptContext
@@ -31,13 +32,20 @@ from app.modules.narrator.validator import (
     repair_narration,
     validate_narration,
 )
+from app.modules.npc.personality import SocialContext, approach_for_skill, social_adjustment
 from app.modules.rules.checks import (
     CheckResult,
     CheckSuspension,
     apply_social_policy,
+    is_long_odds,
     is_trivial,
     roll_check,
+    rp_dc_shift,
 )
+
+
+def _signed(value: int) -> str:
+    return f"+{value}" if value > 0 else f"−{abs(value)}"
 
 
 class ActionInput(BaseModel):
@@ -72,6 +80,27 @@ class Pipeline:
         self.authority = authority or AuthorityEngine()
         self.rng = rng or random.Random()
 
+    def _social_context(self, req, action: ActionInput, text: str) -> SocialContext | None:
+        """The character a social check is aimed at, or None (§6).
+
+        Names are matched through the shared alias table, and only characters
+        actually in the room can be aimed at — "I persuade the empty room to
+        be quiet" is aimed at nobody, and stays a role-play beat with no die.
+        """
+        scene = action.scene
+        slug = named_npc(text, list(scene.npcs_present))
+        if not slug:
+            return None
+        key = next((n for n in scene.npcs_present if npc_slug(n) == slug), slug)
+        mood = scene.npc_moods.get(key) or {}
+        return SocialContext(
+            slug=slug,
+            approach=approach_for_skill(req.skill, text),
+            mood=str(mood.get("mood") or ""),
+            mood_intensity=float(mood.get("intensity") or 0.0),
+            attitude=int(scene.npc_attitudes.get(key, 0) or 0),
+        )
+
     def orchestrate(self, action: ActionInput,
                     state: dict[str, Any] | None = None,
                     prefs: ContentPrefs | None = None,
@@ -92,8 +121,21 @@ class Pipeline:
         # 3-4. Required mechanics + rules engine.
         results: list[CheckResult] = []
         for req in to_check_requests(intent, campaign_id, action.character_id):
+            base_dc = req.dc
+            why = ""
             if req.social:
-                req, needed = apply_social_policy(req)
+                social_ctx = self._social_context(req, action, text)
+                if social_ctx is not None:
+                    # Aimed at a character who is actually in the room: the
+                    # attempt is contested, so it rolls (§6) at a DC moved by
+                    # personality (§5), the live mood (§4) and the meter (§3).
+                    req = req.model_copy(update={"npc_resistant": True})
+                parts = list(social_adjustment(social_ctx, base_dc).parts) if social_ctx else []
+                rp_shift = rp_dc_shift(req.rp_quality)
+                if rp_shift:
+                    parts.append(f"role-play ({_signed(rp_shift)})")
+                why = " · ".join(parts)
+                req, needed = apply_social_policy(req, social=social_ctx)
                 if not needed:
                     continue  # RP resolves it; no roll (t_2e94122b).
             if (suspend_on_check and action.seed_roll is None
@@ -108,6 +150,9 @@ class Pipeline:
                     "skill_mod": req.skill_mod,
                     "total_mod": req.attribute_mod + req.skill_mod,
                     "dc": req.dc,
+                    "dc_base": base_dc,
+                    "dc_why": why or None,
+                    "long_odds": is_long_odds(req.dc, req.attribute_mod + req.skill_mod),
                     "difficulty": req.difficulty,
                 })
             res = roll_check(req, roll=action.seed_roll, rng=self.rng)
@@ -136,7 +181,7 @@ class Pipeline:
                 "asserted_claims": intent.asserted_claims}
 
         def _npc_ctx(name: str) -> dict[str, Any]:
-            """One present NPC for the prompt: memories + live mood (slice 3)."""
+            """One present NPC for the prompt: memories + live mood + disposition."""
             entry: dict[str, Any] = {
                 "name": name,
                 "remembers": list(action.scene.npc_memories.get(name, [])),
@@ -147,6 +192,9 @@ class Pipeline:
             if word and level > 0:
                 entry["mood"] = word
                 entry["mood_intensity"] = level
+            disposition = str(action.scene.npc_dispositions.get(name) or "").strip()
+            if disposition:
+                entry["disposition"] = disposition
             return entry
 
         prompt_ctx = PromptContext(

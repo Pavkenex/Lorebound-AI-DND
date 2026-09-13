@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from app.modules.npc.personality import SocialContext, social_adjustment
+
 
 class CheckSuspension(Exception):
     """Control-flow signal: a surfaced check awaits the player's own throw.
@@ -79,6 +81,11 @@ class CheckRequest(BaseModel):
     manipulation_attempt: bool = False
     #: Quality of player role-play, -1.0 (poor) .. +1.0 (great). Shifts DC only.
     rp_quality: float = 0.0
+
+    @property
+    def total_mod(self) -> int:
+        """Everything the die carries into the total (before the rolled face)."""
+        return self.attribute_mod + self.skill_mod + self.situational_mod
 
 
 class CheckResult(BaseModel):
@@ -177,6 +184,19 @@ def complication_for(outcome: Outcome, skill: str) -> str | None:
 #: RP quality maps to a DC shift of at most ±2; it never replaces the roll.
 MAX_RP_DC_SHIFT = 2
 
+#: The best face a d20 shows short of the natural 20. A DC further than this
+#: past the check's total modifier is reachable only by a critical — "Long odds".
+NORMAL_REACH_FACE = 19
+
+
+def is_long_odds(dc: int, total_mod: int) -> bool:
+    """True when only a natural 20 passes (§6: the hail-mary window is visible).
+
+    Criticals are unconditional, so a long shot is never impossible — the
+    player is gambling, and the check prompt says so.
+    """
+    return int(dc) - int(total_mod) > NORMAL_REACH_FACE
+
 
 def should_roll_social(request: CheckRequest) -> bool:
     """Roll only when the NPC is resistant, the outcome matters under real
@@ -198,9 +218,19 @@ def rp_dc_shift(rp_quality: float) -> int:
     return -round(q * MAX_RP_DC_SHIFT)
 
 
-def apply_social_policy(request: CheckRequest) -> tuple[CheckRequest, bool]:
-    """Apply RP DC shift; return (adjusted_request, roll_needed)."""
-    adjusted = request.model_copy(update={"dc": request.dc + rp_dc_shift(request.rp_quality)})
+def apply_social_policy(request: CheckRequest,
+                        social: SocialContext | None = None) -> tuple[CheckRequest, bool]:
+    """Apply the DC shifts a social check earns; return (adjusted, roll_needed).
+
+    Two shifts ride on top of the base difficulty: the role-play shift, and —
+    when the check is aimed at a known character — the personality adjustment
+    (§6: approach + mood − relationship credit, with any vow's weight). Both
+    only move the DC; the roll itself is never replaced.
+    """
+    shift = rp_dc_shift(request.rp_quality)
+    if social is not None:
+        shift += social_adjustment(social, request.dc).shift
+    adjusted = request.model_copy(update={"dc": max(1, request.dc + shift)})
     return adjusted, should_roll_social(request)
 
 

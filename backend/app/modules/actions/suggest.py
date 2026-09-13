@@ -12,6 +12,10 @@ class SceneContext(BaseModel):
     npc_memories: dict[str, list[str]] = {}
     #: NPC first-name -> live mood {"mood": word, "intensity": 0..1} (slice 3).
     npc_moods: dict[str, dict[str, Any]] = {}
+    #: NPC first-name -> relationship meter, -100..100 (slice 2/4 social math).
+    npc_attitudes: dict[str, int] = {}
+    #: NPC first-name -> the authored disposition line the narrator sees (§5).
+    npc_dispositions: dict[str, str] = {}
     exits: list[str] = []
     items_visible: list[str] = []
     rumors_available: bool = False

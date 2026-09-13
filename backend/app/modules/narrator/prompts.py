@@ -76,6 +76,9 @@ def assemble_prompt(
         remembered = [str(m) for m in (n.get("remembers") or [])][:MAX_NPC_MEMORIES]
         if remembered:
             line += " | remembers about the player: " + "; ".join(remembered)
+        disposition = str(n.get("disposition") or "").strip()
+        if disposition:
+            line += f" | disposition: {disposition}"
         return line
 
     npc_block = "\n".join(_npc_entry(n) for n in npcs) or "- (none present)"
