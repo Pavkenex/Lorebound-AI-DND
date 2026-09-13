@@ -11,6 +11,7 @@ lead/clue progression, Marla's memory. The provider only writes prose.
 from __future__ import annotations
 
 import hashlib
+import random
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -611,6 +612,18 @@ _ASK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --- inspiration (table applause) -------------------------------------------
+#: Earned on story-driving beats, spent for advantage on one surfaced check.
+INSPIRATION_MAX = 3
+#: Band ladder rank: earning fires when a meter crosses into a warmer band.
+_BAND_RANK = {"Hostile": 0, "Wary": 1, "Neutral": 2, "Warm": 3, "Bonded": 4}
+#: Spending words: "I spend my inspiration", "I call on inspiration".
+_SPEND_RE = re.compile(
+    r"\b(spend|burn|use|using|call on|invoke|invoking)\b[^.]{0,24}\binspiration\b"
+    r"|\binspiration\b[^.]{0,24}\b(spend|burn|use|using)\b",
+    re.IGNORECASE,
+)
+
 # --- scene flow routing (slice 5, §7) ---------------------------------------
 #: The stairs up to Marla's room: a micro-scene inside the inn, reached by
 #: asking, by following her, or by taking her up on the invitation. The guard
@@ -646,6 +659,9 @@ def _action_key(beat: str, text: str) -> str:
 def route(text: str) -> str:
     """Classify player text to a beat name (or ``pipeline`` fallback)."""
     t = text.strip()
+    # Spending Inspiration is a standing offer, never narrator fodder.
+    if _SPEND_RE.search(t):
+        return "spend_inspiration"
     # Target-specific rules first: naming the ledger/board/cellar wins over the
     # generic "mentions Marla" rules ("I search Marla's ledger" is an inspection).
     if _BOX.search(t) and re.search(_STEAL_V, t, re.IGNORECASE):
@@ -718,6 +734,7 @@ class ActEngine:
         self.meter = meter or MeterRegistry()
         self.prefs = prefs
         self._seed_roll: int | None = None
+        self._seed_roll2: int | None = None
         self._suspend_on_check = False
         self._act_token: str | None = None
 
@@ -792,10 +809,14 @@ class ActEngine:
             )
             dc, why = adjustment.adjusted_dc, adjustment.why
         if self._suspend_on_check and self._seed_roll is None:
-            raise CheckSuspension(self._check_spec(
+            spec = self._check_spec(
                 skill, attr_mod, skill_mod, dc, difficulty, label,
                 dc_base=base_dc, dc_why=why,
-            ))
+            )
+            if self.state.inspired:
+                # The prompt throws twice and keeps the higher (advantage).
+                spec["advantage"] = True
+            raise CheckSuspension(spec)
         request = CheckRequest(
             campaign_id=self.session.campaign_id,
             skill=skill.title(),
@@ -804,7 +825,17 @@ class ActEngine:
             dc=dc,
             difficulty=difficulty,
         )
-        result = roll_check(request, roll=self._seed_roll)
+        roll2 = self._seed_roll2
+        self._seed_roll2 = None
+        burning = bool(self.state.inspired)
+        if burning:
+            # A spent point fires on the next surfaced resolution — win or
+            # lose, it is gone. Seeded calls without a second face draw one.
+            self.state.inspired = False
+            if roll2 is None:
+                roll2 = random.randint(1, 20)
+        result = roll_check(request, roll=self._seed_roll,
+                            roll2=roll2 if burning else None)
         self._seed_roll = None  # a seed only steers the action's first check
         # Every resolved attempt trains the skill that made it — a failed
         # persuasion still feeds Persuasion XP (play_skill_xp grades it).
@@ -824,6 +855,14 @@ class ActEngine:
             "skill": skill.title(),
             "attribute": SKILL_ATTRIBUTE.get(skill, "Wits"),
         }
+        if burning and result.kept_from:
+            dropped = result.kept_from[1] if result.kept_from[0] == result.roll else result.kept_from[0]
+            mech["advantage"] = True
+            mech["d20_second"] = dropped
+            self._feed("system", text=(
+                f"✦ Inspiration burns — two dice fall ({result.kept_from[0]}, "
+                f"{result.kept_from[1]}), the {result.roll} stands."
+            ))
         return mech, result
 
     @staticmethod
@@ -898,6 +937,9 @@ class ActEngine:
             # The prologue's one door: town and the Lantern. Walking on north
             # keeps the map honest; everything else rides the narrator live —
             # Marla is behind a door twenty paces off, not in this scene.
+            # Spending Inspiration is a standing offer, even on the road.
+            if _SPEND_RE.search(text):
+                return "spend_inspiration"
             if _ENTER_INN_RE.search(text):
                 return "enter_inn"
             if _NORTH_AWAY_RE.search(text):
@@ -946,6 +988,76 @@ class ActEngine:
             tuple(sorted((str(k), int(v)) for k, v in st.skills.items())),
         )
 
+    # -- inspiration (table applause) --------------------------------------
+    def _earn_inspiration(self, lead_before: str,
+                          markers_before: tuple[Any, ...],
+                          bands_before: dict[str, str]) -> None:
+        """Award Inspiration for story-driving beats (capped, one line each).
+
+        The table applauds progress, not dice: a lead advanced, a clue found,
+        a route opened, the travelers freed, the tale closed, or a meter
+        crossing into a warmer band. Silver, HP and idle chatter earn nothing.
+        """
+        st = self.state
+        room = INSPIRATION_MAX - int(st.inspiration or 0)
+        if room <= 0:
+            return
+        earned = 0
+        if st.lead_stage != lead_before:
+            earned += 1
+        if tuple(st.clues) != tuple(markers_before[1]):
+            earned += 1
+        if st.solution_path is not None and markers_before[3] is None:
+            earned += 1
+        if st.travelers_freed and not markers_before[4]:
+            earned += 1
+        if st.completed and not markers_before[5]:
+            earned += 1
+        for slug in st.attitudes:
+            before = bands_before.get(slug, "Neutral")
+            after = st.attitude_band_for(slug)
+            if _BAND_RANK.get(after, 2) > _BAND_RANK.get(before, 2):
+                earned += 1
+                break
+        granted = max(0, min(earned, room))
+        if granted:
+            st.inspiration = int(st.inspiration or 0) + granted
+            self._feed("system", text=(
+                f"✦ Inspiration +{granted} — the table applauds ({st.inspiration})."
+            ))
+
+    def _beat_spend_inspiration(self, text: str) -> BeatOutcome:
+        """Burn one Inspiration: the next surfaced check throws twice."""
+        st = self.state
+        if st.inspired:
+            return BeatOutcome(
+                ack="Your inspiration is already burning.",
+                narration="You hold the moment a breath longer — the next roll throws twice.",
+                kind="",
+            )
+        if int(st.inspiration or 0) <= 0:
+            return BeatOutcome(
+                ack="No inspiration to spend — yet.",
+                narration=(
+                    "The table is quiet. Drive the story — a clue, a lead, "
+                    "a warmer heart — and the applause will come."
+                ),
+                kind="",
+            )
+        st.inspiration = int(st.inspiration) - 1
+        st.inspired = True
+        self._feed("system", text=(
+            f"✦ Inspiration spent ({st.inspiration} banked) — the next roll throws twice."
+        ))
+        return BeatOutcome(
+            ack="✦ Inspiration burns.",
+            narration=(
+                "You breathe out, and the room seems to lean in with you. "
+                "The next roll throws twice — the higher stands."
+            ),
+            kind="",
+        )
+
     def _diminish(self, outcome: BeatOutcome) -> None:
         """Replace a looping reply with a shorter one that points forward (§7).
 
@@ -988,6 +1100,7 @@ class ActEngine:
         *,
         suspend_on_check: bool = False,
         pending_token: str | None = None,
+        seed_roll2: int | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         """Resolve one action. Returns (frontend-contract response, checkpoint kind).
 
@@ -1004,6 +1117,7 @@ class ActEngine:
         blocked by that guard.
         """
         self._seed_roll = seed_roll if seed_roll is not None else None
+        self._seed_roll2 = seed_roll2 if seed_roll2 is not None else None
         self._suspend_on_check = suspend_on_check
         t = (text or "").strip()
         self.state.actions_taken += 1
@@ -1019,6 +1133,10 @@ class ActEngine:
         lead_before = self.state.lead_stage
         scene_before = self.state.scene
         markers_before = self._progress_markers()
+        bands_before = {
+            slug: self.state.attitude_band_for(slug)
+            for slug in list(self.state.attitudes.keys())
+        }
         beat = self._route(t)
         handler = getattr(self, f"_beat_{beat}")
         seq_before = self.state.feed_seq
@@ -1056,6 +1174,8 @@ class ActEngine:
         # refresh only on the fallback cadence. Deterministic — no model call.
         refresh_saga(self.state, location_label=location_name(self.state),
                      force=bool(transitioned or progress))
+        # Inspiration (table applause): story-driving beats earn it.
+        self._earn_inspiration(lead_before, markers_before, bands_before)
 
         # System lines the beat itself wrote (clues found, routes opened, notes)
         # are echoed in the response so the live feed shows them immediately.
@@ -2020,8 +2140,11 @@ class ActEngine:
                 npc_dispositions=self._npc_dispositions_for_present(),
             ),
             seed_roll=self._seed_roll,
+            seed_roll2=self._seed_roll2,
+            inspired=self.state.inspired,
         )
         self._seed_roll = None
+        self._seed_roll2 = None
         try:
             result = pipeline.orchestrate(
                 action, state=self._pipeline_state(), prefs=self.prefs,
@@ -2063,6 +2186,17 @@ class ActEngine:
                         "dc": snapshot.dc,
                         "skill": snapshot.skill,
                     }
+                    if check.kept_from:
+                        # Inspiration burned on this resolution: show both dice.
+                        kept = check.kept_from
+                        dropped = kept[1] if kept[0] == check.roll else kept[0]
+                        mechanics["advantage"] = True
+                        mechanics["d20_second"] = dropped
+                        self.state.inspired = False
+                        self._feed("system", text=(
+                            f"✦ Inspiration burns — two dice fall ({kept[0]}, "
+                            f"{kept[1]}), the {check.roll} stands."
+                        ))
                 continue
             if check.hidden and not check.trivial_auto:
                 # Quiet checks roll behind the screen — the player gets no die,

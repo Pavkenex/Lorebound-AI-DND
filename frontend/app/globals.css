@@ -234,6 +234,29 @@ h1, h2, h3, h4 { font-variant: small-caps; letter-spacing: 0.04em; color: var(--
   .grid2 { grid-template-columns: 1fr; }
 }
 
+/* Mobile pane tabs: one thumb-reach pane at a time (Chronicle / Status / World). */
+.tabbar { display: none; }
+@media (max-width: 720px) {
+  .tabbar {
+    display: flex; gap: 6px; grid-column: 1 / -1; order: -1;
+    position: sticky; top: 0; z-index: 5; padding: 6px 0;
+    background: var(--bg);
+  }
+  .tabbar .tab {
+    flex: 1; padding: 9px 4px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); color: inherit; font: inherit; font-size: 14px;
+  }
+  .tabbar .tab.on { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .shell[data-tab="tale"] > aside.left,
+  .shell[data-tab="tale"] > aside.right { display: none; }
+  .shell[data-tab="hero"] > section[aria-label="Chronicle"],
+  .shell[data-tab="hero"] > aside.right { display: none; }
+  .shell[data-tab="world"] > section[aria-label="Chronicle"],
+  .shell[data-tab="world"] > aside.left { display: none; }
+  .shell[data-tab] > aside.left,
+  .shell[data-tab] > aside.right { order: 0; }
+}
+
 /* collapsible nav (t_87bd1163) */
 .nav-toggle { display: none; margin-left: 4px; }
 .nav-links { display: contents; }

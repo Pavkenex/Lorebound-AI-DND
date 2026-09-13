@@ -103,6 +103,9 @@ class CheckResult(BaseModel):
     surfaced: bool = True
     #: Real complication for SuccessWithCost; None otherwise.
     cost: str | None = None
+    #: With advantage (Inspiration): both thrown faces in throw order; the
+    #: kept die is ``roll``. None for a single-die check.
+    kept_from: list[int] | None = None
 
     model_config = {"use_enum_values": False}
 
@@ -138,12 +141,17 @@ def _classify(roll: int, margin: int) -> Outcome:
 
 
 def roll_check(request: CheckRequest, roll: int | None = None,
-               rng: random.Random | None = None) -> CheckResult:
+               rng: random.Random | None = None,
+               roll2: int | None = None) -> CheckResult:
     """Resolve d20 + attribute + skill + situational vs DC.
 
     ``roll`` is injectable for tests; otherwise drawn from ``rng`` (or global).
     Trivial difficulty resolves automatically with no die roll.
     Hidden checks resolve normally but are never surfaced (t_4d8fddef).
+
+    ``roll2`` is advantage (Inspiration): two dice are thrown and the higher
+    total stands; the kept die drives critical classification (the kept roll
+    IS the roll), exactly like the table's advantage.
     """
     if is_trivial(request.difficulty):
         total = request.dc  # auto success; no die involved
@@ -155,6 +163,14 @@ def roll_check(request: CheckRequest, roll: int | None = None,
     r = roll if roll is not None else (rng or random).randint(1, 20)
     if not 1 <= r <= 20:
         raise ValueError(f"d20 roll out of range: {r}")
+    kept_from: list[int] | None = None
+    if roll2 is not None:
+        if not 1 <= roll2 <= 20:
+            raise ValueError(f"d20 roll out of range: {roll2}")
+        kept_from = [r, roll2]
+        mods = request.attribute_mod + request.skill_mod + request.situational_mod
+        if roll2 + mods > r + mods:
+            r = roll2
     total = r + request.attribute_mod + request.skill_mod + request.situational_mod
     margin = total - request.dc
     outcome = _classify(r, margin)
@@ -162,6 +178,7 @@ def roll_check(request: CheckRequest, roll: int | None = None,
         request_snapshot=request, roll=r, total=total, dc=request.dc,
         margin=margin, outcome=outcome, trivial_auto=False,
         hidden=request.hidden,
+        kept_from=kept_from,
         # Hidden checks are silent; trivial shows no dice (§19, §22).
         surfaced=not request.hidden,
         cost=complication_for(outcome, request.skill) if outcome == Outcome.SuccessWithCost else None,

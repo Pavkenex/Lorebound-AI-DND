@@ -40,6 +40,8 @@ class ActIn(BaseModel):
     seed_roll: int | None = Field(default=None, ge=1, le=20)
     #: The player's thrown d20 for a pending surfaced check (two-phase /act).
     roll: int | None = Field(default=None, ge=1, le=20)
+    #: Second thrown face when Inspiration burns (advantage: keep higher).
+    roll2: int | None = Field(default=None, ge=1, le=20)
     #: Token from the pending_check payload; guards against a moved board.
     pending_token: str | None = None
 
@@ -332,6 +334,8 @@ def act(
             # (tests, tooling) keep resolving in one pass. A throw resolves.
             suspend_on_check=body.roll is None and body.seed_roll is None,
             pending_token=body.pending_token,
+            # Advantage's second face rides the same path as the first.
+            seed_roll2=body.roll2,
         )
     except PendingCheckStale:
         raise HTTPException(

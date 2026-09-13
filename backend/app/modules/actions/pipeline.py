@@ -74,6 +74,8 @@ class ActionInput(BaseModel):
     length: str = Length.STANDARD.value
     scene: SceneContext = Field(default_factory=SceneContext)
     seed_roll: int | None = None  # test hook: deterministic d20
+    seed_roll2: int | None = None  # test hook: deterministic second d20 (advantage)
+    inspired: bool = False  # a spent Inspiration point rides this action
 
 
 class PipelineResult(BaseModel):
@@ -173,8 +175,17 @@ class Pipeline:
                     "dc_why": why or None,
                     "long_odds": is_long_odds(req.dc, req.attribute_mod + req.skill_mod),
                     "difficulty": req.difficulty,
+                    # Inspiration: the prompt throws twice, keeps the higher.
+                    "advantage": bool(action.inspired),
                 })
-            res = roll_check(req, roll=action.seed_roll, rng=self.rng)
+            # A spent Inspiration point fires on the next surfaced resolution;
+            # hidden/trivial checks never burn it.
+            roll2 = None
+            if action.inspired and not req.hidden and not is_trivial(req.difficulty):
+                roll2 = action.seed_roll2
+                if roll2 is None:
+                    roll2 = self.rng.randint(1, 20)
+            res = roll_check(req, roll=action.seed_roll, rng=self.rng, roll2=roll2)
             results.append(res)
             if res.surfaced:  # hidden/trivial stay silent.
                 events.append(GameEvent(kind=EventKind.CHECK_RESOLVED, campaign_id=campaign_id,

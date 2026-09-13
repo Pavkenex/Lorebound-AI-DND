@@ -77,6 +77,7 @@ function DiceBlock({ ev, fresh }: { ev: FeedEvent; fresh?: boolean }) {
               <strong>{r.label}</strong>
               {typeof r.dc === "number" ? <> — vs <strong>DC {r.dc}</strong></> : null}
               {" · "}{r.d20}{r.dice.replace(/^d20/, "") ? ` ${r.dice.replace(/^d20/, "")}` : ""} = <strong>{r.total}</strong> {rollSummary(r.d20, r.outcome, r.total)}
+              {typeof r.d20_second === "number" ? <> · ✦ kept {r.d20} over {r.d20_second}</> : null}
             </>
           ) : (
             <><strong>{r.label}</strong> — {r.dice} = <strong>{r.total}</strong> {rollSummary(r.d20, r.outcome, r.total)}</>

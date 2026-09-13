@@ -130,6 +130,8 @@ export interface PendingCheck {
   dc_why?: string | null;
   /** Only a natural 20 passes this check (nothing but a critical reaches it). */
   long_odds?: boolean;
+  /** Roll-twice hint: a spent Inspiration point rides this check (advantage). */
+  advantage?: boolean;
   difficulty?: string;
   /** Board fingerprint from the calling leg; a moved board rejects the throw (409). */
   token: string;
@@ -144,6 +146,9 @@ export interface ActResponse {
     /** Engine outcome, e.g. "Success", "CriticalFailure". */
     outcome?: string;
     dc?: number;
+    /** Advantage (Inspiration): the dropped second face; d20 is the kept die. */
+    d20_second?: number;
+    advantage?: boolean;
   } | null;
   /** Present when the action waits on the player's throw; nothing persisted yet. */
   pending_check?: PendingCheck | null;
@@ -207,7 +212,8 @@ export async function submitAction(
  * never faked into a resolution — it returns fromFixture so the UI offers a
  * resend of the SAME face, and a 409 (moved board) returns conflict: true. */
 export async function rollCheck(
-  text: string, roll: number, token: string, prefs?: ContentPrefs, idempotencyKey?: string
+  text: string, roll: number, token: string, prefs?: ContentPrefs, idempotencyKey?: string,
+  roll2?: number
 ): Promise<ApiResult<ActResponse> & { conflict?: boolean }> {
   const key = idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const cid = getCampaignId();
@@ -227,6 +233,7 @@ export async function rollCheck(
       body: JSON.stringify({
         text,
         roll,
+        roll2,
         pending_token: token,
         campaign_id: cid === "demo-campaign" ? undefined : cid,
         prefs: prefs ? { nsfw: prefs.nsfw } : undefined,

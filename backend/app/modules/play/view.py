@@ -155,4 +155,7 @@ def game_state_payload(
         # Saga digest (#4): exposed for a future journal surface; the prompt
         # already carries it every turn.
         "saga": state.saga,
+        # Inspiration: the spendable applause (count) + whether one burns now.
+        "inspiration": int(state.inspiration or 0),
+        "inspired": bool(state.inspired),
     }

@@ -15,6 +15,9 @@ export interface FeedEvent {
     outcome?: string;
     /** The difficulty the throw was measured against (two-phase /act). */
     dc?: number;
+    /** Advantage (Inspiration): the dropped second face; d20 is the kept die. */
+    d20_second?: number;
+    advantage?: boolean;
   };
   lead?: string;
 }
@@ -51,6 +54,9 @@ export const fixtures = {
     ],
     leads: ["Missing Travelers", "The Monastery Lights"],
     interactables: ["hearth", "notice board", "cellar door", "Marla", "carter"],
+    /** Inspiration banked (table applause) + whether one burns on the next roll. */
+    inspiration: 1,
+    inspired: false,
     party: [
       { name: "Kaelis", hp: "26/32" },
       { name: "Bram", hp: "30/30" },

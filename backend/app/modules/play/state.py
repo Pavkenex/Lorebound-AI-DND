@@ -245,6 +245,13 @@ class PlayState:
     #: actions_taken at the last digest refresh (fallback cadence).
     saga_at: int = 0
 
+    #: Inspiration (table applause): earned on story-driving beats, spent
+    #: for advantage on one surfaced check. Capped at INSPIRATION_MAX.
+    inspiration: int = 0
+    #: A spent point waiting on its check — the next surfaced resolution
+    #: throws twice and keeps the higher.
+    inspired: bool = False
+
     # -- progression (five slice skills) ----------------------------------
     skills: dict[str, int] = field(default_factory=lambda: {k: 0 for k in SKILL_KEYS})
     skill_recent: dict[str, list[str]] = field(default_factory=dict)

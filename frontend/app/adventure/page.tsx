@@ -25,6 +25,8 @@ interface PendingThrow {
   key: string;
   spec: PendingCheck;
   face: number | null;
+  /** Advantage's second face (Inspiration): thrown after the first settles. */
+  face2: number | null;
   phase: CheckPhase;
 }
 
@@ -47,6 +49,8 @@ export default function AdventurePage() {
   const [suggestions, setSuggestions] = useState<{ label: string; command: string }[]>([]);
   const [npcView, setNpcView] = useState<NpcEntry | null>(null); // the open character page
   const [npcInfo, setNpcInfo] = useState<NpcDetail | null>(null); // its deeper fetch, when live
+  /** Mobile pane: one thumb-reach tab at a time (Chronicle / Status / World). */
+  const [tab, setTab] = useState<"tale" | "hero" | "world">("tale");
   const keyRef = useRef(0);
   const sendingRef = useRef(false); // one throw resolves once
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -111,7 +115,7 @@ export default function AdventurePage() {
       const diceId = nid();
       // A die the player just threw in the prompt shows settled here, not re-rolled.
       if (!opts?.settledDice) freshDiceRef.current.add(diceId);
-      pendingEvents.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome, dc: r.data.mechanics.dc } });
+      pendingEvents.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome, dc: r.data.mechanics.dc, d20_second: r.data.mechanics.d20_second, advantage: r.data.mechanics.advantage } });
     }
     let full = "";
     setStreaming("");
@@ -154,7 +158,7 @@ export default function AdventurePage() {
       if (r.data.pending_check) {
         // The engine has called a check and is holding the beat: the die waits
         // for the player's throw. Nothing has happened yet — nothing persists.
-        setPending({ text, key, spec: r.data.pending_check, face: null, phase: "ready" });
+        setPending({ text, key, spec: r.data.pending_check, face: null, face2: null, phase: "ready" });
         setAck(null);
         return;
       }
@@ -169,13 +173,13 @@ export default function AdventurePage() {
     }
   }
 
-  /** Send the settled face back to resolve the called check. */
+  /** Send the settled face(s) back to resolve the called check. */
   async function sendThrow(p: PendingThrow) {
     if (sendingRef.current || p.face == null) return;
     sendingRef.current = true;
     setPending({ ...p, phase: "sending" });
     try {
-      const r = await rollCheck(p.text, p.face, p.spec.token, content, `${p.key}-roll`);
+      const r = await rollCheck(p.text, p.face, p.spec.token, content, `${p.key}-roll`, p.face2 ?? undefined);
       if (r.conflict) {
         // check_expired: the board moved — the throw had no target, nothing was taken.
         setPending(null);
@@ -200,20 +204,29 @@ export default function AdventurePage() {
     const p = pending;
     if (!p || p.phase !== "ready") return;
     const face = 1 + Math.floor(Math.random() * 20);
+    const face2 = p.spec.advantage === true ? 1 + Math.floor(Math.random() * 20) : null;
     if (reducedMotion) {
-      void sendThrow({ ...p, face });
+      void sendThrow({ ...p, face, face2 });
       return;
     }
-    setPending({ ...p, face, phase: "thrown" });
+    setPending({ ...p, face, face2, phase: "thrown" });
   }
 
   function onSettled() {
-    if (pending?.phase === "thrown") void sendThrow(pending);
+    // Advantage: the first settle births the second die; the second settle sends both.
+    if (pending?.phase === "thrown" && pending.spec.advantage === true && pending.face2 != null) {
+      setPending({ ...pending, phase: "thrown2" });
+      return;
+    }
+    if (pending?.phase === "thrown" || pending?.phase === "thrown2") void sendThrow(pending);
   }
 
   function onRetry() {
     if (pending?.phase === "retry") void sendThrow(pending);
   }
+
+  // A called check must be throwable with one thumb: bring the Chronicle pane up.
+  useEffect(() => { if (pending) setTab("tale"); }, [pending]);
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -263,7 +276,20 @@ export default function AdventurePage() {
   const ch = gs.character ?? fixtures.character;
 
   return (
-    <div className="shell">
+    <div className="shell" data-tab={tab}>
+      <nav className="tabbar" aria-label="Adventure panes">
+        {([["tale", "❧ Chronicle"], ["hero", "♥ Status"], ["world", "◈ World"]] as const).map(([v, label]) => (
+          <button
+            key={v}
+            type="button"
+            className={`tab${tab === v ? " on" : ""}`}
+            aria-pressed={tab === v}
+            onClick={() => setTab(v)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
       {/* LEFT — status */}
       <aside className="left" aria-label="Party status" style={{ borderRight: "1px solid var(--line)" }}>
         <div className="parchment card" style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -271,6 +297,12 @@ export default function AdventurePage() {
           <div>
             <h2 style={{ margin: 0 }}>{ch.name}</h2>
             <p className="sys" style={{ margin: 0 }}>{ch.epithet} · Level {ch.level}</p>
+            {typeof gs.inspiration === "number" && gs.inspiration > 0 ? (
+              <p className="sys" style={{ margin: "2px 0 0" }} title="Burn one for advantage on your next roll — the Act row, or say so.">
+                ✦ Inspiration ×{gs.inspiration}
+              </p>
+            ) : null}
+            {gs.inspired ? <p className="sys" style={{ margin: "2px 0 0" }}>✦ burning — the next roll throws twice</p> : null}
           </div>
         </div>
         <div className="parchment card" style={{ marginTop: 12 }}>
@@ -326,6 +358,7 @@ export default function AdventurePage() {
             spec={pending.spec}
             phase={pending.phase}
             face={pending.face}
+            face2={pending.face2}
             onThrow={onThrow}
             onSettled={onSettled}
             onRetry={onRetry}
@@ -365,6 +398,17 @@ export default function AdventurePage() {
             <button className="btn" type="submit" disabled={busy || !!pending || !input.trim()}>
               {busy ? "The quill moves…" : pending ? "The die waits…" : "Act ↵"}
             </button>
+            {typeof gs.inspiration === "number" && gs.inspiration > 0 && !pending && (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={busy}
+                title="Burn one Inspiration: your next roll throws twice, keeping the higher."
+                onClick={() => { if (!busy && !pending) void runSubmit("I spend my inspiration"); }}
+              >
+                ✦ Spend ({gs.inspiration})
+              </button>
+            )}
             <span className="sys">No wrong verbs. No timed decisions.</span>
           </div>
         </form>
