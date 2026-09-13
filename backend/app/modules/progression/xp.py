@@ -106,3 +106,28 @@ def compute_skill_xp(
         * training_modifier(instructor, equipment, books, environment, traits)
     )
     return max(0, int(xp))
+
+
+# ---------------------------------------------------------------------------
+# The play loop's flat award scale. §13's formula above prices training
+# drills; a resolved check awards by outcome so every real attempt teaches
+# something — failure included (a failed persuasion still trains Persuasion):
+# success pays most, failure least, and nothing pays nothing.
+PLAY_SKILL_XP: dict[str, int] = {
+    "exceptional": 30,
+    "success": 20,
+    "successwithcost": 20,
+    "success_with_cost": 20,
+    "failure": 8,
+    "criticalfailure": 5,
+    "critical_failure": 5,
+}
+
+
+def play_skill_xp(outcome: Any) -> int:
+    """Flat skill XP for one resolved play-loop check.
+
+    Accepts the rules ``Outcome`` (or its string form); an unknown outcome
+    pays nothing rather than raising — a check must never lose its turn to XP.
+    """
+    return PLAY_SKILL_XP.get(_outcome_key(outcome), 0)

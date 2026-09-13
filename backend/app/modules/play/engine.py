@@ -35,6 +35,7 @@ from app.modules.npc.personality import (
 from app.modules.play.session import PlaySession
 from app.modules.play.state import CLUES, OPENING_BEAT, SOLUTIONS
 from app.modules.play.view import npc_names, npcs_present
+from app.modules.progression.xp import play_skill_xp
 from app.modules.rules.checks import (
     CheckRequest,
     CheckResult,
@@ -804,12 +805,12 @@ class ActEngine:
         )
         result = roll_check(request, roll=self._seed_roll)
         self._seed_roll = None  # a seed only steers the action's first check
-        if result.outcome in SUCCESS_OUTCOMES:
-            self.state.award_skill(
-                skill,
-                30 if result.outcome == Outcome.Exceptional else 20,
-                label.split("—")[0].strip(),
-            )
+        # Every resolved attempt trains the skill that made it — a failed
+        # persuasion still feeds Persuasion XP (play_skill_xp grades it).
+        if not result.trivial_auto:
+            xp = play_skill_xp(result.outcome)
+            if xp:
+                self.state.award_skill(skill, xp, label.split("—")[0].strip())
         mech = {
             "label": label,
             "roll": f"d20{attr_mod + skill_mod:+d}" if (attr_mod + skill_mod) else "d20",
@@ -2035,6 +2036,14 @@ class ActEngine:
         mechanics = None
         for check in result.checks:
             snapshot = check.request_snapshot
+            if not check.trivial_auto:
+                # The attempt itself teaches: a free-text check trains its
+                # skill whatever the outcome, same scale as authored beats.
+                xp = play_skill_xp(check.outcome)
+                if xp:
+                    self.state.award_skill(
+                        str(snapshot.skill).strip().lower(), xp, str(snapshot.skill),
+                    )
             if check.surfaced:
                 if mechanics is None:
                     mechanics = {
