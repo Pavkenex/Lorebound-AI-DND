@@ -14,7 +14,7 @@ move to kanban cards when picked up._
 | 4 | **Story-so-far digest** — rolling ~200-word recap carried in the prompt | BUILT 2026-09-13 (`d57e504`) — deterministic, model-free, campaign-agnostic; see §4 below. |
 | 5 | **Fail forward everywhere** — extend success-at-cost / hail-mary to stealth/investigation/combat; crit-fail opens a branch | AGREED — next up. |
 | 6 | **Nightly self-play ritual** — golden-chronicle transcripts + soak bot against the real relay | PARKED — "some other time" (token budget). |
-| 7 | **Cheap delights** — rp_quality → Inspiration; saga export PDF/EPUB; tabbed mobile shell | UNSORTED — not yet ruled on. |
+| 7 | **Cheap delights** — Inspiration; saga export PDF/EPUB; tabbed mobile shell | PARTLY BUILT 2026-09-13 (`6131eb5`): Inspiration + mobile tabs live; saga export still open. |
 
 ## §1 — what the social mechanics do TODAY (checked in code)
 
@@ -64,3 +64,23 @@ hermes config set security.allow_data_training_tiers_noninteractive true
 ```
 
 Revert: `hermes config set model.default deepseek-v4.1-flash && hermes config set model.provider opencode-go`.
+
+## §7 — cheap delights, build notes 2026-09-13 (`6131eb5`)
+
+**Inspiration (table applause) — BUILT, all green.** No RP-quality scorer
+exists in the codebase (the ±2 `rp_dc_shift` is wired but its input is always
+0), so earning is progress-gated instead of judged: lead advanced, clue
+found, route opened, travelers freed, tale closed, or a meter crossing into a
+warmer band — capped at 3. Spending (`I spend my inspiration`, or the ✦ Spend
+button) arms the next surfaced check with advantage: the prompt throws twice,
+the engine keeps the higher (kept die drives crits, exactly like the table's
+advantage), then burns the point win or lose. Hidden/trivial checks never burn
+it. `roll_check(..., roll2=)` + `CheckResult.kept_from`; `ActIn.roll2` rides
+the same path as the first face. Live prove-out: ask Marla → +1 → spend →
+steal threw 5 + 19 → kept 19 (Exceptional), point burned.
+**Mobile shell — BUILT.** ≤720px the adventure page becomes three tabs
+(❧ Chronicle / ♥ Status / ◈ World); a called check
+auto-brings the Chronicle pane so the die stays throwable with one thumb.
+Desktop untouched. Verified via `next build` + SSR markup (`tabbar`,
+`data-tab="tale"`); no browser on this box, so phone-pixel check is still owed.
+**Still open:** saga export (PDF/EPUB at arc end).
