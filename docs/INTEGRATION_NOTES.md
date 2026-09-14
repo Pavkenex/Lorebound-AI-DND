@@ -5,16 +5,17 @@ wired into the live FastAPI + Next.js app **in-process**. The settled spec is
 `docs/INTEGRATION_PLAN.md`; the owner's deploy steps are `docs/INTEGRATION_DEPLOY.md`.
 Readers who only want to deploy can stop at the runbook.
 
-As-built status at this writing (`main` = `5b98f46`):
+As-built status after the P6 ship (merge `b7806fe` + the P6 finalize commit; battery
+results in §7 and the finalize block below):
 
 | Card | Scope | State |
 |---|---|---|
 | P1 | Packaging — engine installs into the backend (image + dev env) | landed `3fb40ed`, `485d307` |
 | P2 | Bridge module — campaign lifecycle, turn wrapper, runtime-key flow | landed `070e96f`, `b41ee25`, `af98d73` |
 | P3 | HTTP router — flag-gated `/engine` surface, auth, key header | landed `6844b6d`, `7161a4b`, `30dc11d`, `5b98f46` |
-| P4 | Frontend pilot — `/chronicle` behind `NEXT_PUBLIC_ENGINE_MODE` | worktree branch `p2/frontend`, merged and re-verified by **P6** |
+| P4 | Frontend pilot — `/chronicle` behind `NEXT_PUBLIC_ENGINE_MODE` | landed `e94fc38`, `04f4af7`; merged `b7806fe` |
 | P5 | Deploy docs + compose/deploy-artifact re-verification | this document + `INTEGRATION_DEPLOY.md` |
-| P6 | Ship — merge the frontend, full batteries, push | fills the *P6 finalize* block at the bottom |
+| P6 | Ship — merge the frontend, full batteries, push | merged `b7806fe`; batteries + push recorded below |
 | P7 | Post-deploy live verify + first real BYOK turn | **parked** until a deploy sets `ENGINE_MODE=1` |
 
 ## 1. Decisions (settled in the plan — not revisited)
@@ -174,6 +175,22 @@ for `no_campaign` / `not_an_engine_campaign` (never reveals foreign ids); 502 sc
 - Evidence files (scratch, outside the repo): `/opt/data/scratch/p5/` —
   `imgsim_driver.py` / `imgsim_driver.txt` (16/16), `probe_compose.py`, `install.log`;
   board copy: `/opt/data/kanban-evidence/t_60c1948d-p5-evidence.md`.
+- **P6 ship batteries on merged `main`** (merge `b7806fe`; commands exactly as the
+  card's tooling): backend **502 passed** + `ruff check app tests` clean; engine
+  **788 passed** + `ruff check src tests` clean; frontend `npm run typecheck` clean,
+  `npm test` **64/64**, `npm run build` clean flag-off (17 routes, `/chronicle`
+  5.93 kB) and clean again with `NEXT_PUBLIC_ENGINE_MODE=1`; stub e2e over real HTTP
+  **16/16** — register → login → create campaign → stub turn (turn 1,
+  `capability.mode == "stub"`, a shown `perception` check with
+  `mechanics.band == "success"`) → `/state` (`location='The Salt Gate yard'`) →
+  flag-on `/openapi.json` lists `/engine/campaigns` (58 paths) → the connection
+  view has no key field → a canary `X-Provider-Key` sent against a dead provider
+  answers 200 (`reachable: false`) and 502 (scrubbed detail) with the key absent
+  from both bodies, and the canary appears in **0** files across the app DB, the
+  engine data dir and both server logs. Driver:
+  `/opt/data/scratch/p6/p6_ship_e2e.py`; output `p6_ship_e2e.txt` (md5
+  `c8cdd614dc5501fe74acb043abd2192f`); board copy in
+  `/opt/data/kanban-evidence/t_ad425576-p6-evidence.md`.
 
 ## 8. Known gaps (deliberate, or later cards)
 
@@ -204,10 +221,24 @@ for `no_campaign` / `not_an_engine_campaign` (never reveals foreign ids); 502 sc
 
 ---
 
-### P6 finalize block (fill in during the ship card)
+### P6 finalize block (ship, filled during the ship card)
 
-- Frontend merge hash: `<p6>`
-- Batteries on merged `main`: backend `<n> passed`, engine `<n> passed`, frontend
-  `typecheck`/`test`/`build` `<result>`, stub e2e `<result>`
-- Pushed hash: `<p6>` (`origin/main`), and the key-absence test reference to quote from
-  `test_engine_router.py`.
+- Frontend merge: `b7806fe` (`git merge --no-ff p2/frontend`); `git diff
+  db6f664..b7806fe -- backend engine` is **empty** — the merge is frontend-only
+  (`/chronicle` route + `loading.tsx`, `lib/engine.ts` + its test, `engineApi` in
+  `lib/api.ts`, the flag-gated shell link, globals.css).
+- Batteries on merged `main` (`b7806fe`): backend **502 passed**, engine **788
+  passed**, both `ruff` clean; frontend `typecheck` clean, **64/64** tests,
+  `npm run build` clean **flag-off and flag-on**; stub e2e **16/16** over real HTTP.
+- Pushed hash: this P6 ship commit (`git log -1 --format=%H`; `origin/main` tip
+  after the push). The push advanced `origin/main` from `5b98f46` to it, carrying
+  `e5e2ded`, `db6f664`, `e94fc38`, `04f4af7` and merge `b7806fe`.
+- Key-absence test reference (`backend/tests/test_engine_router.py`):
+  `test_turn_passes_the_runtime_key_through_and_persists_nowhere` — proves the
+  header reached the adapter, then asserts the key is in no response body, no
+  app-DB row (`_db_text()`), no campaign file (`_data_dir_text()`);
+  `test_provider_failure_is_502_scrubbed_and_never_logged` — 502 detail arrives
+  with the `***` marker and the key is absent from `caplog.text`, the DB and the
+  data dir, against a hostile provider that echoes the `Authorization` header;
+  `test_put_ignores_unknown_fields_gracefully_and_never_echoes_a_key` — a stray
+  `api_key` in the PUT body is ignored, never echoed; no key-shaped field exists.
