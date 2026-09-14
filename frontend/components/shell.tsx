@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { StoreProvider, useStore } from "../lib/store";
 import { useAmbient } from "../lib/audio";
 import { getToken } from "../lib/api";
+import { engineModeEnabled } from "../lib/engine";
 import { CostBadge } from "./widgets";
 
 const LINKS: [string, string][] = [
@@ -21,6 +22,9 @@ const LINKS: [string, string][] = [
   ["/tutorial", "Tutorial"],
   ["/settings", "Settings"],
 ];
+// The engine pilot shows up only when the deploy switches it on (plan §7);
+// appended last so the 1–9,0 shortcuts keep pointing where they did.
+if (engineModeEnabled()) LINKS.push(["/chronicle", "Chronicle"]);
 
 function AmbientDriver() {
   const { ambient, muted } = useStore();
