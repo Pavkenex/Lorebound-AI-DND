@@ -5,8 +5,8 @@ wired into the live FastAPI + Next.js app **in-process**. The settled spec is
 `docs/INTEGRATION_PLAN.md`; the owner's deploy steps are `docs/INTEGRATION_DEPLOY.md`.
 Readers who only want to deploy can stop at the runbook.
 
-As-built status after the P6 ship (merge `b7806fe` + the P6 finalize commit; battery
-results in §7 and the finalize block below):
+As-built status after the P6 ship (merge `b7806fe`) and the P10 round-2 ship (merge
+`89dd375`; battery results in §7, §10 and the finalize blocks below):
 
 | Card | Scope | State |
 |---|---|---|
@@ -17,9 +17,9 @@ results in §7 and the finalize block below):
 | P5 | Deploy docs + compose/deploy-artifact re-verification | this document + `INTEGRATION_DEPLOY.md` |
 | P6 | Ship — merge the frontend, full batteries, push | merged `b7806fe`; batteries + push recorded below |
 | P7 | Post-deploy live verify + first real BYOK turn | **parked** until a deploy sets `ENGINE_MODE=1` |
-| P8 | Content boundaries — `X-Content-Prefs` → engine prompt policy (plan §11) | landed (see §10) |
-| P9 | Frontend boundaries line on `/chronicle` | follows P8 |
-| P10 | Ship round 2 — merge, batteries, push | follows P8/P9 |
+| P8 | Content boundaries — `X-Content-Prefs` → engine prompt policy (plan §11) | landed `2d6c002` (see §10) |
+| P9 | Frontend boundaries line on `/chronicle` | landed `935a51e`, `32e0ba5`; merged `89dd375` (see §10) |
+| P10 | Ship round 2 — merge, batteries, push | merged `89dd375`; batteries + push in the P10 finalize block |
 
 ## 1. Decisions (settled in the plan — not revisited)
 
@@ -273,6 +273,19 @@ mid-campaign changes the next turn, not the last one).
 `{nsfw, violence, horror, romance, language}` — never the raw header, so aliases
 arrive canonical (`mild` → `reduced`) and unknown header keys never surface.
 
+**Frontend (P9).** The pilot sends the header on every `/engine/*` request — turn,
+state, connection, create — from `frontend/lib/engine.ts::engineRequestHeaders()`;
+the value is read at REQUEST time from the store's slot `lorebound-prefs-v1`
+(`storedContentPrefs()` — a captured closure would go stale the moment Settings
+flips NSFW mid-session). Values are normalized to the canonical vocabulary on the
+way out (`contentPrefsHeader()`), so a fresh browser sends the store defaults and a
+partial stored payload cannot leak a non-canonical level. The turn's applied echo
+arrives as `payload.content`; the card's "Story boundaries" line renders it via
+`appliedContent()` (tolerant — an absent echo falls back to the store values and
+the page never breaks) and surfaces the server's note when defaults were applied
+(`boundariesNotice()` matches `CONTENT_DEFAULTS_NOTE` exactly, plus a generic
+`could not be read`/`defaults` scan; the echo itself carries no flag field).
+
 **Tests.** `engine/tests/test_content_policy.py` (11) and
 `backend/tests/test_engine_content_prefs.py` (25, offline: recording fake adapter,
 in-memory app DB, throwaway `ENGINE_DATA_DIR`). The backend module pins the parser
@@ -281,7 +294,10 @@ NSFW, per-turn re-read), the fallback note, the applied-prefs echo, and the
 hygiene set: the header payload absent from `caplog.text`, from every app-DB row
 and from the campaign file, with a canary string smuggled into the header. The
 engine module pins the three assembly properties plus the byte-identical
-no-policy prompt.
+no-policy prompt. The frontend side has its own §11 block in
+`frontend/lib/engine.test.ts` (+8 tests; suite total 72/72): the request-time
+store read, header normalization (incl. the partial-`{nsfw:true}` payload), the
+tolerant echo read and the note wording/paths.
 
 **P8 evidence** (commands + observed results; logs under `/opt/data/scratch/p8_gates/`):
 
@@ -332,3 +348,37 @@ no-policy prompt.
   data dir, against a hostile provider that echoes the `Authorization` header;
   `test_put_ignores_unknown_fields_gracefully_and_never_echoes_a_key` — a stray
   `api_key` in the PUT body is ignored, never echoed; no key-shaped field exists.
+
+---
+
+### P10 finalize block (round-2 ship, filled during the ship card)
+
+- Merge: `89dd375` (`git merge --no-ff p2/content-prefs`; merge base `e6ec68d`).
+  `git diff 2d6c002..89dd375` is **frontend-only** — 6 files, +332/−11, no
+  conflicts.
+- Batteries on merged `main` (`89dd375`): backend **527 passed** (46.4s) +
+  `ruff check app tests` clean; engine **799 passed** (54.4s) +
+  `ruff check src tests evals` clean; `python -m evals --suite all` → core
+  **5/5** + e2e **5/5**; `r10_probe_mechanisms.py` → **14/14**;
+  `r10_probe_mutations.py` → control clean, **6/6** mutations detected.
+  Frontend: `npm run typecheck` clean, `npm test` **72/72**, `npm run build`
+  clean **flag-off and flag-on** (`/chronicle` 6.67 kB / 110 kB First Load).
+  Logs: `/opt/data/scratch/p10/` (`backend_pytest.log`, `engine_pytest.log`,
+  `engine_gates.log`, `frontend_builds.log`).
+- **Content-prefs e2e on the merged tree** (real `uvicorn` from this tree,
+  `ENGINE_MODE=1`, stub provider, no key, scratch app DB + fresh engine dir;
+  port 8004): **4/4** — a custom header (`violence:reduced, horror:off,
+  romance:off, language:reduced, nsfw:true`) echoes `content` exactly with no
+  note; a malformed payload answers the defaults **plus** `CONTENT_DEFAULTS_NOTE`
+  in `system_lines`; an absent header answers the defaults with no note; legacy
+  aliases (`mild`/`low`/`clean`) arrive canonical (`reduced`) in the echo.
+  Driver `/opt/data/scratch/p10/p10_content_prefs_e2e.py`; transcript
+  `p10_content_prefs_e2e.txt` (md5 `da8128c35f7ede9a40a034c97f55d22e`).
+- Runbook review: `docs/INTEGRATION_DEPLOY.md` needs no new flag, secret, volume
+  or step — round 2 rides the existing `ENGINE_MODE=1` pilot path (the boundaries
+  are request headers). One illustrative amendment: §3's stub-turn response
+  comment now lists the `content` block beside the other payload keys. Rollback
+  (§4) is unchanged.
+- Push: this ship commit (round-2 tip; `git log -1 --format=%H`). `git push
+  origin main` advanced `origin/main` from `4e738b3` to it, and
+  `git log origin/main..HEAD` is empty after the push.

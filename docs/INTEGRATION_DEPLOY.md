@@ -97,7 +97,8 @@ today: backend `:8001`, frontend `:3000`, Coolify dashboard `:8000`).
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d '{"text":"I take stock of the road ahead."}'
   # 200: {"turn":1,"narration":"…","dialogue":[…],"capability":{"mode":"stub",…},
-  #       "state":{…},"mechanics":{…},"suggestions":[…],"system_lines":[…]}
+  #       "state":{…},"mechanics":{…},"suggestions":[…],"system_lines":[…],
+  #       "content":{"nsfw":false,"violence":"standard",…}}  # applied boundaries
   ```
 - [ ] **State snapshot**
   ```bash
