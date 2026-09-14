@@ -1,0 +1,13 @@
+# Build context is the repo root (docker compose build / Coolify): keep VCS
+# state, secrets, venvs and node_modules out of the image build.
+.git
+.github
+.worktrees
+.ruff_cache
+.env
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/node_modules
+**/*.egg-info
+backend/lorebound.db

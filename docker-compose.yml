@@ -17,11 +17,18 @@ services:
     image: redis:7-alpine
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://lorebound:lorebound@db:5432/lorebound
       REDIS_URL: redis://redis:6379/0
+      # Engine pilot (docs/INTEGRATION_PLAN.md §1/§6): off unless ENGINE_MODE=1.
+      ENGINE_MODE: ${ENGINE_MODE:-0}
+      ENGINE_DATA_DIR: /code/engine_data
+    volumes:
+      - engine_data:/code/engine_data
     ports:
       - "8001:8000"
     depends_on:
@@ -42,3 +49,4 @@ services:
 
 volumes:
   pgdata:
+  engine_data:

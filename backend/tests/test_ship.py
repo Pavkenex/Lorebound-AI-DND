@@ -38,15 +38,18 @@ def test_compose_services_and_health():
 
 
 def test_backend_dockerfile_copy_targets_exist():
+    """COPY sources are repo-root-relative: the build context IS the repo root."""
+    compose = (REPO / "docker-compose.yml").read_text()
+    assert "context: ." in compose, "backend build context must be the repo root"
     lines = (REPO / "backend" / "Dockerfile").read_text().splitlines()
     copies = [ln for ln in lines if ln.startswith("COPY")]
     assert copies, "backend Dockerfile copies nothing"
-    # Every bare filename COPY source must exist under backend/.
+    # Every COPY source must exist relative to the build context (repo root).
     for ln in copies:
-        for token in ln.split()[1:-1]:
-            if "/" in token or token.startswith("--"):
-                continue
-            assert (REPO / "backend" / token).exists(), (
+        sources = [tok for tok in ln.split()[1:-1] if not tok.startswith("--")]
+        assert sources, f"COPY with no source: {ln}"
+        for token in sources:
+            assert (REPO / token).exists(), (
                 f"backend/Dockerfile COPYs missing file: {token}"
             )
 
