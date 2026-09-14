@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 24 * 7
     AI_PROVIDER: str = "stub"
     AI_MODEL: str = "stub-narrator-1"
+    # Engine campaign files (phase 2; plan §1). Deploys mount a volume here.
+    ENGINE_DATA_DIR: str = "./engine_data"
 
 
 settings = Settings()

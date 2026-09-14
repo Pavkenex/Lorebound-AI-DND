@@ -39,6 +39,7 @@ _MODEL_MODULES: tuple[str, ...] = (
     "app.modules.economy.models",
     "app.modules.history.models",
     "app.modules.play.models",
+    "app.modules.engine.models",
 )
 
 
