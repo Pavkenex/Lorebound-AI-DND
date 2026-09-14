@@ -1,0 +1,543 @@
+"use client";
+// Pilot: /chronicle — the rebuilt engine behind NEXT_PUBLIC_ENGINE_MODE
+// (docs/INTEGRATION_PLAN.md §7). Hidden + inert unless the deploy sets the flag:
+// the page renders a notice, the nav keeps no link, and nothing calls /engine/*.
+//
+// Runtime-key rule (§4): the BYOK key is kept in THIS browser's localStorage,
+// typed into a password field, sent per request as X-Provider-Key, and never
+// stored server-side. The connect panel only ever PUTs non-secret prefs.
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  engineApi,
+  getToken,
+  type EngineCampaign,
+  type EngineConnection,
+  type EngineProbe,
+} from "../../lib/api";
+import {
+  ENGINE_DEFAULT_BASE_URL,
+  ENGINE_DEFAULT_TIMEOUT_S,
+  capabilityChip,
+  clearEngineKey,
+  connectionLabel,
+  engineDegraded,
+  engineModeEnabled,
+  engineStateSections,
+  formatWhen,
+  getEngineCampaignId,
+  getEngineKey,
+  probeVerdictText,
+  providerChoice,
+  setEngineCampaignId,
+  setEngineKey,
+  turnEntries,
+  turnSuggestions,
+  type EngineCapability,
+  type EngineProviderChoice,
+  type EngineState,
+  type EngineTurn,
+  type ProbeVerdict,
+  type TranscriptEntry,
+} from "../../lib/engine";
+import { uiBlip } from "../../lib/audio";
+
+export default function ChroniclePage() {
+  if (!engineModeEnabled()) return <PilotOff />;
+  return <EnginePilot />;
+}
+
+/** Flag off: the route exists but is inert — no fetches, no key field, no link. */
+function PilotOff() {
+  return (
+    <div style={{ maxWidth: 620, margin: "0 auto", padding: 24 }}>
+      <h1>The chronicle pilot is off</h1>
+      <p className="sys">
+        This deployment has not switched the rebuilt engine on
+        (<code>NEXT_PUBLIC_ENGINE_MODE</code>). Nothing else changed — the rest of
+        the game is exactly as it was.
+      </p>
+      <p><Link className="btn btn-ghost" href="/" prefetch>Back to the menu</Link></p>
+    </div>
+  );
+}
+
+function SignedOutCard() {
+  return (
+    <div className="parchment card" style={{ maxWidth: 560 }}>
+      <h2 style={{ marginTop: 0 }}>Sign in to open the pilot</h2>
+      <p className="sys">
+        Pilot chronicles belong to your account — the same one that keeps your
+        saves. Your AI key, when you set one, stays in this browser.
+      </p>
+      <Link className="btn" href="/login" prefetch>Sign in</Link>
+      <p className="sys" style={{ marginBottom: 0 }}>
+        After signing in, open <strong>Chronicle</strong> again from the top bar.
+      </p>
+    </div>
+  );
+}
+
+function EnginePilot() {
+  // null = not yet read from localStorage (SSR render must not guess).
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+
+  const [campaigns, setCampaigns] = useState<EngineCampaign[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [capability, setCapability] = useState<EngineCapability | null>(null);
+  const [input, setInput] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preserved, setPreserved] = useState("");
+  const [listError, setListError] = useState<string | null>(null);
+
+  const [snapshot, setSnapshot] = useState<EngineState | null>(null);
+  const [stateError, setStateError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [connection, setConnection] = useState<EngineConnection | null>(null);
+  const [provider, setProvider] = useState<EngineProviderChoice>("stub");
+  const [baseUrl, setBaseUrl] = useState(ENGINE_DEFAULT_BASE_URL);
+  const [model, setModel] = useState("");
+  const [timeoutS, setTimeoutS] = useState(ENGINE_DEFAULT_TIMEOUT_S);
+  const [keyInput, setKeyInput] = useState("");
+  const [keyStored, setKeyStored] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connBusy, setConnBusy] = useState(false);
+  const [connStatus, setConnStatus] = useState<ProbeVerdict | null>(null);
+  const [probe, setProbe] = useState<EngineProbe | null>(null);
+
+  const seqRef = useRef(0);
+  const connectRef = useRef<HTMLElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const openConnectPanel = useCallback(() => {
+    setConnectOpen(true);
+    // The panel may sit below the fold on a phone; bring it into view.
+    window.setTimeout(() => connectRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 30);
+  }, []);
+
+  const loadState = useCallback(async (campaignId: string) => {
+    setRefreshing(true); setStateError(null);
+    const r = await engineApi.state(campaignId);
+    setRefreshing(false);
+    if (r.ok) setSnapshot(r.data as EngineState);
+    else setStateError(r.error);
+  }, []);
+
+  const openCampaign = useCallback((campaignId: string) => {
+    setSelectedId(campaignId);
+    setEngineCampaignId(campaignId);
+    setTranscript([]);
+    setSuggestions([]);
+    setCapability(null);
+    setSnapshot(null);
+    setError(null);
+    setPreserved("");
+    setInput("");
+    void loadState(campaignId);
+  }, [loadState]);
+
+  const loadConnection = useCallback(async () => {
+    const r = await engineApi.getConnection();
+    if (!r.ok) { setConnStatus({ tone: "warn", text: r.error }); return; }
+    setConnection(r.data);
+    setProvider(providerChoice(r.data.provider));
+    setBaseUrl((r.data.base_url ?? "").trim() || ENGINE_DEFAULT_BASE_URL);
+    setModel(r.data.model ?? "");
+    setTimeoutS(r.data.timeout_s || ENGINE_DEFAULT_TIMEOUT_S);
+  }, []);
+
+  const loadCampaigns = useCallback(async () => {
+    const r = await engineApi.listCampaigns();
+    if (!r.ok) { setListError(r.error); setCampaigns([]); return; }
+    setListError(null);
+    setCampaigns(r.data);
+    const remembered = getEngineCampaignId();
+    const match = r.data.find((c) => c.id === remembered) ?? r.data[0];
+    if (match) openCampaign(match.id);
+  }, [openCampaign]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setKeyStored(!!getEngineKey());
+    if (!getToken()) { setSignedIn(false); return; }
+    setSignedIn(true);
+    void loadConnection();
+    void loadCampaigns();
+  }, [loadConnection, loadCampaigns]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "nearest" });
+  }, [transcript.length, pending, error]);
+
+  async function newChronicle() {
+    setCreating(true); setListError(null);
+    const r = await engineApi.createCampaign(newName.trim());
+    setCreating(false);
+    if (!r.ok) { setListError(r.error); return; }
+    uiBlip(740);
+    setNewName("");
+    setCampaigns((c) => [r.data, ...(c ?? []).filter((x) => x.id !== r.data.id)]);
+    openCampaign(r.data.id);
+  }
+
+  async function send(textArg?: string): Promise<void> {
+    const text = (textArg ?? input).trim();
+    if (!text || pending || !selectedId) return;
+    const seq = seqRef.current++;
+    setTranscript((t) => [...t, { id: `t${seq}:action`, kind: "action", text }]);
+    setInput(""); setPending(true); setError(null); setPreserved(""); setSuggestions([]);
+    uiBlip(600);
+    try {
+      const r = await engineApi.takeTurn(selectedId, text);
+      if (!r.ok) {
+        setError(r.error);
+        setPreserved(text);
+        if (r.code === "connect_your_ai") openConnectPanel();
+        return;
+      }
+      const turn = r.data as EngineTurn;
+      setTranscript((t) => [...t, ...turnEntries(turn, seq)]);
+      setCapability(turn.capability ?? null);
+      if (turn.state) setSnapshot(turn.state);
+      setSuggestions(turnSuggestions(turn));
+      setCampaigns((c) => (c ?? []).map((x) => (
+        x.id === selectedId ? { ...x, last_turn_at: new Date().toISOString() } : x
+      )));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    void send();
+  }
+
+  /** Persist non-secret prefs; a typed key goes to this browser, never the server. */
+  async function saveConnectionPrefs(): Promise<EngineConnection | null> {
+    const typed = keyInput.trim();
+    if (typed) { setEngineKey(typed); setKeyInput(""); setKeyStored(true); }
+    const r = await engineApi.saveConnection({
+      provider,
+      base_url: baseUrl.trim(),
+      model: model.trim(),
+      timeout_s: timeoutS,
+    });
+    if (!r.ok) { setConnStatus({ tone: "err", text: r.error }); return null; }
+    setConnection(r.data);
+    return r.data;
+  }
+
+  async function saveConnection() {
+    setConnBusy(true); setConnStatus(null);
+    const saved = await saveConnectionPrefs();
+    setConnBusy(false);
+    if (saved) setConnStatus({ tone: "ok", text: `Saved — ${connectionLabel(saved)}.` });
+  }
+
+  async function testConnection() {
+    setConnBusy(true); setConnStatus(null); setProbe(null);
+    const typed = keyInput.trim();
+    if (typed) { setEngineKey(typed); setKeyInput(""); setKeyStored(true); }
+    // The check probes the SAVED prefs, so persist the form first and report
+    // exactly what a turn would use.
+    const saved = await saveConnectionPrefs();
+    if (!saved) { setConnBusy(false); return; }
+    const key = typed || getEngineKey();
+    const r = await engineApi.probeConnection(key || null);
+    setConnBusy(false);
+    if (!r.ok) {
+      setConnStatus({ tone: "err", text: r.error });
+      if (r.code === "connect_your_ai") openConnectPanel();
+      return;
+    }
+    setProbe(r.data);
+    setConnStatus(probeVerdictText(r.data, provider));
+  }
+
+  function clearKey() {
+    clearEngineKey();
+    setKeyInput(""); setKeyStored(false); setProbe(null);
+    setConnStatus({ tone: "ok", text: "Key forgotten in this browser — nothing was ever stored on the server." });
+  }
+
+  const chip = capabilityChip(capability);
+  const degraded = engineDegraded(capability);
+  const sections = engineStateSections(snapshot);
+
+  return (
+    <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16 }}>
+      <h1>Chronicle <span className="sys">· engine pilot</span></h1>
+      <p className="sys">
+        The rebuilt engine, running inside the chronicler. Stub by default —
+        connect your own OpenAI-compatible endpoint to be narrated by a live model.
+      </p>
+
+      {signedIn === null && <p className="sys" aria-busy="true">Opening the pilot…</p>}
+      {signedIn === false && <SignedOutCard />}
+
+      {signedIn === true && (
+        <div className="engine-grid">
+          {/* PLAY */}
+          <section aria-label="Chronicle" className="engine-transcript">
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {capability !== null && (
+                <span className={`tag verdict-chip verdict-${chip.tone}`} title={chip.title}>◈ {chip.label}</span>
+              )}
+              {capability === null && selectedId !== null && <span className="sys">No turn played in this session yet.</span>}
+              {selectedId === null && <span className="sys">No chronicle open yet.</span>}
+            </div>
+            {degraded && (
+              <div className="engine-banner warn" role="status">
+                ⚠ Compatibility mode — your model answered without native tool calls,
+                so the engine is using its JSON fallback. Turns work; the prose is plainer.
+              </div>
+            )}
+
+            <div aria-live="polite" aria-label="Chronicle so far">
+              {transcript.map((e) => {
+                if (e.kind === "action") return <p className="sys" key={e.id}>❧ {e.text}</p>;
+                if (e.kind === "narration") return <p className="narr" key={e.id}>{e.text}</p>;
+                if (e.kind === "dialogue")
+                  return (
+                    <div className="dialogue" key={e.id}>
+                      <div className="who">{e.speaker} speaks —</div>
+                      <div>{e.text}</div>
+                    </div>
+                  );
+                if (e.kind === "verdict")
+                  return (
+                    <p key={e.id}>
+                      <span className={`tag verdict-chip verdict-${e.tone}`} title={e.label}>{e.text}</span>
+                    </p>
+                  );
+                return <p className="sys" key={e.id}>◈ {e.text}</p>;
+              })}
+            </div>
+
+            {transcript.length === 0 && !pending && (
+              <p className="sys">
+                {selectedId
+                  ? "The parchment is blank. Say what you do — the world answers."
+                  : "Start a new chronicle, or open one from the shelf beside this page."}
+              </p>
+            )}
+            {pending && <p className="ack" role="status">The chronicler is writing…</p>}
+
+            {error && (
+              <div className="error-banner" role="alert">
+                <strong>The chronicler stumbled —</strong> {error}
+                {preserved && (
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn" onClick={() => void send(preserved)} disabled={pending}>Try that again</button>
+                    <button className="btn btn-ghost" onClick={() => { setError(null); setPreserved(""); }}>Dismiss</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {preserved && error && <p className="sys">Kept: “{preserved}”</p>}
+
+            {suggestions.length > 0 && !pending && (
+              <div className="suggest-row" aria-label="Suggested next moves">
+                {suggestions.map((s) => (
+                  <button key={s} type="button" className="suggest-chip" onClick={() => setInput(s)}>✦ {s}</button>
+                ))}
+              </div>
+            )}
+
+            <form onSubmit={onSubmit} style={{ marginTop: 12 }}>
+              <label className="sr-only" htmlFor="engine-act">What do you do?</label>
+              <input
+                id="engine-act"
+                className="input-parch"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Attempt anything — look around, ask after the road, draw your blade…"
+                aria-label="action input"
+                disabled={pending}
+                maxLength={2000}
+                autoComplete="off"
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button className="btn" type="submit" disabled={pending || !input.trim() || !selectedId}>
+                  {pending ? "The quill moves…" : "Act ↵"}
+                </button>
+                <span className="sys">Enter sends · suggestion chips fill the line.</span>
+              </div>
+            </form>
+            <div ref={bottomRef} />
+          </section>
+
+          {/* SIDE */}
+          <aside style={{ display: "grid", gap: 12, alignContent: "start" }}>
+            <section className="parchment card" aria-label="Your AI" ref={connectRef}>
+              <h2 style={{ marginTop: 0 }}>Your AI</h2>
+              <p className="sys" style={{ marginTop: 0 }}>
+                Now: <strong>{connectionLabel(connection)}</strong>
+                {keyStored ? " · a key is kept in this browser" : " · no key in this browser"}
+              </p>
+              <button className="btn btn-ghost" onClick={() => (connectOpen ? setConnectOpen(false) : openConnectPanel())} aria-expanded={connectOpen}>
+                {connectOpen ? "Hide the key panel" : "Connect your AI"}
+              </button>
+
+              {connectOpen && (
+                <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                  <label htmlFor="engine-provider">Provider
+                    <select
+                      id="engine-provider"
+                      className="input-parch"
+                      value={provider}
+                      onChange={(e) => setProvider(e.target.value as EngineProviderChoice)}
+                    >
+                      <option value="stub">Stub — no model call (free)</option>
+                      <option value="openai-compatible">OpenAI-compatible endpoint</option>
+                    </select>
+                  </label>
+                  {provider !== "stub" && (
+                    <>
+                      <label htmlFor="engine-base">Base URL
+                        <input
+                          id="engine-base"
+                          className="input-parch"
+                          value={baseUrl}
+                          onChange={(e) => setBaseUrl(e.target.value)}
+                          placeholder={ENGINE_DEFAULT_BASE_URL}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label htmlFor="engine-model">Model
+                        <input
+                          id="engine-model"
+                          className="input-parch"
+                          value={model}
+                          onChange={(e) => setModel(e.target.value)}
+                          placeholder="gpt-5-mini, llama-3.3-70b, …"
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label htmlFor="engine-key">API key
+                        <input
+                          id="engine-key"
+                          className="input-parch"
+                          type="password"
+                          value={keyInput}
+                          onChange={(e) => setKeyInput(e.target.value)}
+                          autoComplete="new-password"
+                          placeholder={keyStored ? "•••• kept in this browser — type to replace" : "sk-… (blank for a keyless local server)"}
+                        />
+                      </label>
+                    </>
+                  )}
+                  <label htmlFor="engine-timeout">Timeout (seconds)
+                    <input
+                      id="engine-timeout"
+                      className="input-parch"
+                      type="number"
+                      min={1}
+                      max={600}
+                      style={{ width: 110 }}
+                      value={timeoutS}
+                      onChange={(e) => setTimeoutS(Number(e.target.value))}
+                    />
+                  </label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <button className="btn" onClick={() => void saveConnection()} disabled={connBusy}>{connBusy ? "…" : "Save"}</button>
+                    <button className="btn btn-ghost" onClick={() => void testConnection()} disabled={connBusy}>Test connection</button>
+                    <button className="btn btn-ghost" onClick={clearKey} disabled={!keyStored && !keyInput}>Clear key</button>
+                  </div>
+                  {connStatus && (
+                    <p className="sys" role="status" style={{ color: connStatus.tone === "err" ? "#e09a9a" : connStatus.tone === "warn" ? "#e0b48f" : undefined }}>
+                      {connStatus.text}
+                    </p>
+                  )}
+                  <p className="sys" style={{ marginBottom: 0 }}>
+                    <strong>Your key stays in this browser only.</strong> It is kept in this
+                    browser&apos;s storage and sent with each turn as a request header; the
+                    chronicler holds it for that one call and never writes it to the
+                    database, a log, or a prompt. Provider, base URL, model and timeout are
+                    saved to your account so your phone and desktop agree — the key is not.
+                  </p>
+                </div>
+              )}
+            </section>
+
+            <section className="parchment card" aria-label="Pilot chronicles">
+              <h2 style={{ marginTop: 0 }}>Pilot chronicles</h2>
+              {campaigns === null && <p className="sys">Opening the shelf…</p>}
+              {campaigns !== null && campaigns.length === 0 && (
+                <p className="sys">{listError ?? "Nothing here yet — start one below."}</p>
+              )}
+              {campaigns !== null && campaigns.length > 0 && (
+                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px" }}>
+                  {campaigns.map((c) => (
+                    <li key={c.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "6px 0" }}>
+                      <button
+                        className={c.id === selectedId ? "btn" : "btn btn-ghost"}
+                        onClick={() => openCampaign(c.id)}
+                        aria-current={c.id === selectedId ? "true" : undefined}
+                      >
+                        {c.name || "Untitled chronicle"}
+                      </button>
+                      <span className="sys">{c.world} · {formatWhen(c.last_turn_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {campaigns !== null && campaigns.length > 0 && listError && <p className="sys">{listError}</p>}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="input-parch"
+                  style={{ flex: "1 1 160px" }}
+                  placeholder="Name the new chronicle"
+                  value={newName}
+                  maxLength={200}
+                  onChange={(e) => setNewName(e.target.value)}
+                  aria-label="New chronicle name"
+                />
+                <button className="btn" onClick={() => void newChronicle()} disabled={creating}>
+                  {creating ? "…" : "✦ New chronicle"}
+                </button>
+              </div>
+            </section>
+
+            <section className="parchment card engine-state" aria-label="State">
+              <h2 style={{ marginTop: 0 }}>State</h2>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { if (selectedId) void loadState(selectedId); }}
+                  disabled={!selectedId || refreshing}
+                >
+                  {refreshing ? "…" : "Refresh"}
+                </button>
+                <span className="sys">GET /state {snapshot ? `· turn ${snapshot.turn ?? "—"}` : ""}</span>
+              </div>
+              {stateError && <p className="sys" style={{ color: "#e09a9a" }}>{stateError}</p>}
+              {sections.map((s) => (
+                <div key={s.title} style={{ marginTop: 10 }}>
+                  <h3 style={{ margin: "6px 0 2px" }}>{s.title}</h3>
+                  {s.note && <p className="sys" style={{ margin: "0 0 4px" }}>{s.note}</p>}
+                  <dl className="kv">
+                    {s.rows.map((row, i) => (
+                      <div key={`${s.title}-${i}`} style={{ display: "contents" }}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
+            </section>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}

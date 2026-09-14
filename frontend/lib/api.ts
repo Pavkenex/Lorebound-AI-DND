@@ -4,6 +4,8 @@
 import { fixtures } from "./fixtures";
 import type { ContentPrefs } from "./store-types";
 import { normalizeApiBase } from "./api-base";
+import { engineErrorText, getEngineKey, providerKeyHeader } from "./engine";
+import type { EngineState, EngineTurn } from "./engine";
 
 /** Fallback when no explicit URL is configured: same host as the page, backend port 8001.
  *  Works for localhost dev and IP-based deploys alike; set NEXT_PUBLIC_API_URL for anything else. */
@@ -622,5 +624,130 @@ export const api = {
       `/campaigns/${encodeURIComponent(campaignId)}/restart`,
       {},
       { restarted: false, campaign_id: campaignId, had_progress: false, checkpoint_save_id: null }
+    ),
+};
+
+/** --- Engine pilot (phase 2) — docs/INTEGRATION_PLAN.md §5/§7 --------------
+ *  Flag-gated server-side: with ENGINE_MODE off every `/engine/*` path answers
+ *  404, so a flag-off backend fails here rather than anywhere else.
+ *  Runtime-key rule (§4): the BYOK key is read from THIS browser per request
+ *  and travels only in the X-Provider-Key header — never in a body, a stored
+ *  row, or a log line. */
+
+export interface EngineCampaign {
+  id: string;
+  name: string;
+  world: string;
+  last_turn_at: string | null;
+}
+
+export interface EngineConnection {
+  provider: string | null;
+  base_url: string;
+  model: string;
+  timeout_s: number;
+  updated_at: string | null;
+}
+
+/** Non-secret prefs only: there is no key field, by design (§4). */
+export interface EngineConnectionPayload {
+  provider?: "stub" | "openai-compatible";
+  base_url?: string;
+  model?: string;
+  timeout_s?: number;
+}
+
+export interface EngineProbe {
+  reachable: boolean;
+  native_tools: boolean;
+  detail: string;
+}
+
+/** What the pilot calls answer: the payload, or the failure with its code. */
+export type EngineResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; code?: string; status?: number };
+
+async function engineFetch<T>(
+  path: string,
+  init: RequestInit & { providerKey?: string | null } = {},
+  timeoutMs = 12000
+): Promise<EngineResult<T>> {
+  if (!getToken()) {
+    return { ok: false, error: engineErrorText(null, 401), code: "unauthorized", status: 401 };
+  }
+  const { providerKey, ...rest } = init;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...rest,
+      signal: ctl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        // The key rides this one request, and only when one is set.
+        ...providerKeyHeader(providerKey),
+        ...(rest.headers ?? {}),
+      },
+    });
+    const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+    if (!res.ok) {
+      const detail = typeof body?.detail === "string" ? body.detail : "";
+      return {
+        ok: false,
+        error: engineErrorText(detail, res.status),
+        code: detail || undefined,
+        status: res.status,
+      };
+    }
+    return { ok: true, data: body as T };
+  } catch {
+    return {
+      ok: false,
+      error: "The chronicler did not answer — check that the backend is awake and reachable.",
+      code: "unreachable",
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export const engineApi = {
+  listCampaigns: () => engineFetch<EngineCampaign[]>("/engine/campaigns"),
+
+  createCampaign: (name: string) =>
+    engineFetch<EngineCampaign>("/engine/campaigns", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  /** One turn; a live provider needs the browser-held key (sent as a header). */
+  takeTurn: (campaignId: string, text: string) =>
+    engineFetch<EngineTurn>(
+      `/engine/campaigns/${encodeURIComponent(campaignId)}/turns`,
+      { method: "POST", body: JSON.stringify({ text }), providerKey: getEngineKey() },
+      150000
+    ),
+
+  state: (campaignId: string) =>
+    engineFetch<EngineState>(`/engine/campaigns/${encodeURIComponent(campaignId)}/state`),
+
+  getConnection: () => engineFetch<EngineConnection>("/engine/connection"),
+
+  /** Partial update: omitted fields keep their stored value. */
+  saveConnection: (payload: EngineConnectionPayload) =>
+    engineFetch<EngineConnection>("/engine/connection", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Canary-verify the SAVED prefs. `key` (the field's current text) wins over
+   *  the stored one so Test works before Save. */
+  probeConnection: (key?: string | null) =>
+    engineFetch<EngineProbe>(
+      "/engine/connection/check",
+      { method: "POST", body: "{}", providerKey: key ?? getEngineKey() },
+      60000
     ),
 };

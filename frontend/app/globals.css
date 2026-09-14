@@ -315,3 +315,26 @@ textarea:focus-visible, [tabindex]:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* engine pilot (/chronicle, phase 2) — verdict chips, banners, the two-column body */
+.engine-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.engine-grid > aside { min-width: 0; }
+.engine-transcript { min-width: 0; }
+@media (max-width: 900px) { .engine-grid { grid-template-columns: 1fr; } }
+.verdict-chip { font-variant: small-caps; letter-spacing: 0.04em; }
+/* the capability chip: what the last turn ran on */
+.verdict-stub { border-color: var(--parch-dim); color: var(--parch-1); }
+.verdict-live { border-color: #4c5f39; color: #b9c79a; }
+.verdict-degraded { border-color: #a5643f; color: #e0b48f; }
+/* the per-turn verdict: the engine's outcome bands */
+.verdict-crit { border-color: var(--gold); color: var(--gold-hi); background: #241c08; }
+.verdict-success { border-color: #4c5f39; color: #b9c79a; }
+.verdict-cost { border-color: #a5643f; color: #e0b48f; }
+.verdict-fail { border-color: var(--blood); color: #e09a9a; }
+.verdict-miss { border-color: var(--blood); color: #ffb3b3; box-shadow: 0 0 10px rgba(142,47,47,0.35); }
+.verdict-info { border-color: var(--parch-dim); color: var(--parch-1); }
+.engine-banner { border: 1px solid var(--parch-dim); background: #1a1409; color: var(--parch-1); border-radius: 6px; padding: 8px 12px; margin: 10px 0; }
+.engine-banner.warn { border-color: #a5643f; color: #e0b48f; }
+.engine-state .kv { grid-template-columns: auto minmax(0, 1fr); }
+.engine-state .kv dt { white-space: nowrap; }
+.engine-state .kv dd { overflow-wrap: anywhere; }
