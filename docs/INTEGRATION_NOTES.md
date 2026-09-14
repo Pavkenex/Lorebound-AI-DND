@@ -614,7 +614,7 @@ wording). Engine suite untouched.
   "Investigation check — vs DC 13 · 19 = 19 · success" (the new `rollCheck`
   shape). The `offline` gate branch is unit-covered (`lib/ai.test.ts`), not
   browser-driven.
-- Commits/push: `873fc43` (backend) + `e81ef92` (frontend) + the docs commit at
-  the tip; pushed to `origin/main`; `git log origin/main..HEAD` empty
-  afterwards. Owner redeploys manually (Coolify) — the runbook's §3 now walks
-  the story game's four states too.
+- Commits/push: `873fc43` (backend) + `e81ef92` (frontend) + `df70b1a` (docs) +
+  `496972e` (failure wording, tip); pushed `01a7431..496972e` to `origin/main`;
+  `git log origin/main..HEAD` empty afterwards. Owner redeploys manually
+  (Coolify) — the runbook's §3 now walks the story game's four states too.
