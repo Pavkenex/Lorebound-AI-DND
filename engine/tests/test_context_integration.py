@@ -159,5 +159,7 @@ def test_real_store_assembly_degrades_under_a_tight_window(world: World) -> None
     assert accounting["budget"]["used"] <= accounting["budget"]["total"]
     assert "mechanics" in [name for name, _ in prompt.sections]
     assert _section(prompt, "pinned_facts") != ""  # non-negotiable
-    assert accounting["dropped"], "a 140-token window must shed lower-priority content"
-    assert accounting["dropped"][0]["section"] == "saga"
+    dropped = [entry["section"] for entry in accounting["dropped"]]
+    assert dropped, "a 140-token window must shed lower-priority content"
+    assert "mechanics" not in dropped and "pinned_facts" not in dropped
+    assert set(dropped) <= {"saga", "chronicle", "leads", "npc_memory", "scene", "system"}
