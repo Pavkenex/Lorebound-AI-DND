@@ -10,4 +10,8 @@
 **/.venv
 **/node_modules
 **/*.egg-info
+# Next.js build output and TS build info belong to the frontend image only —
+# the backend build (repo-root context) must not ship tens of MB of them.
+**/.next
+**/*.tsbuildinfo
 backend/lorebound.db
