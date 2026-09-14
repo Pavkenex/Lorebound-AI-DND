@@ -496,3 +496,125 @@ Tests / evidence:
 - Commits/push: `719e77e` (server) + the frontend/docs commit at the tip; pushed
   to `origin/main`; `git log origin/main..HEAD` empty afterwards. Owner redeploys
   manually (Coolify) — the runbook's §3 now verifies the 400 first.
+
+---
+
+## 12. The story game: honest AI states (P12) — as-built
+
+P11 applied the owner ruling to the `/chronicle` pilot; this card applies it to
+the **main story game** (`/adventure` + Settings → Tale-spinner (AI)), which had
+its own three silent-degrade paths — all producing the reported "same answer
+forever": (a) no connection → the stub's "the room holds its breath…"
+paragraph; (b) a configured-but-failing provider → the cover line "The
+chronicler's quill falters…"; (c) the frontend's canned
+`fixtures.fallbackNarration` on any failed `/act`. All three are gone.
+
+**One truth (item 1).** `backend/app/modules/ai/settings_store.py::resolve_provider`
+is now the single resolution used by BOTH `/ai/settings` (the panel) and `/act`
+(the play path): a complete saved row → that endpoint; else the environment
+(`AI_PROVIDER=openai-compatible` + `OPENAI_COMPAT_BASE_URL`/`_MODEL`); else —
+nothing. `/ai/settings` reports it as `connected` + `active_provider` /
+`active_source` (`settings|env|default`) / `active_model` / `active_base_url` /
+`active_reason` (`unset|stub|incomplete|misconfigured|unsupported`), and the
+legacy `stub` value is normalized to not-connected in every read. `stub` is no
+longer a saveable provider: `PUT /ai/settings` rejects it through the
+`unsupported_provider` shape (validated in the handler, not a `Literal`, so the
+offered set stays data-driven). `env_provider_name()` reports `""` for the
+retired `stub` (the deploy config's default) so the panel never re-introduces
+stub copy. `active_provider` is intentionally `""` when nothing is connected —
+`providerConnected("")` is false, so the pilot's `playGate` keeps working
+unchanged.
+
+**No silent degrade on the player path (item 2).** `Engine._beat_pipeline`
+raises `ActFailure` instead of narrating cover prose: an unconnected turn
+answers `400 {"detail":"connect_your_ai"}` (the P11 shape) and a provider
+failure answers
+`502 {"detail":{"code":"provider_failed","message":"<scrubbed>","retryable":true}}`
+(`turn_failed` for anything else — both carry the machinery's words, scrubbed of
+key-shaped material by `_scrub_provider_error`, capped at 200 chars). `/act`
+does not checkpoint/persist a failed turn, so nothing is applied and a retry of
+the same action+key is a normal replay. `_beat_pipeline` resolves the provider
+through the same `resolve_provider` and passes it explicitly — the legacy stub
+survives only as `providers.StubProvider` for test plumbing (`tests/conftest.py`
+fixture `stub_play_provider`, opt-in per module) and env fallback for tests
+(`AI_PROVIDER=stub` ⇒ the stub, unreachable from a player surface).
+`/actions/submit` (the unauthenticated legacy surface) resolves the environment
+provider and refuses the same 400 when there is none.
+
+**Frontend (item 3).** Settings: the built-in-storyteller PLAY mode is gone —
+the card always saves `openai-compatible`, states "Right now: your endpoint
+(model) — from your settings" (or exactly why nothing is connected), keeps Save
+(blank key keeps the stored one) + Test connection + Remove stored key, and says
+plainly that a saved-but-incomplete endpoint reads as not connected.
+`/adventure`: fetches `/ai/settings` and gates the act row with ONE notice
+(`data-gate`: `connect|demo|offline`) — "✋ Connect your AI to play — the
+chronicle narrates with your model." plus the reason and a link into Settings;
+the signed-out sample pages are labelled `demo` ("Sample tale — a demo, not your
+own"), the backend-unreachable case is `offline` (Retry reloads), and a
+connected account shows "✎ Narrated by your endpoint (model)"
+(`[data-ai="connected"]`). `lib/api.ts`'s `submitAction`/`rollCheck` return
+`ActOutcome` (no fixture branch — `fixtures.fallbackNarration` is deleted), and
+failures render `actFailureText()` verbatim in the shared `ErrorBanner` with
+"Retry narration", which resends the SAME words with the SAME idempotency key
+(`newActionKey()`), keeping the input otherwise. The Tutorial overlay is
+curated UI instruction (act/dice/journal) and makes no claims about the world —
+nothing there pretends to be narration.
+
+**Tests (item 4).** Backend: `tests/test_ai_settings_api.py` rewritten —
+unconfigured/legacy-stub/incomplete/misconfigured reads, doc==runtime agreement
+(`_assert_doc_matches_runtime`) across six states, `PUT stub` rejected, refusal
+on both a free-text and an authored beat with the state snapshot unchanged,
+`502 provider_failed` machine-readable + retry-safe (same key lands after the
+recovery), `/actions/submit` refusal, and `_scrub_provider_error` unit legs;
+plus the `stub_play_provider` opt-in in 17 `/act` HTTP modules.
+Frontend: `lib/ai.test.ts` (12 tests: gate, reasons, connection line, failure
+wording). Engine suite untouched.
+
+### P12 finalize block (filled during the card)
+
+- Backend: `pytest tests` (backend venv, `-o addopts=""`) → **536 passed**, 33.6s;
+  `ruff check app tests` → All checks passed. Engine package UNTOUCHED (the diff
+  touches `backend/`, `frontend/`, `docs/` only): engine suite **799 passed**;
+  `python -m evals --suite all` → `RESULT: OK`.
+- Frontend: `npm test` → **85 pass** (`lib/ai.test.ts` adds 12), `npm run
+  typecheck` clean, `npm run build` clean **flag-off** and **flag-on**
+  (`NEXT_PUBLIC_ENGINE_MODE=1`, the shape the deployed service builds).
+- Live over-HTTP e2e (real `uvicorn` from this tree, scratch app DB, local fake
+  OpenAI-compatible endpoint; driver `/opt/data/scratch/p12/p12_live_e2e.py`,
+  transcript `/opt/data/scratch/p12/p12_live_e2e.txt`, md5 5635a0df…):
+  **23/23 legs passed** — unconnected `/act` refused on both a free-text and an
+  authored beat with the state snapshot byte-identical afterwards → `PUT
+  provider=stub` → 400 `provider 'stub' is not available; supported:
+  openai-compatible` → legacy `stub` row seeded directly → GET reads
+  `connected:false`, `active_reason:"stub"` and the turn still refuses →
+  connect (`openai-compatible` + fake base) → doc `active_model:"p12-fake"` →
+  the turn narrates the MODEL's prose → fake answers 500 → **502
+  `provider_failed`**, scrubbed message, nothing persisted, no cover prose, no
+  key in the body → same action + same key after the heal → **200** → `GET
+  /ai/settings` `has_key:true` and never echoes the key → `/actions/submit`
+  without an env provider → 400 `connect_your_ai` → key hygiene (key reached
+  the provider via `Authorization`, absent from the server log; the account's
+  own key IS stored server-side by design — that is the player's credential for
+  their endpoint, write-only).
+- Browser probe (Next dev :3001 + backend :8015 + fake :8023, scratch account;
+  DOM asserts + screenshots in `/opt/data/kanban-evidence/`, md5s in the card):
+  `p12-ui-1-settings-not-connected.png` — "Right now: nothing connected — no
+  endpoint is saved yet.", Save disabled, no storyteller option anywhere;
+  `p12-ui-2-adventure-gated.png` — `data-gate="connect"` notice + reason + link,
+  act input disabled; `p12-ui-3-demo-signed-out.png` — signed out reads
+  `data-gate="demo"` ("Sample tale — a demo, not your own"); `p12-ui-4` — Save
+  in Settings → "Right now: your endpoint (p12-fake) — from your settings.";
+  `p12-ui-5-adventure-played.png` — gate gone, "✎ Narrated by your endpoint
+  (p12-fake)", the fake's prose as narration; `p12-ui-6-provider-failure.png` —
+  the 500 rendered verbatim in the shared banner + "Kept: “I settle my pack on
+  my shoulders.”" + Retry; `p12-ui-7-retry-landed.png` — Retry (same key)
+  landed the narration, banner gone; `p12-ui-8/9` — Test connection verdicts
+  (answered in 1 ms / "OpenAI-compatible request failed: HTTP Error 500");
+  `p12-ui-10/11` — a called Investigation check: "The die waits…" → thrown →
+  "Investigation check — vs DC 13 · 19 = 19 · success" (the new `rollCheck`
+  shape). The `offline` gate branch is unit-covered (`lib/ai.test.ts`), not
+  browser-driven.
+- Commits/push: `873fc43` (backend) + `e81ef92` (frontend) + the docs commit at
+  the tip; pushed to `origin/main`; `git log origin/main..HEAD` empty
+  afterwards. Owner redeploys manually (Coolify) — the runbook's §3 now walks
+  the story game's four states too.

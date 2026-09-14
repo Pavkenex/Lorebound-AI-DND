@@ -128,6 +128,34 @@ after you connect a model in the pilot UI. Replace `<host>` with the live host
   play" notice until a model is saved there (P11). Paste a real provider key only when
   you are ready for the P7 live-BYOK check (see `docs/INTEGRATION_NOTES.md` §"known
   gaps").
+- [ ] **Story game, unconnected** (P12 — `/adventure` and Settings → Tale-spinner
+  (AI) follow the same ruling as the pilot). Fresh account: the act row is
+  disabled under "✋ Connect your AI to play — the chronicle narrates with your
+  model.", and the same request server-side answers the refusal:
+  ```bash
+  curl -s -X POST http://<host>:8001/act \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"text":"I take stock of the road."}'
+  # 400 {"detail":"connect_your_ai"}
+  ```
+- [ ] **Story game, connected** — save an endpoint in Settings → Tale-spinner
+  (AI) ("Right now: your endpoint (model) — from your settings", then the
+  "✎ Narrated by …" line on `/adventure`); an action narrates normally.
+- [ ] **Story game, failing model** — point the endpoint at a bad key/URL (or
+  stop the provider) and act again: the page shows the shared error banner with
+  the model's own words and a **Retry narration** button, nothing is applied,
+  and Retry (same words, same idempotency key) lands once the endpoint heals.
+  Server-side shape:
+  ```bash
+  # 502 {"detail":{"code":"provider_failed","message":"…","retryable":true}}
+  ```
+- [ ] **Panel == play path** — `GET /ai/settings` names exactly what `/act`
+  uses: `{"connected":true,"active_provider":"openai-compatible",
+  "active_source":"settings","active_model":"…"}` (or `"connected":false` with
+  `active_reason` `unset|stub|incomplete|misconfigured`). A legacy `"stub"` row
+  reads as `connected:false`, and the story game refuses with
+  `connect_your_ai` until a real endpoint is saved.
+
 
 ## 4. Rollback
 
