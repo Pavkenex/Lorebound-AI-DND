@@ -77,3 +77,4 @@ include_optional("app.content.router")  # Stream G: read-only content screens
 include_optional("app.modules.campaign.saves_api")  # save slots (list/create/fetch)
 include_optional("app.modules.campaign.api")  # campaign lifecycle (create/list)
 include_optional("app.modules.play.router")  # live play: /act, /state, screens
+include_optional("app.modules.engine.router")  # phase 2: /engine pilot (flag-gated)
