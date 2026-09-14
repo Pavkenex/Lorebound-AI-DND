@@ -52,6 +52,14 @@ class PromptContext(BaseModel):
     saga: str = ""
     recent_events: list[dict[str, Any]] = Field(default_factory=list)
     player_action: str = ""
+    #: The beat this turn resolved (P14): its machine id, the code-owned facts
+    #: its prose must convey, and who speaks in it. Empty on the free-text
+    #: pipeline, which has no pre-established outcome — there the *world* is
+    #: the promise and the [Mechanical result] is the verdict.
+    beat_event: str = ""
+    beat_facts: list[str] = Field(default_factory=list)
+    beat_speakers: list[str] = Field(default_factory=list)
+    beat_direction: str = ""
     mechanical_result: dict[str, Any] = Field(default_factory=dict)
     output_schema: str = (
         "Return ONLY the JSON object NarratorOutput: {narration, npc_dialogue[], "
@@ -124,6 +132,27 @@ def assemble_prompt(
     npc_block = "\n".join(_npc_entry(n) for n in npcs) or "- (none present)"
     fact_block = "\n".join(f"- {f}" for f in facts) or "- (no established facts)"
     lead_block = "\n".join(f"- {l.get('title', '?')}: {l.get('status', '')}" for l in ctx.leads) or "- (no active leads)"
+    # The beat block (P14): the engine resolved this turn into a known outcome
+    # before any prose existed. The facts are code-owned — the prose must carry
+    # every one of them, in the model's own words, and invent nothing else.
+    beat_block = ""
+    if ctx.beat_event or ctx.beat_facts:
+        lines = [f"event: {ctx.beat_event}"] if ctx.beat_event else []
+        if ctx.beat_facts:
+            lines.append(
+                "established by the engine — write this beat so that every one of "
+                "these facts is conveyed, in your own words and fully; invent "
+                "nothing beyond them:"
+            )
+            lines += [f"- {f}" for f in ctx.beat_facts]
+        if ctx.beat_speakers:
+            lines.append(
+                "speakers (voice them in their own character; each spoken line "
+                "renders exactly once): " + ", ".join(ctx.beat_speakers)
+            )
+        if ctx.beat_direction:
+            lines.append(f"direction: {ctx.beat_direction}")
+        beat_block = "[Beat]\n" + "\n".join(lines) + "\n\n"
     chronicle_block = ("\n".join(_chronicle_entry(e) for e in chronicle)
                        or "- (the chronicle opens here)")
     saga_block = " ".join(str(ctx.saga or "").split()) or "- (the saga opens here)"
@@ -147,6 +176,7 @@ def assemble_prompt(
         f"[Recent chronicle (retrieved, newest last)]\n{chronicle_block}\n\n"
         f"[Recent events (retrieved, newest last)]\n{event_block}\n\n"
         f"[Player action]\n{ctx.player_action}\n\n"
+        f"{beat_block}"
         f"[Mechanical result]\n{ctx.mechanical_result}\n\n"
         f"[Length]\n{ctx.length}: "
         + {"Concise": "40-80 words.", "Standard": "100-250 words.",

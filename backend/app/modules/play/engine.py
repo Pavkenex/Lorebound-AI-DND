@@ -1,12 +1,13 @@
 """Live act engine: player text -> engine-resolved beat -> narration + effects.
 
 Invariants (GDD): the model is never the database; player text is an attempt
-only. Beats below are engine-authored (slice content); anything unrecognised
-falls through to the 10-step Pipeline (interpreter -> checks -> narrator) where
-the stub provider keeps the game playable with zero models.
-
-The engine owns: state transitions, d20 checks (rules engine), feed events,
-lead/clue progression, Marla's memory. The provider only writes prose.
+only. The engine owns every beat's *facts* — state transitions, d20 checks
+(rules engine), feed events, lead/clue progression, Marla's memory — and the
+narrator writes every word of story from them (P14, owner ruling: no scripted
+answers anywhere). Anything unrecognised falls through to the 10-step Pipeline
+(interpreter -> checks -> narrator). Without a connected model nothing is
+narrated at all: the turn fails machine-readably (P12) rather than in cover
+prose.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ from app.modules.ai.metering import MeterRegistry
 from app.modules.ai.providers import Provider, ProviderError
 from app.modules.memory.npc_memory import display_name, named_npc, npc_slug
 from app.modules.narrator.prefs import ContentPrefs
+from app.modules.narrator.prompts import PromptContext
+from app.modules.narrator.service import narrate
 from app.modules.npc.mood import DEFAULT_MOOD, surfaced_mood
 from app.modules.npc.personality import (
     Price,
@@ -34,7 +37,7 @@ from app.modules.npc.personality import (
     social_adjustment,
 )
 from app.modules.play.session import PlaySession
-from app.modules.play.state import CLUES, OPENING_BEAT, SOLUTIONS
+from app.modules.play.state import CLUES, SOLUTIONS
 from app.modules.play.view import location_name, npc_names, npcs_present
 from app.modules.progression.xp import play_skill_xp
 from app.modules.rules.checks import (
@@ -82,546 +85,52 @@ NARRATOR_CHRONICLE_LIMIT = 8
 SUCCESS_OUTCOMES = {Outcome.Success, Outcome.SuccessWithCost, Outcome.Exceptional}
 
 # ---------------------------------------------------------------------------
-# Authored beat prose (engine-owned; <= 600 chars each, playtest discipline)
+# Beat narration (P14): every word the player reads as story is the model's
+#
+# The engine owns the state machine, the dice, and the facts. A beat hands the
+# narrator a BeatBrief — its machine id, the facts its prose must convey, who
+# speaks, and any staging the moment needs — and the narrator writes the prose
+# and the dialogue from it. Nothing pre-written may stand as narration or
+# dialogue (owner ruling, 2026-09-14): no authored beat text, no rotating
+# variants, no greeting builders, no diminishing lines. Interface strings —
+# dice voice, button and scene labels, short action echoes — stay code.
 # ---------------------------------------------------------------------------
 
-TALK_FIRST = (
-    "You lean on the bar and ask about the road. Marla wipes the same cup twice "
-    "before she answers — a habit of hers when a thing is worth saying, and the "
-    "rain keeps drumming the shutters while she weighs you."
-)
-TALK_LINE_FIRST = (
-    "Two guests bound for the monastery walked into that rain three nights back "
-    "and never came down again. The watch says travelers wander off. I say "
-    "travelers don't leave their packs."
-)
-TALK_ACCEPT_NARRATION = (
-    "Marla studies you a moment longer, then sets the cup down with a decision. "
-    "The inn goes quiet around the two of you, in the way rooms do when a promise "
-    "is about to be made."
-)
-TALK_ACCEPT_LINE = (
-    "Find out what happened to them. Bring me word — or better. Keep your tab "
-    "open here and I'll keep your lamp lit, Aric's luck to you."
-)
-TALK_INVITE_LINE = (
-    "And — the rain is keeping the room cold. If you want the rest of it away "
-    "from the bar, you may come up when I bank the fire. The stair is mine; "
-    "tonight I am choosing to lend it."
-)
-TALK_REPEAT = (
-    "Marla gives you the same hard look and the same thin patience: the road is "
-    "still swallowing travelers, and every night she counts her beds twice. She "
-    "nods at the ledger under the bar — whatever you need to know, it will "
-    "answer to paper sooner than to words."
-)
-TALK_REPEAT_AGAIN = (
-    "Marla does not bother with the cup this time. \"The road has not changed "
-    "since you last asked,\" she says, and the tired look she gives you is not "
-    "unkind. Her knuckles tap the counter above the ledger — the same answer, "
-    "offered in fewer words."
-)
-TALK_REPEAT_VARIANTS = (TALK_REPEAT, TALK_REPEAT_AGAIN)
-TALK_INVESTIGATING = (
-    "Marla tops the cup without being asked. \"Word travels ahead of you,\" she "
-    "says. \"Half the market has seen you asking after carts and lanterns.\" She "
-    "does not ask you to stop — which, from Marla, is closer to a request to "
-    "finish."
-)
-TALK_SOLVED = (
-    "Marla meets your eye across the room and for once the cup stays still. She "
-    "pours two — one for you, one set opposite, for the tale that freed her "
-    "ledger of ghosts. The inn will hear it all by morning."
+#: The beat-narration contract. Suggestions are the beat's own
+#: (``possible_moves``): the model is not asked to invent buttons for a beat
+#: the engine has already resolved.
+BEAT_SCHEMA = (
+    'Return ONLY the JSON object {"narration": "…", "npc_dialogue": '
+    '[{"npc": "Name", "line": "…"}]} — raw JSON, no code fences, no '
+    'commentary before or after. Write this beat of the tale in the '
+    "narrator's voice, in your own words: convey every established fact "
+    "above, phrased naturally — do not quote this brief — voice the speakers "
+    "listed, and invent nothing beyond the facts. npc_dialogue is empty when "
+    "nobody speaks. Every spoken line must appear exactly once: either woven "
+    "into the narration as a quote or listed in npc_dialogue, never both."
 )
 
-BOARD_FIRST = (
-    "The newest parchment on the notice board is a plea in three hands: two "
-    "travelers bound for the Old Monastery are missing on the Northern Road. "
-    "Someone has underscored the word 'again'. The rain has got at the edges, "
-    "but the names are clear enough."
-)
-BOARD_REPEAT = (
-    "The plea still hangs there, rain-curled at the corners — two names, one "
-    "road, no answers. Somebody has since pinned a charcoal sketch of the "
-    "missing wagon below it."
-)
-BOARD_REPEAT_AGAIN = (
-    "The plea is where you left it: two names, one road, and the charcoal wagon "
-    "sketch nobody has thought to take down. The rain has turned its corners "
-    "soft, and the names have not changed at all."
-)
-BOARD_REPEAT_VARIANTS = (BOARD_REPEAT, BOARD_REPEAT_AGAIN)
 
-LEDGER_NARRATION = (
-    "Behind the bar the guest ledger lies open where Marla left it — she counts "
-    "her stock nightly, and tonight it has been counted twice. You turn the "
-    "pages before the damp can."
-)
-LEDGER_NARRATION_AGAIN = (
-    "The ledger waits under the bar where it always waits, damp at the edges "
-    "and patient as a creditor. You turn back to the pages you have already "
-    "bothered once — the damp has not moved, and neither have the names."
-)
-LEDGER_NARRATION_VARIANTS = (LEDGER_NARRATION, LEDGER_NARRATION_AGAIN)
+@dataclass(frozen=True)
+class BeatBrief:
+    """One beat's narration request: the engine's facts, the model's words."""
 
-#: The room's own once-over: a second look gets its own account (P13).
-INSPECT_VARIANTS = (
-    (
-        "You give {seen} the traveler's once-over — useful habits, nothing "
-        "the room is ready to surrender yet. The rain keeps its own counsel "
-        "outside; inside, only the fire and Marla's patience move."
-    ),
-    (
-        "You take {seen} in again with the eye you brought in from the road: "
-        "same wear, same dust, same patience. If the room is holding anything "
-        "back, it is holding it well."
-    ),
-    (
-        "A second accounting of {seen} pays out what the first one did — the "
-        "room stands as it stood, and no readier to explain itself."
-    ),
-)
+    event: str
+    facts: tuple[str, ...] = ()
+    speakers: tuple[str, ...] = ()
+    direction: str = ""
+    length: str = "Concise"
 
-#: The cellar door, told in stages and twice over (P13): the same stage
-#: read twice must not be the same paragraph twice.
-CELLAR_FREED = (
-    "The cellar door stands open now, hooked back against the wall. Cold "
-    "air climbs the steps from the inn's deep stores — barrels, salt, and "
-    "the shape of the story that used to live down here."
-)
-CELLAR_FREED_AGAIN = (
-    "The cellar mouth is still open, and the inn keeps its patience about "
-    "it: barrels, salt, and the cold coming up the steps like a debt "
-    "already paid. Nobody down there is waiting on you anymore."
-)
-CELLAR_BARRED = (
-    "The cellar door is barred as always — but the bar has been lifted "
-    "recently: the dust on its bracket is disturbed, and a thin woman's "
-    "scarf is caught on the latch. Behind the inn's own stores, the "
-    "passage keeps going down. You would not want to be found opening "
-    "this without a reason Marla would accept."
-)
-CELLAR_BARRED_AGAIN = (
-    "Barred — and not as well as it pretends: the dust on the bracket "
-    "sits wrong, and a woman's scarf, thin and grey and not Marla's, is "
-    "caught in the latch. The passage behind the inn's stores does not "
-    "stop at the stores. Whatever reason you bring Marla, bring a good one."
-)
-CELLAR_SHUT = (
-    "The cellar door is shut fast, barred and padlocked, the way it has "
-    "been since you were a child small enough to be scared of it. One "
-    "step past the stores, and the Lantern becomes a warren. That is "
-    "what the old gripes say, anyway."
-)
-CELLAR_SHUT_AGAIN = (
-    "Shut, barred, padlocked — the cellar door has kept its counsel "
-    "since you were small enough to be frightened of it. Past the inn's "
-    "stores the warren begins, or so the old gripes claim; the door "
-    "itself has never once confirmed it."
-)
-CELLAR_FREED_VARIANTS = (CELLAR_FREED, CELLAR_FREED_AGAIN)
-CELLAR_BARRED_VARIANTS = (CELLAR_BARRED, CELLAR_BARRED_AGAIN)
-CELLAR_SHUT_VARIANTS = (CELLAR_SHUT, CELLAR_SHUT_AGAIN)
-LEDGER_SUCCESS = (
-    "There: two signatures for the Old Monastery road, three nights apart — and "
-    "no line drawn through either. They never signed out. In the margin, one "
-    "small hand has pencilled the same word twice: 'again'."
-)
-LEDGER_FAIL = (
-    "The damp has won the last few pages — the ink runs together into dark "
-    "smears. You can make out boots, a guild mark, nothing certain. Come at it "
-    "fresh before Marla notices where you're reading."
-)
 
-STRONGBOX_SUCCESS = (
-    "The storeroom latch gives with a practiced nudge. Inside the strongbox: a "
-    "pouch of guilders, heavier than an innkeeper's till has any right to be in "
-    "one night. Marla will count her stock tonight — she always does — but the "
-    "road eats coin as fast as it eats travelers."
-)
-STRONGBOX_COST = (
-    "You have the pouch when a floorboard speaks under your heel — one loud "
-    "note in the rain-soft house. Marla says nothing as you ease the door shut, "
-    "but something in the way she doesn't look up says the ledger will remember "
-    "this even if the watch can't prove it."
-)
-STRONGBOX_FAIL = (
-    "The latch holds fast to its frame, and the second try costs you a scrape "
-    "across the knuckles. You gather yourself in the dark storeroom and decide "
-    "the strongbox can wait for better trade."
-)
-STRONGBOX_CAUGHT = (
-    "The strongbox isn't locked — it's a decoy, and decoys ring. The little bell "
-    "inside jumps once and Marla is in the doorway before your hand clears the "
-    "lid. She looks at you the way a ledger looks at a debt, and says nothing "
-    "at all. That silence will cost more than any fine."
-)
-
-FIGHT_WIN = (
-    "Borin swings first, the way he always does, and that is the last choice "
-    "the fight lets him make. Tankards scatter, the fire hisses, and you put "
-    "him down flat beside the hearth. Marla hauls him none too gently to the "
-    "porch and remembers — in writing and otherwise — exactly who started it "
-    "and who finished it."
-)
-FIGHT_COST = (
-    "You win, but it is a close, ugly thing: a chair dies, a ridge of the "
-    "hearth rakes your ribs, and Borin goes down wearing his own apology in a "
-    "split lip. Marla's look could stop the rain; the porch claims him for the "
-    "night."
-)
-FIGHT_LOSE = (
-    "Borin has the strength of ten drunk men and the reach of none of them — "
-    "but tonight is not your night. He gets inside your arm, the room tilts, "
-    "and Marla's voice cuts the brawl apart before it becomes a hanging matter. "
-    "You come up with a split brow and an education."
-)
-FIGHT_CRIT = (
-    "He catches you flush with the flat of a tankard and the floor introduces "
-    "itself. Marla breaks it apart with a cudgel from under the bar and a voice "
-    "you have never heard her use. You wake on the settle with your ribs in "
-    "bandages and Borin snoring on the porch — and every soul in the inn now "
-    "knows your business."
-)
-
-LEAVE_NARRATION = (
-    "You shoulder your cloak, and the door lets in the whole wet breath of the "
-    "night at once. Behind you the Lantern's light shrinks to a coin, to a "
-    "needle, and the Northern Road takes you the way it takes every traveler — "
-    "promising nothing but the walking."
-)
-RETURN_NARRATION = (
-    "The Lantern Inn gathers you back with its firelight and the smell of wet "
-    "peat. The door finds its latch, the rain settles back to a drum, and Marla "
-    "looks up from the bar in the small silence that always follows an arrival."
-)
-REST_NARRATION = (
-    "You take the room Marla pretends not to save for lamplighters, bar the "
-    "door, and let the rain do the arguing for once. Sleep comes the way it "
-    "does when a road is waiting: shallow, quick, and already half-dreaming "
-    "about the morning."
-)
-MARKET_NARRATION = (
-    "The market is a bad morning in a good coat: canvas snapping, gutters "
-    "roaring, and guild silver changing hands where the stalls stay dry. A "
-    "factor in grey gloves watches the price of silver climb, and does not "
-    "bother to look away when you catch her at it."
-)
-MONASTERY_NARRATION = (
-    "The Old Monastery stands above the treeline like a promise someone broke "
-    "a long time ago. Rain floods the cart ruts on the path; the bells are "
-    "silent in the towers but a lantern burns low at the porter's door."
-)
-
-# --- investigation, solutions, resolution (the arc) ------------------------
-
-TRACKS_SUCCESS = (
-    "You kneel where the mud still holds its shape. Two wheel-ruts leave the "
-    "monastery road at the lightning-bent oak — and they cut away toward the "
-    "deep forest, where no map of Ravenford admits a road at all. Guild-narrow "
-    "wheels, double-laden by the look of the rills: whatever came back "
-    "driverless, something heavier followed it in."
-)
-TRACKS_FAIL = (
-    "The rain has combed the last day's ruts to soup. Carts came and went — "
-    "that much the mud will swear to — but which way the last one turned, it "
-    "keeps to itself. Come at it fresh; the weather will hold long enough."
-)
-TRACKS_HINT = (
-    "The ruts are knee-deep and dumb. Without a story to follow they are only "
-    "mud — ask under the Lantern's roof what everyone else is trying not to "
-    "notice, and the road will start to make sense."
-)
-LANTERNS_SUCCESS = (
-    "You fold into the hollow of the woodline and wait the way a lamplighter's "
-    "daughter waits. Near the second bell, lights come swinging down through "
-    "the trees — three lanterns, one route, carried low and slow with weight. "
-    "They pass near enough to smell of tallow and wet wool, and they take the "
-    "wide path east where the ridge folds: the mouth of the old supply tunnel."
-)
-LANTERNS_FAIL = (
-    "You wait through one bell and two, until the cold owns the hollow and the "
-    "rain finds a way past your collar. Lanterns or fireflies, the trees keep "
-    "their business to themselves tonight."
-)
-LANTERNS_HINT = (
-    "The tree line is only dark, and dark is not yet evidence. Learn first "
-    "what the road has been swallowing, then watch what the night carries — "
-    "the two will start to rhyme."
-)
-SELLA_PERSUADE_SUCCESS = (
-    "Sella listens with the weariness of a woman who has heard every plea ever "
-    "made across that stall — and it is not the plea that lands. It is Marla's "
-    "name. She closes the ledger and looks up the road a long moment. \"The "
-    "guild rents the old monastery cellar — the one the order calls sealed. If "
-    "your two went up that road, they are under the hill. Go before the bells "
-    "ring again, and you never heard it here.\""
-)
-SELLA_PERSUADE_FAIL = (
-    "\"Guild business, love,\" she says, not unkindly, and slides the ledger "
-    "out from under your eyes. The kindness is real; so is the ledger."
-)
-SELLA_INTIMIDATE_SUCCESS = (
-    "Something in your stillness reaches her after all. Sella's own stillness "
-    "breaks first — she turns a page she is not reading. \"The cellar under "
-    "the monastery. The old one. Guild rent, guild carriers — and your "
-    "travelers still breathing, because the guild wants the road worried "
-    "about, not closed. That is all you get.\""
-)
-SELLA_INTIMIDATE_FAIL = (
-    "You are three words into the hard voice when two grey-gloved men find "
-    "reasons to stand behind her shoulders. Sella smiles the whole way. "
-    "Nothing is said that a magistrate could use."
-)
-AMBUSH_WIN = (
-    "They come up the road late with hooded lanterns and a hand-cart — Fenn "
-    "in front, a caravan guard twice your width behind. The fight is short and "
-    "muddy and ends with the guard sitting in the ditch reconsidering his "
-    "career. Fenn talks, because Fenn always talks: a cellar under the old "
-    "monastery, guild rent, and two travelers kept alive because a closed road "
-    "earns the guild more than an empty one. The tunnel mouth, he says, is "
-    "east where the ridge folds."
-)
-AMBUSH_LOSE = (
-    "The road is bad at this hour and worse at ambushes; you learn that with "
-    "your ribs. You wake at the Lantern Inn with linen bound tight and a "
-    "headache in your teeth. Marla says nothing about it, which is the loudest "
-    "thing she has ever said to you. The road keeps its carriers — for now."
-)
-CONFRONT_READY = (
-    "The tunnel mouth breathes cold and lamp oil. You go in low along the "
-    "wall, past stacked silver that nobody in Ravenford will ever admit to — "
-    "and there they are: the two travelers, rope-burned and hollow-eyed and "
-    "alive. You cut them loose before the bells ring again, and the hill lets "
-    "all three of you out into the rain."
-)
-EPILOGUE = (
-    "By dawn it is over Ravenford: the guild's sealed cellar, the rent ledger, "
-    "the two names the notice board had begun to forget. Sergeant Dain takes "
-    "Fenn's statement twice. Marla sets two extra cups on the bar and does not "
-    "charge for them. The travelers walk the north road with the rain finally "
-    "behind them — and the chronicle closes this chapter grieving for nothing."
-)
-CONFRONT_HINT = (
-    "You stand at the monastery's undercroft door and feel the cold through "
-    "your boots. Something below is worth the guild's money and the order's "
-    "silence — but you hold threads, not a way in. Someone knows it: a factor "
-    "with a ledger, a mercenary with a grudge, or the road itself. Finish one "
-    "of those threads first."
-)
-BORIN_TALK_NARRATION = (
-    "Borin does not look up from his cup, but for Borin the not-looking is "
-    "practically confidence — the way of a man deciding how much of a secret "
-    "he can afford to be careless with."
-)
-BORIN_TALK_LINE = (
-    "Carts. Turn north of the oak, nights, since Midwinter. Ask the woman with "
-    "the scales why the guild pays over rate for silver — then ask her where "
-    "the carts come back from. You did not hear it here."
-)
-FLIRT_NARRATION = (
-    "You lean in with a slow, unhurried smile and let it sit there — no hurry, "
-    "no hiding the ask. {name} holds your look a moment longer than politeness "
-    "runs, and gives you nothing back but the room going quiet around the two "
-    "of you."
-)
-FLIRT_EMPTY = (
-    "There is no one here to catch your eye — the road keeps its own company "
-    "tonight, and charm needs a witness."
-)
-CONFRONT_QUIET = (
-    "The undercroft is quiet now — a cold stair, a smell of lamp oil and rain. "
-    "Whatever the guild kept down here, the light and the law have both found "
-    "it. You do not need to go down again."
-)
-
-# --- leverage: a need, named in coin (systems slice 4, §6) ------------------
-
-OFFER_EMPTY = (
-    "You weigh the coin in your palm, but there is no one here to take it — a "
-    "price needs a person, and the road keeps its own company tonight."
-)
-OFFER_NO_PRICE = (
-    "{name} does not even look at your hand. Coin is not what {name} wants, and "
-    "both of you can hear the offer land wrong — the ask has to be made in the "
-    "only currency {name} trades in."
-)
-OFFER_SHORT = (
-    "You count the purse twice: {purse} guilders against a price of {cost}. "
-    "{name} watches the arithmetic cross your face and lets it fail — ask it the "
-    "hard way, then."
-)
-OFFER_PAID_SELLA = (
-    "Sella does not touch the coin. She notes it, the way a factor notes "
-    "everything, and the number goes into a column with your name at the top of "
-    "it. \"The guild rents the old monastery cellar — the one the order calls "
-    "sealed,\" she says, and closes the ledger on the sentence. \"Your travelers "
-    "are under that hill. You have not bought this from me; you have bought the "
-    "guild's silence about my having said it.\""
-)
-OFFER_PAID_BORIN = (
-    "Borin takes the coin without counting it and grins at nothing in particular. "
-    "\"Carts,\" he says. \"North of the oak. Nights. Since Midwinter. You paid for "
-    "what I would have told you for the asking, friend — but I will drink to the "
-    "difference.\""
-)
-OFFER_PAID_TOMM = (
-    "Tomm's hand closes on the coin before his conscience can comment. \"The "
-    "guild's men buy silver over rate,\" he says, fast and low. \"And the carts "
-    "that carry it turn north of the oak — nights, since Midwinter. I never told "
-    "you that.\""
-)
-OFFER_PAID: dict[str, str] = {
-    "sella": OFFER_PAID_SELLA,
-    "borin": OFFER_PAID_BORIN,
-    "tomm": OFFER_PAID_TOMM,
+#: The lead's live state, as facts for the prompt's [Active leads] block (§1).
+LEAD_NOTES: dict[str, str] = {
+    "rumored": "the two travelers vanished on the Northern Road; nothing else is known yet",
+    "accepted": "the player promised Marla to find out what happened to them",
+    "investigating": "the player is following the threads toward the monastery",
+    "solved": "the travelers are home safe; the chapter is closed",
 }
-#: Fallback for a price the roster does not author prose for.
-OFFER_PAID_ANY = (
-    "{name} takes the coin and pays out exactly what coin buys — a word, and "
-    "not a kind one."
-)
-OFFER_WON = (
-    "{name} studies you a moment longer than the offer deserved, and gives the "
-    "thing you could not buy anyway — a word out of the column, told the way "
-    "favors are told."
-)
-
-# --- scene flow: micro-scenes, transitions, the anti-loop guard (§7) --------
-
-UPSTAIRS_OPENING = (
-    "The stairs climb narrow and steep, and the inn's noise falls away behind "
-    "you like a coat left on the rail. Marla's room is low-browed and warm: a "
-    "chair turned to a small fire, a window holding the whole wet street, and "
-    "a bed with the same neat corners she keeps in her ledger. She does not "
-    "sit first."
-)
-UPSTAIRS_LINE = (
-    "Sit, if you like. Below stairs I am the Lantern and every soul is owed my "
-    "face; up here I am only Marla. Ask me what you climbed up to ask."
-)
-UPSTAIRS_RETURN_ACTIVE = (
-    "The stairs take your weight again, and the room above the common room "
-    "takes you back exactly as you left it — the little fire down to one red "
-    "eye, the chair still angled at it, and the question still lying in the "
-    "warmth where you set it down."
-)
-UPSTAIRS_AFTERMATH = (
-    "The upstairs room again, and quieter than memory: embers in the little "
-    "grate, rain still walking the window, and the thing Marla told you here "
-    "already said. Above the common room, nothing is waiting on you now."
-)
-UPSTAIRS_ALREADY = (
-    "You are already above stairs — the inn's noise somewhere below your feet, "
-    "and the room holding your full attention."
-)
-UPSTAIRS_ELSEWHERE = (
-    "There is no stair of hers to climb from here. The way up lives in the "
-    "Lantern's common room, and it is hers to lend."
-)
-UPSTAIRS_REFUSED = (
-    "Marla's hand finds the stair rail before your foot does. \"Not my stairs,\" "
-    "she says, \"not yet. Ask me something worth answering first — then we will "
-    "see whose room you are standing in.\""
-)
-UPSTAIRS_WORD = (
-    "Marla sets her back against the door and says it the way she says the "
-    "accounts — flat, and once. She came north with the caravan that burned: "
-    "she was the one who walked out of that fire, and she has been paying the "
-    "road back in beds and soup ever since. \"That is the whole of what I "
-    "have,\" she says. \"I wanted it said in a room with a door on it.\""
-)
-UPSTAIRS_WORD_LINE = (
-    "You asked what I need? I need the road to stop taking. Fourteen years "
-    "behind this bar, and theirs are the first names I have not been able to "
-    "drink away."
-)
-UPSTAIRS_WORD_AGAIN = (
-    "The word has been said once, and this room keeps what it is given. Marla "
-    "watches the window instead of repeating herself, which is answer enough."
-)
-DOWNSTAIRS_NARRATION = (
-    "You take the stairs back down into lamplight and the smell of wet peat, "
-    "and the common room gathers you up as if you had only stepped out for a "
-    "moment — the same low fire, the same cups, Marla's eye finding you at once."
-)
-DOWNSTAIRS_ALREADY = (
-    "Down is exactly where you stand: the bar, the fire, and a room that asks "
-    "nothing of you this hour."
-)
-
-#: The inn's one first arrival (§intro): the door, the room, and what the rain
-#: left on the board. Composed over the inn's opening beat so the room's text
-#: stays canon — the opening plays once, at this transition in.
-INN_ARRIVAL = "The door gives, and the night lets go of you all at once. " + OPENING_BEAT
-INN_WELCOME_LINE = (
-    "Come in from the rain, then — the fire's warm and the road's bad. "
-    "Sit where I can see you, stranger; questions come cheaper than silver here."
-)
-
-#: The prologue's own moves — authored, so the guided buttons always land in
-#: prose worth the tap, and none of them moves the player (§intro). A second
-#: look or listen gets its own words (P13): tapping the same guided move twice
-#: must not hand back the same paragraph.
-PROLOGUE_TOWN_VIEW = (
-    "Ravenford from the ridge, in the rain: rooftops descending to the river like "
-    "ledger columns, the old bridge holding its arch against the current, and a "
-    "single lantern burning on the one street that matters — the inn's. Past the "
-    "last houses the Northern Road runs out into the dark; whatever waits on it "
-    "can wait until morning."
-)
-PROLOGUE_TOWN_VIEW_AGAIN = (
-    "The valley keeps its weather and its silence: rooftops, road, the river's "
-    "cold working at the bridge — and the inn's one lamp still burning its "
-    "patient coin against the dark. Nothing below has changed for your looking "
-    "at it, and the road out waits past the last house like a debt not yet "
-    "called in."
-)
-PROLOGUE_VIEW_VARIANTS = (PROLOGUE_TOWN_VIEW, PROLOGUE_TOWN_VIEW_AGAIN)
-PROLOGUE_LISTEN = (
-    "You stand still a moment and let the night say what it has: rain on hedge and "
-    "slate, the river's low argument under the bridge, a shutter working loose "
-    "somewhere below — and under all of it, faint as coin under cloth, the murmur "
-    "of the inn's common room. A fire. Voices. A door worth opening."
-)
-PROLOGUE_LISTEN_AGAIN = (
-    "You give the night a second hearing: rain on slate and hedge, the river "
-    "arguing under the bridge, a shutter keeping time like a slow hand on a "
-    "ledger — and the inn's murmur underneath it all, closer now than it was, "
-    "or you nearer to it. A door worth opening does not need saying twice."
-)
-PROLOGUE_LISTEN_VARIANTS = (PROLOGUE_LISTEN, PROLOGUE_LISTEN_AGAIN)
-PROLOGUE_NORTH = (
-    "You walk on past the last lamp, and Ravenford gathers itself behind you — "
-    "roofs, warmth, the inn's one light — the way a decision does once it is made. "
-    "Ahead, the Northern Road takes the rain quietly. It has a long habit of "
-    "taking things quietly."
-)
-
-#: The anti-loop reply (§7): ground the player has already walked gets a
-#: shorter answer that points at what is still possible. The wording rotates
-#: per diminishing reply and quotes the player's own attempt back at them —
-#: two different actions, or the same one twice running, must never get one
-#: identical line (P13: the wall is not allowed to be a same-forever wall).
-DIMINISH_ACKS = (
-    "You linger a moment; the room has nothing new to give it.",
-    "The room has heard that one already.",
-    "Familiar ground — it answers no better than it did.",
-)
-DIMINISH_LINES = (
-    (
-        "You have been over “{action}” already, and nothing here says it "
-        "twice. Still open: {options}."
-    ),
-    (
-        "“{action}” — the room gives back the same answer it gave the first "
-        "time, and the moment does not widen. Still open: {options}."
-    ),
-    (
-        "Nothing comes of “{action}” that did not come of it before. Still "
-        "open: {options}."
-    ),
-)
+#: The second lead's title, once the lanterns are in play.
+MONASTERY_LIGHTS = "The Monastery Lights"
 
 #: A scene transition reads as a scene change, not a new map pin (§7). The
 #: glyph is its own: ❧ marks clues/echoes, ❖ the relationship meter.
@@ -640,13 +149,24 @@ SOCIAL_DIFFICULTY: dict[str, str] = {
 
 @dataclass
 class BeatOutcome:
+    """One resolved beat: state already changed, the words still to write.
+
+    ``brief`` is the narration the beat owes the player (P14): the engine fills
+    every fact and ``act`` has the narrator write it *after* the scene guard
+    has decided whether this is the beat's own answer or a diminished one —
+    so a guarded repeat costs one model call, never two. A ``brief`` of None
+    means the narration is already final (the pipeline beat) or there is none
+    (a pending throw, an interface-only echo).
+    """
+
     ack: str
-    narration: str
+    narration: str = ""
     kind: str = "scene_transition"  # checkpoint kind; None -> persist only
     mechanics: dict[str, Any] | None = None
     dialogue: list[dict[str, str]] = field(default_factory=list)
     new_leads: list[str] = field(default_factory=list)
     suggestions: list[dict[str, str]] = field(default_factory=list)
+    brief: BeatBrief | None = None
 
 
 class PendingCheckStale(Exception):
@@ -805,19 +325,6 @@ def _action_key(beat: str, text: str) -> str:
     return f"{beat}:{norm[:60]}"
 
 
-def _rotation(variants: tuple[str, ...], index: int) -> str:
-    """One of a small authored set, picked by repeat index (never random)."""
-    return variants[int(index) % len(variants)]
-
-
-def _action_echo(text: str, limit: int = 60) -> str:
-    """The player's own words, shortened — a repeat reply quotes them back."""
-    spoken = " ".join(str(text or "").split()).strip("“”\"'")
-    if len(spoken) > limit:
-        spoken = spoken[: limit - 1].rstrip() + "…"
-    return spoken or "that"
-
-
 def route(text: str) -> str:
     """Classify player text to a beat name (or ``pipeline`` fallback)."""
     t = text.strip()
@@ -913,9 +420,10 @@ class ActEngine:
     def _seen(self, beat: str) -> int:
         """How many times this beat family already resolved in this scene.
 
-        Read *before* the beat is noted (0 on the first try), so an authored
-        beat can rotate its prose by it: two looks at the same room never hand
-        back one identical paragraph (P13).
+        Read *before* the beat is noted (0 on the first try). The beat hands
+        the count to the narrator as a fact — "the player has done this
+        before" — so the model writes a fresh second look at the same room
+        instead of repeating itself (P13/P14).
         """
         return SceneDirector(self.state).current().seen(beat)
 
@@ -1040,8 +548,9 @@ class ActEngine:
     def _succeeded(result: CheckResult) -> bool:
         return result.outcome in SUCCESS_OUTCOMES
 
-    def _feed(self, kind: str, **payload: Any) -> None:
-        self.state.append_feed(kind, **payload)
+    def _feed(self, kind: str, **payload: Any) -> dict[str, Any]:
+        """Append one feed event (the player-visible chronicle) and return it."""
+        return self.state.append_feed(kind, **payload)
 
     def _remember(
         self,
@@ -1084,8 +593,9 @@ class ActEngine:
         word = biased_mood(npc, mood)
         return self.state.set_mood(npc, surfaced_mood(word, nsfw=nsfw), intensity)
 
-    def _narrate_event(self, text: str) -> None:
-        self._feed("narration", text=text)
+    def _narrate_event(self, text: str) -> dict[str, Any]:
+        """Append one narration line to the chronicle and return the event."""
+        return self._feed("narration", text=text)
 
     def _discover_lead(self, outcome: BeatOutcome) -> None:
         if self.state.set_lead_stage("rumored"):
@@ -1229,25 +739,6 @@ class ActEngine:
             kind="",
         )
 
-    def _diminish(self, outcome: BeatOutcome, text: str, index: int) -> None:
-        """Replace a looping reply with a shorter one that points forward (§7).
-
-        Ground already walked gets a diminishing answer naming what is still
-        possible — never the same prose again, never the scene's opening, and
-        never the same diminishing line twice in a row (P13): the wording
-        rotates per diminishing reply and quotes the player's own attempt
-        back at them. Everything the beat actually did to the state stands:
-        only the room's voice changes.
-        """
-        options = possible_moves(self.state)
-        names = " · ".join(m["label"] for m in options[:3]) or "the road ahead"
-        outcome.ack = DIMINISH_ACKS[index % len(DIMINISH_ACKS)]
-        outcome.narration = DIMINISH_LINES[index % len(DIMINISH_LINES)].format(
-            action=_action_echo(text), options=names
-        )
-        outcome.dialogue = []
-        outcome.suggestions = options
-
     # -- pending throws -------------------------------------------------------
     def _pending_token(self, text: str) -> str:
         """Fingerprint of (campaign, action text, board) — the throw's anchor."""
@@ -1268,6 +759,78 @@ class ActEngine:
         }
 
     # -- public API ----------------------------------------------------------
+    def narrate_opening(self) -> dict[str, Any]:
+        """Write the chronicle's opening page (§intro, P14).
+
+        The one story surface with no beat behind it: a new journey stands on
+        the road above Ravenford before the player has done anything, so the
+        engine hands the narrator the prologue's facts and the player's own
+        sheet and the model writes the first page. Written at most once per
+        journey — ``opening_pending`` is the one truth — so a reload reads the
+        chronicle instead of re-narrating it, and a sheet that lands after the
+        fact opens the chronicle as itself (``reopen_prologue_opening``).
+        """
+        st = self.state
+        if not st.opening_pending:
+            return {"narration": "", "dialogue": [], "suggestions": [], "already": True}
+        pc = st.pc or {}
+        name = str(pc.get("name") or "a nameless traveler")
+        facts = [
+            (
+                "the tale opens on the road above Ravenford at dusk, in the rain: a "
+                "long ridge of hedgerows and standing water, and below it one small "
+                "walled town"
+            ),
+            (
+                "Ravenford from the road: rooftops descending to a river, a stone "
+                "bridge, and a single lantern burning in the one street that "
+                "matters — the inn"
+            ),
+            (
+                f"the newcomer is {name}"
+                + (f", {pc['epithet']}" if pc.get("epithet") else "")
+                + ", walking the road on their own two feet and known to nobody here yet"
+            ),
+        ]
+        equipment = [str(item) for item in (pc.get("equipment") or []) if str(item).strip()]
+        if equipment:
+            facts.append("what they carry: " + ", ".join(equipment[:6]))
+        drives = [str(d) for d in (pc.get("drives") or []) if str(d).strip()]
+        if drives:
+            facts.append("what drives them: " + "; ".join(drives[:3]))
+        background = str(pc.get("background") or "").strip()
+        if background:
+            facts.append(f"what the road knows about them: {background}")
+        facts.append(
+            "nobody has seen them yet: the inn's door is the first choice the road "
+            "offers, and the rain keeps falling until it is made"
+        )
+        brief = BeatBrief(
+            event="prologue.opening",
+            facts=tuple(facts),
+            length="Standard",
+            direction=(
+                "open the tale: the world first, then the newcomer inside it; close "
+                "on the inn's light and the road down to its door"
+            ),
+        )
+        narration, dialogue = self._narrate(
+            "the tale opens on the road above Ravenford", brief
+        )
+        st.opening_pending = False
+        event = self._narrate_event(narration)
+        # A beat can slip in before the page asks for its first page: the
+        # opening is the chronicle's first line, so it goes back to the top.
+        if len(st.feed) > 1 and st.feed[-1] is event:
+            st.feed.remove(event)
+            st.feed.insert(0, event)
+        return {
+            "narration": narration,
+            "dialogue": dialogue,
+            "suggestions": possible_moves(st),
+            "already": False,
+        }
+
     def act(
         self,
         text: str,
@@ -1336,15 +899,27 @@ class ActEngine:
         key = _action_key(beat, t)
         director.note_beat(key=key, progress=progress)
         if not progress and not transitioned and director.diminishing(key):
-            # Ground already walked: the room answers shorter, in rotating
-            # words, and points forward. A live transition is never guarded —
-            # the fiction opened a door and the engine takes it (user ruling,
-            # §7) — and neither is new ground: a genuinely fresh attempt must
-            # narrate, so the wall can never settle over the whole room (P13).
-            self._diminish(outcome, t, director.note_diminished())
+            # Ground already walked: the room answers shorter and points
+            # forward, in words the model writes fresh. A live transition is
+            # never guarded — the fiction opened a door and the engine takes
+            # it (user ruling, §7) — and neither is new ground: a genuinely
+            # fresh attempt must narrate, so the wall can never settle over
+            # the whole room (P13). The beat's own brief is replaced here,
+            # before it is written, so a guarded repeat costs one call.
+            self._diminish(outcome, t)
+            director.note_diminished()
         if self.state.lead_stage != lead_before:
             # A story-beat boundary moves the scene's aim — never the player.
             director.story_boundary()
+
+        # The words are the model's (P14): one call per beat, made here — after
+        # the guard, so this is either the beat's own answer or the diminished
+        # one, and the chronicle never shows prose the guard would have
+        # replaced. Nothing pre-written stands in when it fails (P12).
+        if outcome.brief is not None:
+            outcome.narration, outcome.dialogue = self._narrate(
+                t, outcome.brief, outcome.mechanics
+            )
 
         # Saga digest (#4 continuity): checkpoint beats re-roll the rolling
         # recap so the narrator keeps act one in mind by act ten; idle beats
@@ -1386,21 +961,220 @@ class ActEngine:
             self._feed("dialogue", speaker=d["speaker"], text=d["line"])
         return response, checkpoint
 
+    # -- narration (P14) ------------------------------------------------------
+
+    def _narrate(self, text: str, brief: BeatBrief,
+                 mechanics: dict[str, Any] | None = None
+                 ) -> tuple[str, list[dict[str, str]]]:
+        """Write one beat's prose (P14): the engine's facts, the model's words.
+
+        Returns ``(narration, dialogue)``. The prompt carries the promised
+        state — scene and goal, present NPCs with their memories, moods and
+        dispositions, the leads, the chronicle tail, the saga, the dice
+        result — plus the beat's own facts, so the phrasing is free but the
+        truth is not. Nothing pre-written may stand as narration: a turn that
+        cannot be narrated honestly fails machine-readably (P12), so no caller
+        is ever handed cover prose.
+        """
+        if self.provider is None:
+            raise ActFailure("connect_your_ai", "no model connected")
+        scene = SceneDirector(self.state).scene_block()
+        pc = self.state.pc or {}
+        ctx = PromptContext(
+            location=location_name(self.state),
+            scene=f"{scene['label']} ({scene['state']}) — scene goal: {scene['goal']}",
+            player_character={
+                "name": pc.get("name", "the hero"),
+                "description": pc.get("epithet") or "an adventurer",
+            },
+            npcs=self._narrator_npcs(),
+            leads=self._narrator_leads(),
+            chronicle=self._chronicle_tail(),
+            saga=self.state.saga or "",
+            player_action=text,
+            mechanical_result=dict(mechanics or {}),
+            beat_event=brief.event,
+            beat_facts=list(brief.facts),
+            beat_speakers=list(brief.speakers),
+            beat_direction=brief.direction,
+            length=brief.length,
+            output_schema=BEAT_SCHEMA,
+        )
+        try:
+            output, _bundle = narrate(
+                ctx, provider=self.provider, meter=self.meter,
+                campaign_id=self.session.campaign_id, prefs=self.prefs,
+            )
+        except ProviderError as exc:
+            raise ActFailure("provider_failed", _scrub_provider_error(str(exc))) from exc
+        except ActFailure:
+            raise
+        except Exception as exc:  # an unexpected error is still not cover prose
+            raise ActFailure(
+                "turn_failed", _scrub_provider_error(f"{type(exc).__name__}: {exc}")
+            ) from exc
+        return output.narration, [
+            {"speaker": d.npc, "line": d.line} for d in output.npc_dialogue
+        ]
+
+    def _narrator_npcs(self) -> list[dict[str, Any]]:
+        """Present NPCs as the narrator prompt wants them (§25 + slices 2-5).
+
+        Moods ride surfaced (content-gated at the same helper the chip uses)
+        and memories ride bounded — the same shape the pipeline's scene
+        context builds, so one round of context serves both callers.
+        """
+        memories = self._npc_memories_for_present()
+        moods = self._npc_moods_for_present()
+        dispositions = self._npc_dispositions_for_present()
+        out: list[dict[str, Any]] = []
+        for npc in npcs_present(self.state, self.prefs):
+            full = str(npc.get("name") or "")
+            short = full.split()[0]
+            entry: dict[str, Any] = {"name": full, "note": str(npc.get("note") or "")}
+            mood = moods.get(short) or {}
+            if mood:
+                entry["mood"] = mood.get("mood")
+                entry["mood_intensity"] = mood.get("intensity")
+            remembered = memories.get(short)
+            if remembered:
+                entry["remembers"] = remembered
+            disposition = dispositions.get(short)
+            if disposition:
+                entry["disposition"] = disposition
+            out.append(entry)
+        return out
+
+    def _narrator_leads(self) -> list[dict[str, str]]:
+        """The live leads, stated as facts for the prompt (§1)."""
+        note = LEAD_NOTES.get(self.state.lead_stage)
+        if not note:
+            return []
+        leads = [{"title": "Missing Travelers", "status": note}]
+        if self.state.lead_stage in ("investigating", "solved") or "lanterns" in self.state.clues:
+            leads.append({
+                "title": MONASTERY_LIGHTS,
+                "status": "lanterns move through the trees to the monastery bells",
+            })
+        return leads
+
+    def _diminishing_brief(self, text: str) -> BeatBrief:
+        """The brief for a reply on ground the player has already walked (§7).
+
+        One call, never two: the beat's own narration is not written and then
+        thrown away (the P13 finding — a guarded repeat wasted a provider
+        call). The facts are the engine's (this is a repeat, nothing here
+        changed, these are the open moves); the words are the model's, written
+        fresh every time, so no two diminishing replies are one wall.
+        """
+        options = possible_moves(self.state)
+        names = " · ".join(m["label"] for m in options[:3]) or "the road ahead"
+        return BeatBrief(
+            event="scene.diminished",
+            facts=(
+                f"the player repeats an action this scene has already answered: {text}",
+                ("nothing new comes of it — the room, the road and the people in it "
+                "are unchanged by the attempt"),
+                f"still open here: {names}",
+            ),
+            direction=(
+                "answer in one or two short sentences; do not re-narrate the scene "
+                "and do not repeat what this action was told the first time; close "
+                "by pointing at what is still open"
+            ),
+        )
+
+    def _diminish(self, outcome: BeatOutcome, text: str) -> None:
+        """Answer ground already walked briefly, in the narrator's own words.
+
+        Everything the beat actually did to the state stands: only the room's
+        voice changes, and it changes every time.
+        """
+        outcome.ack = "Familiar ground."
+        outcome.brief = self._diminishing_brief(text)
+        outcome.dialogue = []
+        outcome.suggestions = possible_moves(self.state)
+
     # -- beats ---------------------------------------------------------------
+    def _beat_spend_inspiration(self, text: str) -> BeatOutcome:
+        """Burn one Inspiration: the next surfaced check throws twice.
+
+        The counters and the ✦ system line are interface; the beat's own words
+        are the model's like every other beat's (P14).
+        """
+        st = self.state
+        if st.inspired:
+            return BeatOutcome(
+                ack="Your inspiration is already burning.",
+                kind="",
+                brief=BeatBrief(
+                    event="inspiration.already",
+                    facts=(
+                        "the player tries to spend inspiration, but a spent point is already burning",
+                        "the next surfaced roll already throws twice — nothing is spent now",
+                    ),
+                    direction="a held breath, not an event; nobody speaks",
+                ),
+            )
+        if int(st.inspiration or 0) <= 0:
+            return BeatOutcome(
+                ack="No inspiration to spend — yet.",
+                kind="",
+                brief=BeatBrief(
+                    event="inspiration.none",
+                    facts=(
+                        "the player reaches for inspiration, but the table has granted none yet",
+                        ("inspiration is earned by story-driving beats — a clue, a lead, "
+                        "a warmer heart — not by asking for it"),
+                    ),
+                    direction="keep it light; the fiction does not move",
+                ),
+            )
+        st.inspiration = int(st.inspiration) - 1
+        st.inspired = True
+        self._feed("system", text=(
+            f"✦ Inspiration spent ({st.inspiration} banked) — the next roll throws twice."
+        ))
+        return BeatOutcome(
+            ack="✦ Inspiration burns.",
+            kind="",
+            brief=BeatBrief(
+                event="inspiration.spend",
+                facts=(
+                    f"the player spends one inspiration — {st.inspiration} still banked",
+                    ("the next surfaced roll will throw twice and keep the higher: the "
+                    "table is watching, and the tale itself does not change here"),
+                ),
+                direction="a moment of resolve, not an event; nobody speaks",
+            ),
+        )
+
     def _beat_talk(self, text: str) -> BeatOutcome:
         if self.state.scene == UPSTAIRS:
             return self._talk_upstairs(text)
         st = self.state
         st.note("talked:travelers")
         st.advance_minutes(5)
-        out = BeatOutcome(
-            ack="Marla sets the cup down.",
-            narration=_rotation(TALK_REPEAT_VARIANTS, self._seen("talk")),
-            kind="talk",
-        )
+        out = BeatOutcome(ack="Marla sets the cup down.", kind="talk")
         if st.lead_stage == "unheard":
-            out.narration = TALK_FIRST
-            out.dialogue = [{"speaker": "Marla Voss", "line": TALK_LINE_FIRST}]
+            out.brief = BeatBrief(
+                event="talk.first",
+                facts=(
+                    "the player asks Marla about the road and the missing travelers",
+                    ("Marla answers: two guests bound for the Old Monastery walked out "
+                    "into that rain three nights back and never came down again"),
+                    ("the watch says travelers wander off; she says travelers do not "
+                    "leave their packs behind"),
+                    ("she asks the player to find out what happened to them, and offers "
+                    "to keep their tab open here and their lamp lit while they do"),
+                ),
+                speakers=("Marla Voss",),
+                direction=(
+                    "she takes her time answering — the question is worth marking; the "
+                    "room is hers and the rain keeps on outside"
+                ),
+                length="Standard",
+            )
             self._discover_lead(out)
             self._remember(
                 "marla", "asked about the travelers who never came back",
@@ -1411,13 +1185,20 @@ class ActEngine:
             self._mood("marla", "warm", 0.5)
         elif st.lead_stage == "rumored":
             self._advance_to("accepted")
-            out.narration = TALK_ACCEPT_NARRATION
-            out.dialogue = [
-                {"speaker": "Marla Voss", "line": TALK_ACCEPT_LINE},
-                # The invitation (§7, trigger d): an NPC proposing the new
-                # scene — the guard must never block taking it.
-                {"speaker": "Marla Voss", "line": TALK_INVITE_LINE},
-            ]
+            out.brief = BeatBrief(
+                event="talk.accepted",
+                facts=(
+                    "Marla accepts the player's word to look into the missing travelers",
+                    "she asks them to find out what happened and bring her word — or better",
+                    ("she adds the invitation: the rain is keeping the room cold, and if "
+                    "the player wants the rest of it away from the bar they may come up "
+                    "when she banks the fire — the stair is hers, and tonight she is "
+                    "choosing to lend it"),
+                ),
+                speakers=("Marla Voss",),
+                direction="a promise is about to be made; the room goes quiet around it",
+                length="Standard",
+            )
             out.suggestions = [{"label": "Take the stairs with her",
                                 "command": "I follow Marla upstairs"}]
             self._remember(
@@ -1427,9 +1208,42 @@ class ActEngine:
             )
             self._mood("marla", "warm", 0.7)
         elif st.lead_stage == "investigating":
-            out.narration = TALK_INVESTIGATING
+            out.brief = BeatBrief(
+                event="talk.investigating",
+                facts=(
+                    "the player asks Marla about the road again",
+                    ("she has noticed the player asking around: word travels ahead of "
+                    "them and half the market has seen them at it"),
+                    ("she does not ask them to stop — from Marla that is closer to a "
+                    "request to finish"),
+                ),
+                speakers=("Marla Voss",),
+            )
         elif st.lead_stage == "solved":
-            out.narration = TALK_SOLVED
+            out.brief = BeatBrief(
+                event="talk.solved",
+                facts=(
+                    ("the travelers are home and the tale is told; the player asks Marla "
+                    "about the road one last time"),
+                    ("she pours two cups — one for the player, one set opposite, for the "
+                    "tale that freed her ledger of ghosts"),
+                    "the inn will hear it all by morning",
+                ),
+                speakers=("Marla Voss",),
+            )
+        else:
+            out.brief = BeatBrief(
+                event="talk.repeat",
+                facts=(
+                    (f"the player asks Marla about the road again — the {self._seen('talk') + 1}th "
+                    "time in this scene"),
+                    ("the road has not changed since they last asked and she has no new "
+                    "answer; her patience for it is thin but not unkind"),
+                    ("she nods at the ledger under the bar: whatever the player needs to "
+                    "know, it will answer to paper sooner than to words"),
+                ),
+                speakers=("Marla Voss",),
+            )
         return out
 
     # -- micro-scenes: the inn's upstairs room (§7) ---------------------------
@@ -1443,12 +1257,45 @@ class ActEngine:
         st = self.state
         st.advance_minutes(5)
         if st.scene == UPSTAIRS:
-            return BeatOutcome(ack="You are already upstairs.", narration=UPSTAIRS_ALREADY, kind="")
+            return BeatOutcome(
+                ack="You are already upstairs.",
+                kind="",
+                brief=BeatBrief(
+                    event="upstairs.already",
+                    facts=(
+                        "the player is already in Marla's room above the common room",
+                        ("the inn's noise is below their feet; nothing changes by trying "
+                        "to go up again"),
+                    ),
+                ),
+            )
         if st.location != "lantern-inn":
-            return BeatOutcome(ack="No stairs lead up from here.", narration=UPSTAIRS_ELSEWHERE, kind="")
+            return BeatOutcome(
+                ack="No stairs lead up from here.",
+                kind="",
+                brief=BeatBrief(
+                    event="upstairs.elsewhere",
+                    facts=(
+                        "the player looks for Marla's stair, but they are not in the Lantern",
+                        "that way up lives in the inn's common room, and it is hers to lend",
+                    ),
+                ),
+            )
         if not invitation_open(st):
             return BeatOutcome(
-                ack="Marla's hand finds the stair rail.", narration=UPSTAIRS_REFUSED, kind=""
+                ack="Marla's hand finds the stair rail.",
+                kind="",
+                brief=BeatBrief(
+                    event="upstairs.refused",
+                    facts=(
+                        "the player tries to go up to Marla's room",
+                        ("Marla stops them: the stair is hers to lend and she has not "
+                        "lent it — not yet, and not to a stranger with nothing said between them"),
+                        ("asking her about the road and the missing travelers is what "
+                        "would open it"),
+                    ),
+                    speakers=("Marla Voss",),
+                ),
             )
         director = SceneDirector(st)
         move = director.enter(
@@ -1458,19 +1305,45 @@ class ActEngine:
             parent="lantern-inn",
             goal=UPSTAIRS_GOAL,
         )
-        dialogue: list[dict[str, str]] = []
         if move.first_visit:
-            narration = UPSTAIRS_OPENING
-            dialogue = [{"speaker": "Marla Voss", "line": UPSTAIRS_LINE}]
+            brief = BeatBrief(
+                event="upstairs.first",
+                facts=(
+                    ("the player takes Marla's stair up into her room above the common "
+                    "room — a scene of its own inside the inn"),
+                    ("the room: low-browed and warm, a chair turned to a small fire, a "
+                    "window holding the whole wet street, and a bed with the same neat "
+                    "corners she keeps in her ledger"),
+                    ("Marla tells the player to sit: below stairs she is the Lantern and "
+                    "every soul is owed her face; up here she is only Marla, and they "
+                    "should ask what they climbed up to ask"),
+                ),
+                speakers=("Marla Voss",),
+                length="Standard",
+            )
+        elif director.ended(UPSTAIRS):
+            brief = BeatBrief(
+                event="upstairs.aftermath",
+                facts=(
+                    ("the player returns to the room where Marla said what she would not "
+                    "say at the bar"),
+                    ("the thing she brought them up to say has been said; the room is "
+                    "quieter than memory and nothing here is waiting on the player now"),
+                ),
+            )
         else:
-            # A remembered room never re-runs its opening: a finished room
-            # reads as aftermath, one walked out of mid-flow as you left it.
-            narration = UPSTAIRS_AFTERMATH if director.ended(UPSTAIRS) else UPSTAIRS_RETURN_ACTIVE
+            brief = BeatBrief(
+                event="upstairs.return",
+                facts=(
+                    ("the player comes back up to Marla's room — the conversation here "
+                    "was left unfinished"),
+                    "the room takes them back exactly as they left it, and she is there",
+                ),
+            )
         return BeatOutcome(
             ack="You take the stairs.",
-            narration=narration,
             kind="scene",
-            dialogue=dialogue,
+            brief=brief,
             suggestions=possible_moves(st),
         )
 
@@ -1479,12 +1352,30 @@ class ActEngine:
         st = self.state
         st.advance_minutes(5)
         if st.scene != UPSTAIRS:
-            return BeatOutcome(ack="You are already down.", narration=DOWNSTAIRS_ALREADY, kind="")
+            return BeatOutcome(
+                ack="You are already down.",
+                kind="",
+                brief=BeatBrief(
+                    event="downstairs.already",
+                    facts=(
+                        ("the player is already in the common room — down is exactly "
+                        "where they stand"),
+                    ),
+                ),
+            )
         SceneDirector(st).enter("lantern-inn")
         return BeatOutcome(
             ack="You take the stairs down.",
-            narration=DOWNSTAIRS_NARRATION,
             kind="scene",
+            brief=BeatBrief(
+                event="downstairs",
+                facts=(
+                    ("the player takes the stairs back down from Marla's room into "
+                    "lamplight and the smell of wet peat"),
+                    ("the common room gathers them up as if they had only stepped out "
+                    "for a moment — the same low fire, the same cups"),
+                ),
+            ),
             suggestions=possible_moves(st),
         )
 
@@ -1507,15 +1398,37 @@ class ActEngine:
             self._mood("marla", "warm", 0.6)
             return BeatOutcome(
                 ack="Marla says it once, and plainly.",
-                narration=UPSTAIRS_WORD,
                 kind="scene",
-                dialogue=[{"speaker": "Marla Voss", "line": UPSTAIRS_WORD_LINE}],
+                brief=BeatBrief(
+                    event="upstairs.word",
+                    facts=(
+                        "the player asks Marla what she brought them up here to say",
+                        ("she answers flatly and once: she came north with the caravan "
+                        "that burned — she was the one who walked out of that fire, and "
+                        "she has been paying the road back in beds and soup ever since"),
+                        ("she says that is the whole of what she has, and that she "
+                        "wanted it said in a room with a door on it"),
+                        ("what she needs: the road to stop taking — fourteen years behind "
+                        "the bar, and these are the first names she has not been able "
+                        "to drink away"),
+                    ),
+                    speakers=("Marla Voss",),
+                    length="Standard",
+                ),
                 suggestions=possible_moves(st),
             )
         return BeatOutcome(
             ack="The room has said what it had.",
-            narration=UPSTAIRS_WORD_AGAIN,
             kind="talk",
+            brief=BeatBrief(
+                event="upstairs.word.again",
+                facts=(
+                    ("the player asks again, but what Marla would say in this room has "
+                    "already been said once"),
+                    "she will not repeat it; the room keeps what it is given",
+                ),
+                speakers=("Marla Voss",),
+            ),
             suggestions=possible_moves(st),
         )
 
@@ -1524,12 +1437,35 @@ class ActEngine:
         st.note("inspected:notice-board")
         st.advance_minutes(5)
         first = st.lead_stage == "unheard"
+        seen = self._seen("inspect_board")
+        if first:
+            facts = (
+                "the player reads the inn's notice board",
+                ("its newest parchment is a plea in three hands: two travelers bound "
+                "for the Old Monastery are missing on the Northern Road"),
+                ("someone has underscored the word 'again'; the rain has got at the "
+                "edges, but the names are clear enough"),
+            )
+        elif seen <= 1:
+            facts = (
+                "the player reads the notice board again",
+                ("the plea still hangs there, rain-curled at the corners — two names, "
+                "one road, no answers"),
+                ("somebody has since pinned a charcoal sketch of the missing wagon "
+                "below it"),
+            )
+        else:
+            facts = (
+                "the player reads the notice board yet again",
+                ("the plea is where they left it: two names, one road, and the charcoal "
+                "wagon sketch nobody has taken down"),
+                ("the rain has turned its corners soft and the names have not changed "
+                "at all"),
+            )
         out = BeatOutcome(
             ack="You read the notice board.",
-            narration=BOARD_FIRST if first else _rotation(
-                BOARD_REPEAT_VARIANTS, self._seen("inspect_board")
-            ),
             kind="inspect",
+            brief=BeatBrief(event="inspect.board", facts=facts),
         )
         self._discover_lead(out)
         return out
@@ -1539,9 +1475,37 @@ class ActEngine:
         st.note("inspected:marlas-ledger")
         st.advance_minutes(10)
         mech, result = self._check("investigation", "Moderate", "Investigation — Marla's guest ledger")
-        opening = _rotation(LEDGER_NARRATION_VARIANTS, self._seen("inspect_ledger"))
+        seen = self._seen("inspect_ledger")
+        if seen <= 0:
+            facts = (
+                ("the player turns the guest ledger open behind the bar — Marla counts "
+                "her stock nightly, and tonight she has counted it twice; the pages "
+                "are damp at the edges"),
+            )
+        else:
+            facts = (
+                ("the player goes back through the guest ledger — pages they have "
+                "already bothered once, damp at the edges and patient as a creditor"),
+                "the damp has not moved and neither have the names",
+            )
+        if self._succeeded(result):
+            facts = facts + (
+                ("read this far in: two signatures for the Old Monastery road, three "
+                "nights apart, and no line drawn through either — they never signed out"),
+                "in the margin, one small hand has pencilled the same word twice: 'again'",
+            )
+        else:
+            facts = facts + (
+                ("the damp has won the last few pages — the ink runs together into "
+                "dark smears"),
+                ("boots and a guild mark can just be made out; nothing certain comes "
+                "of the reading"),
+            )
         out = BeatOutcome(
-            ack="You turn the ledger pages.", narration=opening, kind="inspect", mechanics=mech
+            ack="You turn the ledger pages.",
+            kind="inspect",
+            brief=BeatBrief(event="inspect.ledger", facts=facts),
+            mechanics=mech,
         )
         self._remember(
             "marla", "went through her guest ledger page by page",
@@ -1554,11 +1518,6 @@ class ActEngine:
                 self._feed("system", text="❧ Clue found — the ledger's unsigned guests.")
             self._discover_lead(out)
             self._advance_to("investigating")
-            out.narration = opening + " " + LEDGER_SUCCESS
-        else:
-            out.narration = opening + " " + LEDGER_FAIL
-            if result.outcome == Outcome.SuccessWithCost:
-                out.narration = opening + " " + LEDGER_SUCCESS
         return out
 
     def _beat_inspect_cellar(self, text: str) -> BeatOutcome:
@@ -1572,13 +1531,42 @@ class ActEngine:
                 reason="eyed the barred cellar door more than once",
             )
             self._mood("marla", "suspicious", 0.5)
+        seen = self._seen("inspect_cellar")
         if st.travelers_freed:
-            body = _rotation(CELLAR_FREED_VARIANTS, self._seen("inspect_cellar"))
+            facts = (
+                ("the player looks at the inn's cellar door: it stands open now, "
+                "hooked back against the wall"),
+                ("cold air climbs the steps from the inn's deep stores — barrels, "
+                "salt, and the shape of the story that used to live down here"),
+                "nobody down there is waiting on the player anymore",
+            )
         elif st.lead_stage in ("accepted", "investigating"):
-            body = _rotation(CELLAR_BARRED_VARIANTS, self._seen("inspect_cellar"))
+            facts = (
+                ("the player looks at the inn's cellar door: barred as always, but the "
+                "bar has been lifted recently"),
+                ("the dust on its bracket is disturbed, and a thin woman's scarf — "
+                "grey, and not Marla's — is caught on the latch"),
+                ("behind the inn's own stores the passage keeps going down; opening it "
+                "would want a reason Marla would accept"),
+            )
         else:
-            body = _rotation(CELLAR_SHUT_VARIANTS, self._seen("inspect_cellar"))
-        return BeatOutcome(ack="You consider the cellar door.", narration=body, kind="inspect")
+            facts = (
+                ("the player looks at the inn's cellar door: shut fast, barred and "
+                "padlocked, the way it has been since they were small enough to be "
+                "scared of it"),
+                ("the old gripes say that one step past the stores and the Lantern "
+                "becomes a warren; the door has never once confirmed it"),
+            )
+        if seen >= 1:
+            facts = facts + (
+                ("the player has looked at this door before in this scene; nothing "
+                "about it has changed"),
+            )
+        return BeatOutcome(
+            ack="You consider the cellar door.",
+            kind="inspect",
+            brief=BeatBrief(event="inspect.cellar", facts=facts),
+        )
 
     def _beat_inspect(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1590,8 +1578,25 @@ class ActEngine:
         st.note(f"inspected:{target}")
         st.advance_minutes(5)
         seen = target if target.startswith("the ") else f"the {target}"
-        body = _rotation(INSPECT_VARIANTS, self._seen("inspect")).format(seen=seen)
-        return BeatOutcome(ack="You look closer.", narration=body, kind="inspect")
+        seen_count = self._seen("inspect")
+        facts = (
+            f"the player gives {seen} the traveler's once-over, where they stand",
+        )
+        if seen_count <= 0:
+            facts = facts + (
+                "it is as it was: nothing here has moved for the player's looking at it",
+            )
+        else:
+            facts = facts + (
+                (f"the player has gone over this ground before in this scene "
+                f"({seen_count + 1} times now): same wear, same dust, same patience — "
+                "if the place is holding anything back it is holding it well"),
+            )
+        return BeatOutcome(
+            ack="You look closer.",
+            kind="inspect",
+            brief=BeatBrief(event="inspect.room", facts=facts),
+        )
 
     def _beat_steal(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1600,10 +1605,16 @@ class ActEngine:
         if self._succeeded(result):
             st.silver += 14
             st.note("stole:storeroom-strongbox")
-            narration = STRONGBOX_SUCCESS
             if result.outcome == Outcome.SuccessWithCost:
                 st.note("saw:sneaking")
-                narration = STRONGBOX_COST
+                facts = (
+                    ("the player gets the storeroom latch open and takes a pouch of "
+                    "guilders — fourteen, heavier than an innkeeper's till has any "
+                    "right to be in one night"),
+                    ("on the way out a floorboard speaks under their heel: one loud note "
+                    "in the rain-soft house, and Marla says nothing as the door eases shut"),
+                    "she will remember this even if the watch can never prove it",
+                )
                 self._remember(
                     "marla", "was robbed at the storeroom — and glimpsed who did it",
                     kind="theft", sentiment=-2, salience=4, delta=-30,
@@ -1611,6 +1622,12 @@ class ActEngine:
                 )
                 self._mood("marla", "suspicious", 0.8)
             else:
+                facts = (
+                    ("the player gets the storeroom latch open with a practiced nudge "
+                    "and takes a pouch of guilders — fourteen — from the strongbox"),
+                    ("Marla counts her stock nightly and tonight she will count it again; "
+                    "the road eats coin as fast as it eats travelers"),
+                )
                 self._remember(
                     "marla", "was robbed — the storeroom strongbox came up light",
                     kind="theft", sentiment=-2, salience=4, delta=-25,
@@ -1619,7 +1636,13 @@ class ActEngine:
                 self._mood("marla", "suspicious", 0.5)
         elif result.outcome == Outcome.CriticalFailure:
             st.note("saw:sneaking")
-            narration = STRONGBOX_CAUGHT
+            facts = (
+                ("the strongbox is not locked — it is a decoy, and decoys ring: the "
+                "little bell inside jumps once"),
+                "Marla is in the doorway before the player's hand clears the lid",
+                ("she looks at them the way a ledger looks at a debt and says nothing "
+                "at all; that silence will cost more than any fine"),
+            )
             self._remember(
                 "marla", "caught them red-handed at the storeroom strongbox",
                 kind="theft", sentiment=-2, salience=5, delta=-35,
@@ -1628,14 +1651,24 @@ class ActEngine:
             self._mood("marla", "angry", 0.8)
         else:
             st.note("heard:noise")
-            narration = STRONGBOX_FAIL
+            facts = (
+                ("the storeroom latch holds fast to its frame, and the second try "
+                "costs the player a scrape across the knuckles"),
+                ("they gather themselves in the dark storeroom and decide the strongbox "
+                "can wait for better trade"),
+            )
             self._remember(
                 "marla", "heard a suspicious clatter by the storeroom",
                 kind="suspicion", sentiment=-1, salience=2, delta=-5,
                 reason="made a suspicious clatter by the storeroom",
             )
             self._mood("marla", "suspicious", 0.5)
-        return BeatOutcome(ack="Your hand finds the storeroom latch.", narration=narration, kind="steal", mechanics=mech)
+        return BeatOutcome(
+            ack="Your hand finds the storeroom latch.",
+            kind="steal",
+            brief=BeatBrief(event="steal", facts=facts),
+            mechanics=mech,
+        )
 
     def _beat_fight(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1643,26 +1676,61 @@ class ActEngine:
         mech, result = self._check("swordsmanship", "Moderate", "Swordsmanship — Borin the drunk")
         pc = st.pc
         hp = pc.get("hp", {"cur": 10, "max": 10})
+        scene_fact = (
+            "the fight is by the inn's hearth, the room watching and the fire hissing",
+        )
         if result.outcome == Outcome.Exceptional:
             st.borin_down = True
             st.note("fought:drunk-mercenary")
             hp["cur"] = max(1, hp["cur"] - 1)
-            narration = FIGHT_WIN
+            facts = scene_fact + (
+                ("Borin swings first, the way he always does, and that is the last "
+                "choice the fight lets him make: the player puts him down flat beside "
+                "the hearth"),
+                ("Marla hauls him none too gently out to the porch, and remembers — in "
+                "writing and otherwise — exactly who started it and who finished it"),
+            )
         elif self._succeeded(result):
             st.borin_down = True
             st.note("fought:drunk-mercenary")
-            hp["cur"] = max(1, hp["cur"] - (6 if result.outcome == Outcome.SuccessWithCost else 3))
-            narration = FIGHT_COST if result.outcome == Outcome.SuccessWithCost else FIGHT_WIN
+            cost = result.outcome == Outcome.SuccessWithCost
+            hp["cur"] = max(1, hp["cur"] - (6 if cost else 3))
+            if cost:
+                facts = scene_fact + (
+                    ("the player wins, but it is a close, ugly thing: a chair dies, a "
+                    "ridge of the hearth rakes their ribs, and Borin goes down wearing "
+                    "his own apology in a split lip"),
+                    "Marla's look could stop the rain; the porch claims Borin for the night",
+                )
+            else:
+                facts = scene_fact + (
+                    ("the player wins it: tankards scatter, the fire hisses, and Borin "
+                    "goes down flat beside the hearth"),
+                    "Marla remembers exactly who started it and who finished it",
+                )
         elif result.outcome == Outcome.CriticalFailure:
             st.note("fought:drunk-mercenary")
             hp["cur"] = max(1, hp["cur"] - 9)
             if "Bruised" not in pc.setdefault("conditions", []):
                 pc["conditions"].append("Bruised")
-            narration = FIGHT_CRIT
+            facts = scene_fact + (
+                ("Borin catches the player flush with the flat of a tankard and the "
+                "floor introduces itself"),
+                ("Marla breaks it apart with a cudgel from under the bar and a voice "
+                "the player has never heard her use"),
+                ("the player wakes on the settle with their ribs in bandages and Borin "
+                "snoring on the porch — and every soul in the inn now knows their "
+                "business"),
+            )
         else:
             st.note("fought:drunk-mercenary")
             hp["cur"] = max(1, hp["cur"] - 6)
-            narration = FIGHT_LOSE
+            facts = scene_fact + (
+                ("Borin gets inside the player's arm, the room tilts, and tonight the "
+                "player loses"),
+                ("Marla's voice cuts the brawl apart before it becomes a hanging "
+                "matter; the player comes up with a split brow and an education"),
+            )
         pc["hp"] = hp
         self._remember(
             "marla",
@@ -1686,35 +1754,81 @@ class ActEngine:
                 reason="brawled with them by the fire",
             )
             self._mood("borin", "amused", 0.6)
-        return BeatOutcome(ack="The hearthlight swings as the fight starts.", narration=narration, kind="fight", mechanics=mech)
+        return BeatOutcome(
+            ack="The hearthlight swings as the fight starts.",
+            kind="fight",
+            brief=BeatBrief(event="fight", facts=facts),
+            mechanics=mech,
+        )
+
+    def _return_brief(self) -> BeatBrief:
+        """Coming back in: the arrival, plus what Marla holds of the player."""
+        return BeatBrief(
+            event="return.inn",
+            facts=(
+                ("the player comes back in out of the rain to the Lantern Inn — "
+                "firelight, the smell of wet peat, the door finding its latch"),
+                ("Marla looks up from the bar in the small silence that always follows "
+                "an arrival"),
+            ) + self._marla_remembers(),
+            speakers=("Marla Voss",),
+        )
 
     def _beat_leave(self, text: str) -> BeatOutcome:
         st = self.state
         if st.location == "northern-road":
             return BeatOutcome(
                 ack="You are already on the road.",
-                narration="The Northern Road holds you in its long grey corridor of rain. "
-                          "Behind, the Lantern's light; ahead, the dark that keeps its books badly.",
                 kind="travel",
+                brief=BeatBrief(
+                    event="leave.already",
+                    facts=(
+                        ("the player is already out on the Northern Road, in its long "
+                        "grey corridor of rain"),
+                        ("behind them the Lantern's light; ahead, the dark that keeps "
+                        "its books badly"),
+                    ),
+                ),
             )
         if st.location == PROLOGUE:
             # From the prologue's ridge "leave" means walking on into the dark
-            # past the town — the road's usual arrival text would misread here.
+            # past the town — the road's usual arrival would misread here.
             st.location = "northern-road"
             st.visit_location("northern-road")
             st.advance_minutes(10)
             SceneDirector(st).enter("northern-road")
             return BeatOutcome(
                 ack="You give the town's light your back.",
-                narration=PROLOGUE_NORTH,
                 kind="travel",
+                brief=BeatBrief(
+                    event="prologue.north",
+                    facts=(
+                        ("the player walks on north past the last lamp, and Ravenford "
+                        "gathers itself behind them — roofs, warmth, the inn's one light"),
+                        ("ahead, the Northern Road takes the rain quietly, as it takes "
+                        "everything quietly"),
+                    ),
+                ),
             )
         st.location = "northern-road"
         st.visit_location("northern-road")
         st.advance_minutes(10)
         # The map moves and the scene moves with it (§7, trigger a).
         SceneDirector(st).enter("northern-road")
-        return BeatOutcome(ack="You step out into the rain.", narration=LEAVE_NARRATION, kind="travel")
+        return BeatOutcome(
+            ack="You step out into the rain.",
+            kind="travel",
+            brief=BeatBrief(
+                event="leave.road",
+                facts=(
+                    ("the player shoulders their cloak and steps out of the Lantern — "
+                    "the door lets in the whole wet breath of the night at once"),
+                    ("behind them the inn's light shrinks to a coin; the Northern Road "
+                    "takes them the way it takes every traveler, promising nothing but "
+                    "the walking"),
+                ),
+            ),
+        )
 
     def _beat_return(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1727,9 +1841,8 @@ class ActEngine:
         SceneDirector(st).enter("lantern-inn")
         return BeatOutcome(
             ack="The door gives way to firelight.",
-            narration=RETURN_NARRATION,
             kind="travel",
-            dialogue=[{"speaker": "Marla Voss", "line": self._marla_greeting()}],
+            brief=self._return_brief(),
         )
 
     def _beat_enter_inn(self, text: str) -> BeatOutcome:
@@ -1748,36 +1861,72 @@ class ActEngine:
         st.visit_location("lantern-inn")
         move = SceneDirector(st).enter("lantern-inn")
         if move.first_visit:
-            narration = INN_ARRIVAL
-            dialogue = [{"speaker": "Marla Voss", "line": INN_WELCOME_LINE}]
+            brief = BeatBrief(
+                event="inn.first",
+                facts=(
+                    ("the player takes the last stretch down into Ravenford and comes "
+                    "in out of the rain: the door gives, and the night lets go of them "
+                    "all at once"),
+                    ("the room, as the chronicle first finds it: rain needling the "
+                    "shutters, the hearth throwing long shadows across the notice board, "
+                    "where one parchment hangs newer than the rest — a plea about "
+                    "travelers who never came back down the Northern Road"),
+                    ("Marla welcomes them in: come in from the rain, the fire is warm "
+                    "and the road is bad; sit where she can see them, and questions "
+                    "come cheaper than silver here"),
+                ),
+                speakers=("Marla Voss",),
+                length="Standard",
+            )
         else:
-            narration = RETURN_NARRATION
-            dialogue = [{"speaker": "Marla Voss", "line": self._marla_greeting()}]
+            brief = self._return_brief()
         return BeatOutcome(
             ack="You take the last stretch down into Ravenford.",
-            narration=narration,
             kind="travel",
-            dialogue=dialogue,
+            brief=brief,
             suggestions=possible_moves(st),
         )
 
     def _beat_prologue_look(self, text: str) -> BeatOutcome:
-        """The prologue's view: authored, quiet, and it never moves you (§intro)."""
+        """The prologue's view: quiet, and it never moves the player (§intro)."""
         self.state.advance_minutes(2)
+        facts = (
+            "the player looks out over the valley from the ridge, in the rain",
+            ("Ravenford from here: rooftops descending to the river like ledger "
+            "columns, the old bridge holding its arch against the current, and a "
+            "single lantern burning on the one street that matters — the inn's"),
+            "past the last houses the Northern Road runs out into the dark",
+        )
+        if self._seen("prologue_look"):
+            facts = facts + (
+                ("this is a second look: nothing below has changed for the player's "
+                "looking at it"),
+            )
         return BeatOutcome(
             ack="You look out over the valley.",
-            narration=_rotation(PROLOGUE_VIEW_VARIANTS, self._seen("prologue_look")),
             kind="",
+            brief=BeatBrief(event="prologue.look", facts=facts),
             suggestions=possible_moves(self.state),
         )
 
     def _beat_prologue_listen(self, text: str) -> BeatOutcome:
-        """The prologue's night, heard: authored, and it never moves you (§intro)."""
+        """The prologue's night, heard: quiet, and it never moves the player (§intro)."""
         self.state.advance_minutes(2)
+        facts = (
+            "the player stands still a moment and lets the night say what it has",
+            ("rain on hedge and slate, the river's low argument under the bridge, a "
+            "shutter working loose somewhere below"),
+            ("under all of it, faint as coin under cloth, the murmur of the inn's "
+            "common room: a fire, voices, a door worth opening"),
+        )
+        if self._seen("prologue_listen"):
+            facts = facts + (
+                "this is a second hearing: the same night, closer now than it was",
+            )
         return BeatOutcome(
             ack="You hold still and listen.",
-            narration=_rotation(PROLOGUE_LISTEN_VARIANTS, self._seen("prologue_listen")),
             kind="",
+            brief=BeatBrief(event="prologue.listen", facts=facts),
             suggestions=possible_moves(self.state),
         )
 
@@ -1789,11 +1938,25 @@ class ActEngine:
             bar = pc.get(key, {})
             bar["cur"] = bar.get("max", bar.get("cur", 10))
             pc[key] = bar
+        healed = False
         if "Bruised" in pc.get("conditions", []) and pc["hp"]["cur"] >= pc["hp"]["max"]:
             pc["conditions"].remove("Bruised")
+            healed = True
         # A long night kept the inn: whoever held the bar is up past their rest.
         self._mood("marla", "tired", 0.6)
-        return BeatOutcome(ack="You take your rest.", narration=REST_NARRATION, kind="rest")
+        facts = [
+            "the player takes a room at the inn and sleeps the night through",
+            "they wake rested: vitality and stamina are back to full",
+            ("the rain is still at the shutters and the road is still out there; the "
+            "morning is theirs to spend"),
+        ]
+        if healed:
+            facts.insert(2, "the Bruised condition has passed off")
+        return BeatOutcome(
+            ack="You take your rest.",
+            kind="rest",
+            brief=BeatBrief(event="rest", facts=tuple(facts)),
+        )
 
     def _beat_travel_market(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1801,7 +1964,20 @@ class ActEngine:
         st.visit_location("market")
         st.advance_minutes(15)
         SceneDirector(st).enter("market")
-        return BeatOutcome(ack="You take the market road.", narration=MARKET_NARRATION, kind="travel")
+        return BeatOutcome(
+            ack="You take the market road.",
+            kind="travel",
+            brief=BeatBrief(
+                event="travel.market",
+                facts=(
+                    ("the player walks to Ravenford's market on a bad morning in a good "
+                    "coat: canvas snapping, gutters roaring, and guild silver changing "
+                    "hands where the stalls stay dry"),
+                    ("a factor in grey gloves watches the price of silver climb, and does "
+                    "not bother to look away when the player catches her at it"),
+                ),
+            ),
+        )
 
     def _beat_travel_monastery(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1809,7 +1985,19 @@ class ActEngine:
         st.visit_location("old-monastery")
         st.advance_minutes(25)
         SceneDirector(st).enter("old-monastery")
-        return BeatOutcome(ack="You climb the monastery path.", narration=MONASTERY_NARRATION, kind="travel")
+        return BeatOutcome(
+            ack="You climb the monastery path.",
+            kind="travel",
+            brief=BeatBrief(
+                event="travel.monastery",
+                facts=(
+                    ("the player climbs the path to the Old Monastery, standing above "
+                    "the treeline like a promise someone broke a long time ago"),
+                    ("rain floods the cart ruts on the path; the bells are silent in the "
+                    "towers, but a lantern burns low at the porter's door"),
+                ),
+            ),
+        )
 
     # -- arc beats: clues, solutions, resolution -----------------------------
     def _unlock(self, solution_id: str) -> bool:
@@ -1837,19 +2025,56 @@ class ActEngine:
         if st.location != "northern-road":
             return BeatOutcome(
                 ack="You look for tracks.",
-                narration="The ruts worth reading are out on the Northern Road; here, the mud "
-                          "has better manners.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="clue.tracks.elsewhere",
+                    facts=(
+                        "the player looks for tracks worth reading",
+                        ("the ruts worth reading are out on the Northern Road; here, the "
+                        "mud has better manners"),
+                    ),
+                ),
             )
         if st.lead_stage == "unheard":
-            return BeatOutcome(ack="The mud is dumb.", narration=TRACKS_HINT, kind="inspect")
+            return BeatOutcome(
+                ack="The mud is dumb.",
+                kind="inspect",
+                brief=BeatBrief(
+                    event="clue.tracks.unheard",
+                    facts=(
+                        ("the player reads the wagon ruts, but without a story to follow "
+                        "they are only mud"),
+                        ("what the road has been swallowing is known under the Lantern's "
+                        "roof; ask there first and the road will start to make sense"),
+                    ),
+                ),
+            )
         mech, result = self._check("perception", "Moderate", "Perception — the wagon ruts")
         if self._succeeded(result):
             self._clue("tracks")
             self._advance_to("investigating")
             self._maybe_open_ledger_trail()
-            return BeatOutcome(ack="You read the road.", narration=TRACKS_SUCCESS, kind="inspect", mechanics=mech)
-        return BeatOutcome(ack="The rain owns the road.", narration=TRACKS_FAIL, kind="inspect", mechanics=mech)
+            facts = (
+                ("the player kneels where the mud still holds its shape and reads it: "
+                "two wheel-ruts leave the monastery road at the lightning-bent oak"),
+                ("they cut away toward the deep forest, where no map of Ravenford "
+                "admits a road at all"),
+                ("guild-narrow wheels, double-laden by the look of the rills: whatever "
+                "came back driverless, something heavier followed it in"),
+            )
+            ack = "You read the road."
+        else:
+            facts = (
+                ("the rain has combed the last day's ruts to soup: carts came and went, "
+                "that much the mud will swear to, but which way the last one turned it "
+                "keeps to itself"),
+                "the weather will hold long enough to come at it fresh",
+            )
+            ack = "The rain owns the road."
+        return BeatOutcome(
+            ack=ack, kind="inspect", brief=BeatBrief(event="clue.tracks", facts=facts),
+            mechanics=mech,
+        )
 
     def _beat_clue_lanterns(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1857,12 +2082,30 @@ class ActEngine:
         if st.location not in ("northern-road", "old-monastery"):
             return BeatOutcome(
                 ack="You find a vantage.",
-                narration="The lights over the treeline are watched from the road or the "
-                          "monastery path; from here, every lantern is just a lantern.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="clue.lanterns.elsewhere",
+                    facts=(
+                        "the player goes looking for the lights over the treeline",
+                        ("they are watched from the road or the monastery path; from "
+                        "here, every lantern is just a lantern"),
+                    ),
+                ),
             )
         if st.lead_stage == "unheard":
-            return BeatOutcome(ack="The dark stays dark.", narration=LANTERNS_HINT, kind="inspect")
+            return BeatOutcome(
+                ack="The dark stays dark.",
+                kind="inspect",
+                brief=BeatBrief(
+                    event="clue.lanterns.unheard",
+                    facts=(
+                        ("the player watches the treeline, but the dark is only dark and "
+                        "dark is not yet evidence"),
+                        ("learn first what the road has been swallowing, then watch what "
+                        "the night carries — the two will start to rhyme"),
+                    ),
+                ),
+            )
         following = bool(re.search(r"\b(follow|tail|shadow)\b", text, re.IGNORECASE))
         skill = "stealth" if following else "perception"
         label = "Stealth — tailing the lantern-bearers" if following else "Perception — watching the treeline"
@@ -1873,8 +2116,27 @@ class ActEngine:
             if following:
                 self._unlock("shadow-them")
             self._maybe_open_ledger_trail()
-            return BeatOutcome(ack="You keep still and count lanterns.", narration=LANTERNS_SUCCESS, kind="inspect", mechanics=mech)
-        return BeatOutcome(ack="The cold wins.", narration=LANTERNS_FAIL, kind="inspect", mechanics=mech)
+            facts = (
+                "the player folds into a hollow or the woodline and waits",
+                ("near the second bell, lights come swinging down through the trees: "
+                "three lanterns, one route, carried low and slow with weight"),
+                ("they pass near enough to smell of tallow and wet wool, and take the "
+                "wide path east where the ridge folds — the mouth of the old supply "
+                "tunnel"),
+            )
+            ack = "You keep still and count lanterns."
+        else:
+            facts = (
+                ("the player waits through one bell and two, until the cold owns the "
+                "hollow and the rain finds a way past their collar"),
+                ("lanterns or fireflies, the trees keep their business to themselves "
+                "tonight"),
+            )
+            ack = "The cold wins."
+        return BeatOutcome(
+            ack=ack, kind="inspect", brief=BeatBrief(event="clue.lanterns", facts=facts),
+            mechanics=mech,
+        )
 
     def _beat_persuade(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1884,27 +2146,58 @@ class ActEngine:
         if st.location != "market":
             return BeatOutcome(
                 ack="You straighten your cuffs.",
-                narration="Sella Voss keeps to the guild's stall in the market — you would "
-                          "have to go to her, and be ready to be seen doing it.",
                 kind="talk",
+                brief=BeatBrief(
+                    event="persuade.sella.elsewhere",
+                    facts=(
+                        "the player prepares to make a case to Sella Voss",
+                        ("Sella keeps to the guild's stall in the market; they would have "
+                        "to go to her, and be ready to be seen doing it"),
+                    ),
+                ),
             )
         if st.lead_stage == "unheard":
             return BeatOutcome(
                 ack="You would not know what to ask.",
-                narration="You do not yet know enough to make anyone nervous — learn what "
-                          "the road has been swallowing first.",
                 kind="talk",
+                brief=BeatBrief(
+                    event="persuade.sella.unheard",
+                    facts=(
+                        ("the player would press Sella Voss for answers, but does not yet "
+                        "know enough to make anyone nervous"),
+                        "learn what the road has been swallowing first",
+                    ),
+                ),
             )
         mech, result = self._check(
             "persuasion", "Difficult", "Persuasion — Sella Voss",
             npc="sella", approach=approach_for_skill("persuasion", text),
         )
-        out = BeatOutcome(ack="You make your case quietly.", narration=SELLA_PERSUADE_FAIL, kind="talk", mechanics=mech)
         if self._succeeded(result):
             self._advance_to("investigating")
             self._unlock("talk-it-out")
-            out.narration = SELLA_PERSUADE_SUCCESS
-        return out
+            facts = (
+                "the player makes their case quietly across the guild stall",
+                ("it is not the plea that lands — it is Marla's name; Sella closes the "
+                "ledger and looks up the road a long moment"),
+                ("she tells them: the guild rents the old monastery cellar, the one the "
+                "order calls sealed; if their two went up that road, they are under the "
+                "hill"),
+                ("she tells them to go before the bells ring again, and that they never "
+                "heard it here"),
+            )
+        else:
+            facts = (
+                "the player makes their case quietly, and it does not land",
+                ("Sella says it is guild business, not unkindly, and slides the ledger "
+                "out from under their eyes — the kindness is real, and so is the ledger"),
+            )
+        return BeatOutcome(
+            ack="You make your case quietly.",
+            kind="talk",
+            brief=BeatBrief(event="persuade.sella", facts=facts, speakers=("Sella Voss",)),
+            mechanics=mech,
+        )
 
     def _beat_intimidate(self, text: str) -> BeatOutcome:
         st = self.state
@@ -1913,27 +2206,46 @@ class ActEngine:
             if st.location != "market":
                 return BeatOutcome(
                     ack="You set your jaw.",
-                    narration="You will have to go to the market for that. Making a guild "
-                              "factor nervous in her own stall is a thing done in person.",
                     kind="talk",
+                    brief=BeatBrief(
+                        event="intimidate.sella.elsewhere",
+                        facts=(
+                            "the player squares up to lean on Sella Voss",
+                            ("they will have to go to the market for that — making a "
+                            "guild factor nervous in her own stall is a thing done in "
+                            "person"),
+                        ),
+                    ),
                 )
             if st.lead_stage == "unheard":
                 return BeatOutcome(
                     ack="You would not know where to press.",
-                    narration="Threats without a question behind them are just noise. Learn "
-                              "the story first — then choose who sweats.",
                     kind="talk",
+                    brief=BeatBrief(
+                        event="intimidate.sella.unheard",
+                        facts=(
+                            ("the player would lean on Sella Voss, but threats without a "
+                            "question behind them are just noise"),
+                            "learn the story first, then choose who sweats",
+                        ),
+                    ),
                 )
             mech, result = self._check(
                 "intimidation", "Difficult", "Intimidation — Sella Voss",
                 npc="sella", approach="pressure",
             )
             profile = profile_for("sella")
-            out = BeatOutcome(ack="You lean into the space between you.", narration=SELLA_INTIMIDATE_FAIL, kind="talk", mechanics=mech)
             if self._succeeded(result):
                 self._advance_to("investigating")
                 self._unlock("lean-on-them")
-                out.narration = SELLA_INTIMIDATE_SUCCESS
+                facts = (
+                    ("something in the player's stillness reaches Sella after all; her "
+                    "own stillness breaks first and she turns a page she is not reading"),
+                    ("she tells them: the cellar under the monastery, the old one — "
+                    "guild rent, guild carriers, and their travelers still breathing, "
+                    "because the guild wants the road worried about, not closed"),
+                    "that is all they get",
+                )
                 # Pressure is not free (§6): she does as she is told, and the
                 # fear is weighted by her pride — a grudge, not a lesson.
                 self._remember(
@@ -1949,23 +2261,50 @@ class ActEngine:
                     backfire *= 2
                     line = "was threatened, and the guild heard about it"
                     self._feed("system", text="❧ The grey gloves have taken an interest.")
+                facts = (
+                    ("the player is three words into the hard voice when two "
+                    "grey-gloved men find reasons to stand behind Sella's shoulders"),
+                    "she smiles the whole way; nothing is said that a magistrate could use",
+                )
                 self._remember(
                     "sella", line, kind="intimidation", sentiment=-1, salience=2,
                     delta=backfire, reason=line,
                 )
                 self._mood("sella", "amused", 0.4)
-            return out
+            return BeatOutcome(
+                ack="You lean into the space between you.",
+                kind="talk",
+                brief=BeatBrief(event="intimidate.sella", facts=facts, speakers=("Sella Voss",)),
+                mechanics=mech,
+            )
 
         # Borin: he can be cowed (slice NPC: "backs down if beaten or cowed").
         if st.location != "lantern-inn":
-            return BeatOutcome(ack="Borin is not here.", narration="Wherever Borin is drinking tonight, it is not here.", kind="talk")
+            return BeatOutcome(
+                ack="Borin is not here.",
+                kind="talk",
+                brief=BeatBrief(
+                    event="intimidate.borin.elsewhere",
+                    facts=(
+                        "the player looks for Borin to lean on him",
+                        "wherever Borin is drinking tonight, it is not here",
+                    ),
+                ),
+            )
         if st.borin_down:
             return BeatOutcome(
                 ack="Borin avoids your eye.",
-                narration="Borin is in no hurry to be reacquainted. He mutters something "
-                          "about carts turning north of the oak, and finds his cup suddenly "
-                          "fascinating.",
                 kind="talk",
+                brief=BeatBrief(
+                    event="intimidate.borin.down",
+                    facts=(
+                        ("the player squares up to Borin again, but he has already been "
+                        "beaten tonight and is in no hurry to be reacquainted"),
+                        ("he mutters something about carts turning north of the oak and "
+                        "finds his cup suddenly fascinating"),
+                    ),
+                    speakers=("Borin",),
+                ),
             )
         mech, result = self._check(
             "intimidation", "Moderate", "Intimidation — Borin",
@@ -1982,32 +2321,35 @@ class ActEngine:
                 reason="was frightened into talking about the carts",
             )
             self._mood("borin", "afraid", 0.7)
-            return BeatOutcome(
-                ack="You lean in close.",
-                narration="You do not put a hand on him — you do not need to. You lean in "
-                          "close enough that the fire's crackle cannot cover your voice, and "
-                          "the mercenary who has fought for worse pay than this decides he "
-                          "has somewhere else to be. He mutters one thing on his way out.",
-                kind="talk",
-                mechanics=mech,
-                dialogue=[{"speaker": "Borin", "line": "Carts. North of the oak. That is all you get from me."}],
+            facts = (
+                ("the player does not put a hand on Borin — they do not need to: they "
+                "lean in close enough that the fire's crackle cannot cover their voice"),
+                ("the mercenary decides he has somewhere else to be, and mutters one "
+                "thing on his way out: carts, north of the oak — that is all the player "
+                "gets from him"),
             )
-        # A failed attempt is not free either (§6): he remembers who pushed.
-        backfire = profile.pressure.backfire
-        line = "was leaned on and did not blink"
-        if result.outcome == Outcome.CriticalFailure:
-            backfire *= 2
-            line = "was leaned on badly, and the story of it got around"
-        self._remember(
-            "borin", line, kind="intimidation", sentiment=-1, salience=2,
-            delta=backfire, reason=line,
-        )
-        self._mood("borin", "amused", 0.4)
+            ack = "You lean in close."
+        else:
+            # A failed attempt is not free either (§6): he remembers who pushed.
+            backfire = profile.pressure.backfire
+            line = "was leaned on and did not blink"
+            if result.outcome == Outcome.CriticalFailure:
+                backfire *= 2
+                line = "was leaned on badly, and the story of it got around"
+            self._remember(
+                "borin", line, kind="intimidation", sentiment=-1, salience=2,
+                delta=backfire, reason=line,
+            )
+            self._mood("borin", "amused", 0.4)
+            facts = (
+                ("the player leans on Borin, and he has been intimidated by "
+                "professionals — tonight the player is not one of them"),
+                "he grins into his cup and stays exactly where he is",
+            )
+            ack = "You test the room."
         return BeatOutcome(
-            ack="You test the room.",
-            narration="Borin has been intimidated by professionals, and you are not, tonight, "
-                      "one of them. He grins into his cup and stays exactly where he is.",
-            kind="talk",
+            ack=ack, kind="talk",
+            brief=BeatBrief(event="intimidate.borin", facts=facts, speakers=("Borin",)),
             mechanics=mech,
         )
 
@@ -2017,32 +2359,67 @@ class ActEngine:
         if st.location != "northern-road":
             return BeatOutcome(
                 ack="You pick your ground.",
-                narration="Ambushes happen on the road, and you are not on the road. The "
-                          "carriers come and go on the Northern Road after dark.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="ambush.elsewhere",
+                    facts=(
+                        ("the player picks ground for an ambush, but ambushes happen on "
+                        "the road and they are not on it"),
+                        "the carriers come and go on the Northern Road after dark",
+                    ),
+                ),
             )
         if st.lead_stage != "investigating":
             return BeatOutcome(
                 ack="The road is just road.",
-                narration="You could wait out here, but you do not yet know what is worth "
-                          "lying in wait for. Follow the threads first — the north road is "
-                          "where they will end up crossing.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="ambush.early",
+                    facts=(
+                        ("the player could wait out here, but does not yet know what is "
+                        "worth lying in wait for"),
+                        ("follow the threads first — the north road is where they will end "
+                        "up crossing"),
+                    ),
+                ),
             )
         mech, result = self._check("swordsmanship", "Difficult", "Swordsmanship — the road carriers")
         if self._succeeded(result):
             st.note("fought:road-carriers")
             self._unlock("blades-out")
-            return BeatOutcome(ack="Lanterns, then shouting.", narration=AMBUSH_WIN, kind="fight", mechanics=mech)
-        pc = st.pc
-        hp = pc.get("hp", {"cur": 10, "max": 10})
-        hp["cur"] = max(1, hp["cur"] - (9 if result.outcome == Outcome.CriticalFailure else 6))
-        pc["hp"] = hp
-        st.note("fought:road-carriers")
-        st.location = "lantern-inn"
-        # Waking back at the inn is a transition too (§7, trigger a).
-        SceneDirector(st).enter("lantern-inn")
-        return BeatOutcome(ack="The mud gets its say.", narration=AMBUSH_LOSE, kind="fight", mechanics=mech)
+            facts = (
+                ("they come up the road late with hooded lanterns and a hand-cart: Fenn "
+                "in front, a caravan guard twice the player's width behind"),
+                ("the fight is short and muddy and ends with the guard sitting in the "
+                "ditch reconsidering his career; the player wins it"),
+                ("Fenn talks, because Fenn always talks: a cellar under the old "
+                "monastery, guild rent, and two travelers kept alive because a closed "
+                "road earns the guild more than an empty one"),
+                "the tunnel mouth, he says, is east where the ridge folds",
+            )
+            ack = "Lanterns, then shouting."
+        else:
+            pc = st.pc
+            hp = pc.get("hp", {"cur": 10, "max": 10})
+            hp["cur"] = max(1, hp["cur"] - (9 if result.outcome == Outcome.CriticalFailure else 6))
+            pc["hp"] = hp
+            st.note("fought:road-carriers")
+            st.location = "lantern-inn"
+            # Waking back at the inn is a transition too (§7, trigger a).
+            SceneDirector(st).enter("lantern-inn")
+            facts = (
+                ("the road is bad at this hour and worse at ambushes; the player learns "
+                "that with their ribs and loses it"),
+                ("they wake at the Lantern Inn with linen bound tight and a headache in "
+                "their teeth"),
+                ("Marla says nothing about it, which is the loudest thing she has ever "
+                "said to them; the road keeps its carriers — for now"),
+            )
+            ack = "The mud gets its say."
+        return BeatOutcome(
+            ack=ack, kind="fight", brief=BeatBrief(event="ambush", facts=facts),
+            mechanics=mech,
+        )
 
     def _beat_talk_borin(self, text: str) -> BeatOutcome:
         st = self.state
@@ -2050,7 +2427,17 @@ class ActEngine:
         first_ask = st.remember("borin", "was asked about carts north of the oak", kind="conversation")
         st.advance_minutes(5)
         if st.location != "lantern-inn":
-            return BeatOutcome(ack="You look for Borin.", narration="Wherever Borin is drinking tonight, it is not here.", kind="talk")
+            return BeatOutcome(
+                ack="You look for Borin.",
+                kind="talk",
+                brief=BeatBrief(
+                    event="talk.borin.elsewhere",
+                    facts=(
+                        "the player looks for Borin to ask him about the carts",
+                        "wherever Borin is drinking tonight, it is not here",
+                    ),
+                ),
+            )
         if first_ask:
             # Only a real conversation — Borin actually present — moves his meter.
             st.adjust_attitude("borin", +5, "asked about carts north of the oak")
@@ -2058,17 +2445,37 @@ class ActEngine:
         if st.borin_down:
             return BeatOutcome(
                 ack="Borin eyes you over his bruises.",
-                narration="Borin is on the porch, reconsidering his choices and his jaw. He "
-                          "does not have a lot to say to you. He does, however, still have "
-                          "the grudge — which is halfway to a rumour.",
                 kind="talk",
-                dialogue=[{"speaker": "Borin", "line": "Carts. North of the oak. That is all you get from me, broken ribs and all."}],
+                brief=BeatBrief(
+                    event="talk.borin.down",
+                    facts=(
+                        ("the player asks Borin about the carts again, but he is on the "
+                        "porch reconsidering his choices and his jaw"),
+                        ("he does not have a lot to say to them — he does, however, still "
+                        "have the grudge, which is halfway to a rumour"),
+                        ("what he does say is the same thing again: carts, north of the "
+                        "oak; broken ribs and all, that is all they get from him"),
+                    ),
+                    speakers=("Borin",),
+                ),
             )
         return BeatOutcome(
             ack="Borin warms to his theme.",
-            narration=BORIN_TALK_NARRATION,
             kind="talk",
-            dialogue=[{"speaker": "Borin", "line": BORIN_TALK_LINE}],
+            brief=BeatBrief(
+                event="talk.borin",
+                facts=(
+                    "the player asks Borin about carts and the road",
+                    ("he does not look up from his cup, but for Borin the not-looking is "
+                    "practically confidence — the way of a man deciding how much of a "
+                    "secret he can afford to be careless with"),
+                    ("what he says: carts turn north of the oak, nights, since Midwinter; "
+                    "ask the woman with the scales why the guild pays over rate for "
+                    "silver, then ask her where the carts come back from — and they did "
+                    "not hear it here"),
+                ),
+                speakers=("Borin",),
+            ),
         )
 
     # -- flirt: romantic interest as a mood, never a world fact --------------
@@ -2091,7 +2498,16 @@ class ActEngine:
         target = self._flirt_target(text)
         if target is None:
             return BeatOutcome(
-                ack="Your charm finds no purchase.", narration=FLIRT_EMPTY, kind="talk"
+                ack="Your charm finds no purchase.",
+                kind="talk",
+                brief=BeatBrief(
+                    event="flirt.empty",
+                    facts=(
+                        ("the player makes their interest plain, but there is nobody here "
+                        "to catch their eye"),
+                        "the road keeps its own company tonight, and charm needs a witness",
+                    ),
+                ),
             )
         self._remember(
             target, "was flirted with, and took their time about answering",
@@ -2101,10 +2517,21 @@ class ActEngine:
         # again on every surface (chip + narrator prompt), so one settings
         # flip re-gates every surface at once.
         self._mood(target, "flirty", 0.6)
+        name = display_name(target)
         return BeatOutcome(
             ack="You make your interest plain.",
-            narration=FLIRT_NARRATION.format(name=display_name(target)),
             kind="talk",
+            brief=BeatBrief(
+                event="flirt",
+                facts=(
+                    (f"the player leans in on {name} with a slow, unhurried interest and "
+                    "lets it sit there — no hurry, no hiding the ask"),
+                    (f"{name} holds their look a moment longer than politeness runs and "
+                    "gives them nothing back but the room going quiet around the two of "
+                    "them"),
+                ),
+                speakers=(name,),
+            ),
         )
 
     # -- leverage: a need named in coin (systems slice 4, §6) ----------------
@@ -2140,10 +2567,41 @@ class ActEngine:
         )
         self._mood(target, "warm", 0.5)
         self._leverage_state(target)
+        if target == "sella":
+            facts = (
+                (f"the player puts {price.cost} guilders down first and {name} does not "
+                "touch the coin — she notes it, the way a factor notes everything, and "
+                "the number goes into a column with the player's name at the top of it"),
+                ("she says: the guild rents the old monastery cellar, the one the order "
+                "calls sealed; their travelers are under that hill"),
+                ("and she adds: they have not bought this from her — they have bought "
+                "the guild's silence about her having said it"),
+            )
+        elif target == "borin":
+            facts = (
+                (f"the player puts {price.cost} guilders down first; {name} takes the "
+                "coin without counting it and grins at nothing in particular"),
+                ("he says: carts, north of the oak, nights, since Midwinter — and that "
+                "they paid for what he would have told them for the asking, but he will "
+                "drink to the difference"),
+            )
+        elif target == "tomm":
+            facts = (
+                (f"the player puts {price.cost} guilders down first; {name}'s hand closes "
+                "on the coin before his conscience can comment"),
+                ("he says, fast and low: the guild's men buy silver over rate, and the "
+                "carts that carry it turn north of the oak — nights, since Midwinter; "
+                "he never told them that"),
+            )
+        else:
+            facts = (
+                (f"the player puts {price.cost} guilders down first and {name} takes it, "
+                "paying out exactly what coin buys — a word, and not a kind one"),
+            )
         return BeatOutcome(
             ack="You put the coin down first.",
-            narration=OFFER_PAID.get(target, OFFER_PAID_ANY).format(name=name),
             kind="talk",
+            brief=BeatBrief(event="offer.paid", facts=facts, speakers=(name,)),
         )
 
     def _beat_offer(self, text: str) -> BeatOutcome:
@@ -2159,16 +2617,30 @@ class ActEngine:
         target = self._offer_target(text)
         if target is None:
             return BeatOutcome(
-                ack="Your coin finds no taker.", narration=OFFER_EMPTY, kind="talk"
+                ack="Your coin finds no taker.",
+                kind="talk",
+                brief=BeatBrief(
+                    event="offer.empty",
+                    facts=(
+                        ("the player weighs coin in their palm, but there is nobody here "
+                        "to take it"),
+                        "a price needs a person, and the road keeps its own company tonight",
+                    ),
+                ),
             )
         if target == "sella" and st.lead_stage == "unheard":
             # The arc rail holds: coin cannot buy an answer you cannot ask for.
             return BeatOutcome(
                 ack="You would not know what to ask.",
-                narration="Coin gets you nothing yet — you do not know enough to make a "
-                          "guild factor nervous. Learn what the road has been swallowing "
-                          "first.",
                 kind="talk",
+                brief=BeatBrief(
+                    event="offer.sella.unheard",
+                    facts=(
+                        ("the player offers coin, but it gets them nothing yet — they do "
+                        "not know enough to make a guild factor nervous"),
+                        "learn what the road has been swallowing first",
+                    ),
+                ),
             )
         profile = profile_for(target)
         price = profile.price
@@ -2176,47 +2648,117 @@ class ActEngine:
         if price is not None and st.silver >= price.cost:
             return self._leverage_paid(target, price)
         if price is not None:
-            narration = OFFER_SHORT.format(name=name, cost=price.cost, purse=st.silver)
+            facts = (
+                (f"the player counts the purse twice: {st.silver} guilders against a "
+                f"price of {price.cost}"),
+                (f"{name} watches the arithmetic cross their face and lets it fail — "
+                "the ask will have to be made the hard way now"),
+            )
         else:
-            narration = OFFER_NO_PRICE.format(name=name)
+            facts = (
+                (f"{name} does not even look at the player's hand: coin is not what "
+                f"{name} wants, and both of them can hear the offer land wrong"),
+                f"the ask has to be made in the only currency {name} trades in",
+            )
             if not _ASK_RE.search(text):
-                return BeatOutcome(ack="Your coin lands wrong.", narration=narration, kind="talk")
+                return BeatOutcome(
+                    ack="Your coin lands wrong.",
+                    kind="talk",
+                    brief=BeatBrief(event="offer.no-price", facts=facts, speakers=(name,)),
+                )
         mech, result = self._check(
             "persuasion", SOCIAL_DIFFICULTY.get(target, "Moderate"),
-            f"Persuasion — {display_name(target)}", npc=target, approach="coin",
+            f"Persuasion — {name}", npc=target, approach="coin",
         )
-        out = BeatOutcome(ack="You ask it the hard way.", narration=narration, kind="talk",
-                          mechanics=mech)
         if self._succeeded(result):
             self._leverage_state(target)
-            out.narration = (SELLA_PERSUADE_SUCCESS if target == "sella"
-                             else OFFER_WON.format(name=name))
-        return out
+            if target == "sella":
+                facts = (
+                    ("the player makes their case with coin on the table, and it is not "
+                    "the coin that lands — it is Marla's name; Sella closes the ledger "
+                    "and looks up the road a long moment"),
+                    ("she tells them: the guild rents the old monastery cellar, the one "
+                    "the order calls sealed; if their two went up that road, they are "
+                    "under the hill"),
+                    ("she tells them to go before the bells ring again, and that they "
+                    "never heard it here"),
+                )
+            else:
+                facts = (
+                    (f"{name} studies the player a moment longer than the offer deserved "
+                    "and gives them the thing coin could not buy anyway: a word out of "
+                    "the column, told the way favors are told"),
+                )
+        return BeatOutcome(
+            ack="You ask it the hard way.",
+            kind="talk",
+            brief=BeatBrief(event="offer.ask", facts=facts, speakers=(name,)),
+            mechanics=mech,
+        )
 
     def _beat_confront(self, text: str) -> BeatOutcome:
         st = self.state
         st.advance_minutes(20)
         if st.completed:
-            return BeatOutcome(ack="The undercroft is quiet.", narration=CONFRONT_QUIET, kind="resolve")
+            return BeatOutcome(
+                ack="The undercroft is quiet.",
+                kind="resolve",
+                brief=BeatBrief(
+                    event="confront.quiet",
+                    facts=(
+                        ("the player returns to the undercroft: quiet now, a cold "
+                        "stair, a smell of lamp oil and rain"),
+                        ("whatever the guild kept down here, the light and the law have "
+                        "both found it; the player does not need to go down again"),
+                    ),
+                ),
+            )
         if st.location == "lantern-inn":
             return BeatOutcome(
                 ack="You consider the inn's cellar door.",
-                narration="The inn's cellar holds barrels and salt and one padlocked door that "
-                          "the old gripes say goes further than it should — but the guild's "
-                          "business is not kept under Marla's feet. Whatever is below, it is "
-                          "below the old monastery. The road goes there when you do.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="confront.inn",
+                    facts=(
+                        "the player considers going down after the guild's business",
+                        ("the inn's cellar holds barrels and salt and one padlocked door "
+                        "the old gripes say goes further than it should"),
+                        ("but the guild's business is not kept under Marla's feet: "
+                        "whatever is below is below the old monastery, and the road goes "
+                        "there when the player does"),
+                    ),
+                ),
             )
         if st.location != "old-monastery":
             return BeatOutcome(
                 ack="You would need to get there first.",
-                narration="The cold you are after comes from under the Old Monastery. The "
-                          "monastery path leaves Ravenford along the north road, past the "
-                          "oak.",
                 kind="inspect",
+                brief=BeatBrief(
+                    event="confront.elsewhere",
+                    facts=(
+                        ("the player makes for the cold they are after, but it comes from "
+                        "under the Old Monastery"),
+                        ("the monastery path leaves Ravenford along the north road, past "
+                        "the oak"),
+                    ),
+                ),
             )
         if st.solution_path is None:
-            return BeatOutcome(ack="You weigh the door.", narration=CONFRONT_HINT, kind="inspect")
+            return BeatOutcome(
+                ack="You weigh the door.",
+                kind="inspect",
+                brief=BeatBrief(
+                    event="confront.hint",
+                    facts=(
+                        ("the player stands at the monastery's undercroft door and feels "
+                        "the cold through their boots"),
+                        ("something below is worth the guild's money and the order's "
+                        "silence — but they hold threads, not a way in"),
+                        ("someone knows it: a factor with a ledger, a mercenary with a "
+                        "grudge, or the road itself; finish one of those threads first"),
+                    ),
+                ),
+            )
         # Resolution: the travelers come out, the arc completes.
         self._advance_to("solved")
         st.travelers_freed = True
@@ -2244,59 +2786,73 @@ class ActEngine:
         st.pc.setdefault("achievements", []).append(f"Freed the missing travelers (Day {st.day})")
         return BeatOutcome(
             ack="You go down into the cold.",
-            narration=CONFRONT_READY,
             kind="resolve",
-            dialogue=[
-                {
-                    "speaker": "The elder traveler",
-                    "line": "You came. Nobody came for three nights. We had started to think the road forgot us too.",
-                },
-                {"speaker": "The chronicler", "line": EPILOGUE},
-            ],
+            brief=BeatBrief(
+                event="confront.resolve",
+                facts=(
+                    ("the player goes in: the tunnel mouth breathes cold and lamp oil, "
+                    "and they go low along the wall past stacked silver that nobody in "
+                    "Ravenford will ever admit to"),
+                    ("the two travelers are there — rope-burned, hollow-eyed, and alive; "
+                    "the player cuts them loose before the bells ring again and the hill "
+                    "lets all three of them out into the rain"),
+                    ("the elder traveler says: nobody came for three nights; they had "
+                    "started to think the road forgot them too"),
+                    ("by dawn it is over Ravenford: the guild's sealed cellar, the rent "
+                    "ledger, the two names the notice board had begun to forget; "
+                    "Sergeant Dain takes Fenn's statement twice, Marla sets two extra "
+                    "cups on the bar and does not charge for them, and the travelers "
+                    "walk the north road with the rain finally behind them"),
+                    "the chapter closes grieving for nothing",
+                ),
+                speakers=("The elder traveler",),
+                length="Detailed",
+            ),
         )
 
     # -- Marla's memory greeting --------------------------------------------
-    _GREETING_TEMPLATES = (
-        "Welcome back. Marla looks up from the bar — she remembers {recalled}.",
-        ("The door has hardly shut before Marla says it: she remembers {recalled}, "
-         "and does not pretend otherwise."),
-        ("Marla slides a cup across the bar without being asked. \"Back, then,\" she "
-         "says, and lets you hear the rest in the pause: {recalled}."),
-    )
+    def _marla_remembers(self) -> tuple[str, ...]:
+        """What Marla holds of the player, stated as facts for an arrival.
 
-    def _marla_greeting(self) -> str:
+        The tags are the engine's (``marla_memory``); this reads them into plain
+        statements the narrator can greet with, in words it writes itself.
+        """
         st = self.state
-        memories: list[str] = []
+        facts: list[str] = []
         for tag in st.marla_memory:
             if tag.startswith("stole:"):
-                memories.append("her missing silver")
+                facts.append("she has not forgotten her missing silver")
             elif tag.startswith("fought:"):
-                memories.append("the brawl you started")
+                facts.append("she has not forgotten the brawl the player started by her hearth")
             elif tag.startswith("talked:"):
-                memories.append(f"your questions about {tag.split(':', 1)[1]}")
+                facts.append(
+                    f"she remembers the player asking after {tag.split(':', 1)[1]}"
+                )
             elif tag == "shared:lead":
-                memories.append("the missing travelers you promised to find")
+                facts.append("she remembers the missing travelers the player promised to find")
             elif tag.startswith("inspected:"):
                 what = tag.split(":", 1)[1]
                 what = what if what.startswith("the ") else f"the {what}"
-                memories.append(f"your poking around {what}")
+                facts.append(f"she noticed the player poking around {what}")
             elif tag.startswith("saw:"):
-                memories.append("how you eyed her strongbox")
+                facts.append("she saw how the player eyed her strongbox")
             elif tag.startswith("resolved:"):
-                memories.append("the travelers you brought home")
-        recalled = "; ".join(memories) if memories else "a quiet first visit"
-        template = self._GREETING_TEMPLATES[(st.visits - 1) % len(self._GREETING_TEMPLATES)]
-        return template.format(recalled=recalled)
+                facts.append("she remembers the travelers the player brought home")
+        if not facts:
+            facts.append(
+                "this is a quiet first visit back: she has nothing on the player yet, "
+                "and greets them as the innkeeper she is"
+            )
+        return tuple(facts)
 
     # -- pipeline fallback ---------------------------------------------------
     def _beat_pipeline(self, text: str) -> tuple[BeatOutcome, str | None]:
-        """Unrecognised action: interpreter -> checks -> narrator (model-dependent).
+        """Unrecognised action: interpreter -> checks -> narrator (model path).
 
-        This is the ONLY model-dependent beat: the authored beats narrate their
-        own curated prose. Without a connected model the turn is refused
-        (P12 — the built-in stub is never reachable from here), and a model
-        call that fails mid-turn raises :class:`ActFailure` with a scrubbed,
-        machine-readable reason instead of in-world cover prose.
+        The one beat whose prose the pipeline assembles itself (it carries the
+        whole 10-step context: intent, checks, retrieved memories, the scene
+        line). Authored beats go through ``_narrate`` with their own facts —
+        same narrator, same rule: no model, no narration (P12/P14).
         """
         st = self.state
         if self.provider is None:

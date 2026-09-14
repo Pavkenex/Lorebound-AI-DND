@@ -158,4 +158,7 @@ def game_state_payload(
         # Inspiration: the spendable applause (count) + whether one burns now.
         "inspiration": int(state.inspiration or 0),
         "inspired": bool(state.inspired),
+        # The chronicle's opening is written on demand (P14): the page asks the
+        # narrator for it once, and reads the chronicle on every later load.
+        "opening_pending": bool(getattr(state, "opening_pending", False)),
     }

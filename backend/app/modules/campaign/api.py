@@ -26,7 +26,7 @@ from app.modules.campaign.service import (
 )
 from app.modules.play.models import PlayActionRow, PlayStateRow
 from app.modules.play.session import PlaySession
-from app.modules.play.state import refresh_prologue_opening, seeded_state
+from app.modules.play.state import reopen_prologue_opening, seeded_state
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -111,12 +111,13 @@ def restart_campaign(
         checkpoint_save_id = checkpoint.id
 
     fresh = seeded_state()
-    # The character a player built is theirs across journeys: the sheet — and
-    # with it the prologue's arrival text — rides into the new run.
+    # The character a player built is theirs across journeys: the sheet rides
+    # into the new run, and with it the chronicle's opening — which the model
+    # writes anew for that sheet (the seed itself carries no prose, P14).
     built = getattr(session.state, "pc", None) or {}
     if built.get("created"):
         fresh.pc = copy.deepcopy(built)
-        refresh_prologue_opening(fresh)
+        reopen_prologue_opening(fresh)
     payload = fresh.to_json()
     ps_row = db.get(PlayStateRow, campaign_id)
     if ps_row is None:

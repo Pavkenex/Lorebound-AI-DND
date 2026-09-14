@@ -129,6 +129,56 @@ def game_state(
     )
 
 
+@router.post("/opening")
+def opening(
+    request: Request,
+    response: Response,
+    campaign_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Write the chronicle's opening page, once per journey (§intro, P14).
+
+    The seed carries no prose: a new journey's first page is written by the
+    model from the player's own sheet (the road above Ravenford, the ridge,
+    the inn's lantern below). Idempotent — once written, a reload reads the
+    chronicle and this answers ``already: true`` — and it obeys the same
+    contract as ``/act``: no connected model (``400 connect_your_ai``) or a
+    failed call (``502``) means no narration, never cover prose.
+    """
+    campaign = _resolve_campaign(db, user, campaign_id)
+    session = PlaySession.load(db, campaign.id)
+    if not getattr(session.state, "opening_pending", False):
+        return {"narration": "", "dialogue": [], "suggestions": [], "already": True}
+
+    provider = resolve_provider(db, user.id)
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="connect_your_ai"
+        )
+
+    engine = ActEngine(
+        session,
+        prefs=_parse_prefs(request.headers.get("X-Content-Prefs")),
+        provider=provider,
+    )
+    try:
+        payload = engine.narrate_opening()
+    except ActFailure as exc:
+        raise _act_failure_http(exc) from exc
+
+    report = engine.meter.report(campaign.id)
+    response.headers["x-ai-calls"] = str(report["calls"])
+    response.headers["x-ai-cost-usd"] = f"{report.get('cost_usd', 0.0):.6f}"
+    response.headers["x-ai-cache"] = "miss"
+    response.headers["x-cache"] = "miss"
+
+    # The opening is live state (the feed carries it, the pending flag is
+    # spent): commit before answering, exactly as /act does.
+    session.checkpoint(db, "")
+    return payload
+
+
 @router.get("/npcs/{slug}")
 def npc_character(
     slug: str,

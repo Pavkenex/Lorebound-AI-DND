@@ -85,65 +85,25 @@ DEFAULT_PC: dict[str, Any] = {
     "achievements": [],
 }
 
-#: Opening beat shown when a campaign's chronicle is first unrolled.
-OPENING_BEAT: str = (
-    "Rain needles the shutters of the Lantern Inn. The hearth throws long shadows "
-    "across Marla's notice board, where one parchment hangs newer than the rest — "
-    "a plea about travelers who never came back down the Northern Road."
-)
+def reopen_prologue_opening(state: PlayState) -> bool:
+    """Hand the prologue's opening back to the narrator (§intro, P14).
 
-#: The prologue's opening (§intro): the road above Ravenford, the rain, and the
-#: player's own sheet — the arrival the chronicle unrolls before the tavern.
-PROLOGUE_SCENE_TEXT = (
-    "Dusk, and the rain has settled in for the night. Ravenford lies below the "
-    "ridge in a scattershot of lamplight — wet slate, the river running black "
-    "under the old bridge, the last stretch of road coming down between dripping "
-    "hedgerows to a sign that still swings over the bend: a painted lantern, "
-    "and a door's worth of warmth beneath it."
-)
-
-
-def _drive_line(drives: list[Any]) -> str:
-    """The character's own reasons, verbatim from their sheet (§intro)."""
-    said = [str(d).strip() for d in drives if str(d).strip()][:2]
-    if not said:
-        return ""
-    listed = "; ".join(said)
-    return (
-        f" And what brought you here — {listed} — has waited this long; "
-        "it can wait for a dry seat by the fire."
-    )
-
-
-def prologue_opening(pc: dict[str, Any]) -> str:
-    """Compose the arrival: the world, and who the player built to walk it.
-
-    Light touch by design — name (+epithet), what they carry, and their
-    drives as the reason the road ran here. Every piece degrades away on a
-    sparse sheet: the scene never depends on a field existing.
-    """
-    name = str(pc.get("name") or "").strip() or "a traveler"
-    epithet = str(pc.get("epithet") or "").strip()
-    who = f"You are {name}" + (f", {epithet}" if epithet else "") + "."
-    items = [str(i).strip() for i in (pc.get("equipment") or []) if str(i).strip()][:3]
-    carry = f" What you carry, you carry yourself — {', '.join(items)}." if items else ""
-    return PROLOGUE_SCENE_TEXT + " " + who + carry + _drive_line(pc.get("drives") or [])
-
-
-def refresh_prologue_opening(state: PlayState) -> bool:
-    """Recompose the arrival in place after the sheet arrives (§intro).
-
-    A campaign is seeded before character creation commits, so the prologue
-    narration — the feed's first event — is rewritten here the moment the
-    player's own sheet lands.
+    The chronicle's opening is the model's like every other story surface: the
+    seed writes no prose, and ``POST /campaigns/{id}/opening`` narrates the
+    arrival from the player's own sheet. A campaign is seeded before character
+    creation commits, so the moment a built sheet lands this drops whatever
+    opening was written for the sheet before it — it is the chronicle's first
+    narration, if it exists at all — and marks the opening pending again, so
+    the next call writes the arrival for the character who actually walks in.
     """
     if getattr(state, "location", "") != PROLOGUE:
         return False
-    for event in getattr(state, "feed", []):
-        if event.get("id") == "live-1" and event.get("kind") == "narration":
-            event["text"] = prologue_opening(getattr(state, "pc", {}) or {})
-            return True
-    return False
+    feed = list(getattr(state, "feed", []) or [])
+    while feed and feed[0].get("kind") == "narration":
+        feed.pop(0)
+    state.feed = feed
+    state.opening_pending = True
+    return True
 
 
 #: Relationship meter bounds (design §3): -100 (Hostile) .. +100 (Bonded).
@@ -236,6 +196,10 @@ class PlayState:
     actions_taken: int = 0
     feed_seq: int = 0
     feed: list[dict[str, Any]] = field(default_factory=list)
+    #: The chronicle's opening has not been narrated yet (P14): the seed writes
+    #: no prose, and the opening is the one story surface with no beat to hang
+    #: on. ``POST /campaigns/{id}/opening`` writes it from the player's sheet.
+    opening_pending: bool = True
 
     #: Rolling saga digest (§25 continuity): a short deterministic recap of
     #: the whole tale so far, refreshed at checkpoint beats; rides every
@@ -274,6 +238,13 @@ class PlayState:
             return cls()
         if not isinstance(data, dict):
             return cls()
+        if "opening_pending" not in data:
+            # A save from before the opening was the model's (P14): its
+            # chronicle already carries written narration, so it counts as
+            # opened. Written history is never re-narrated.
+            data["opening_pending"] = not any(
+                e.get("kind") == "narration" for e in (data.get("feed") or [])
+            )
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in data.items() if k in known})
 
@@ -482,17 +453,20 @@ class PlayState:
 
 
 def seeded_state() -> PlayState:
-    """Fresh campaign state: the prologue on the road, clock set, opening beat.
+    """Fresh campaign state: the prologue on the road, clock set, no prose.
 
-    The chronicle now opens *outside* Ravenford (§intro): the arrival plays
-    first, and entering the inn is the first true transition — its opening
-    (and Marla's welcome) belongs to that beat, so it never replays. The
-    mystery lead is *not* auto-discovered: the player earns "rumored" by
-    asking Marla (or combing the notice board) — only the hook is in the air.
+    The chronicle opens *outside* Ravenford (§intro): the arrival plays first,
+    and entering the inn is the first true transition — its opening (and
+    Marla's welcome) belongs to that beat, so it never replays. The mystery
+    lead is *not* auto-discovered: the player earns "rumored" by asking Marla
+    (or combing the notice board) — only the hook is in the air.
+
+    The arrival itself is written by the model, on demand (P14): the seed marks
+    ``opening_pending`` and writes nothing — no authored prose stands in for
+    the narrator, not even for the first line of the tale.
     """
     state = PlayState()
     state.location = PROLOGUE
     state.visit_location(PROLOGUE)
     SceneDirector(state).seed()
-    state.append_feed("narration", text=prologue_opening(state.pc))
     return state
