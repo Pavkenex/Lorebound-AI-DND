@@ -92,6 +92,21 @@ failure). Tuning knobs — context window, prompt-budget split, salience weights
 memory windows, mood half-life, fact rate limit — are plain dataclasses in
 `config.py`, passed per launch.
 
+## Content boundaries (phase 2, app plan §11)
+
+When the engine runs inside the app, the player's content limits arrive as a
+code-owned directive string and ride the prompt as their own system line:
+`PlaySession.start(..., content_policy=…)` → `Orchestrator(..., content_policy=…)`
+→ `scene["content_policy"]` → `ContextAssembler`. The line is appended **after**
+the ruleset (the cacheable prefix stays byte-identical), is never truncated by
+the system ceiling and is never dropped under budget pressure — policy, not
+context. Its tokens are accounted separately as
+`accounting["sections"]["content_policy"]`; an empty policy (the default) leaves
+every prompt byte-for-byte unchanged. The engine treats the string as opaque —
+the app renders it with `narrator.prefs.ContentPrefs.describe_for_prompt()`
+(violence / horror / romance / language + the `nsfw` master switch). Tests:
+`tests/test_content_policy.py`.
+
 ## Layout
 
 ```

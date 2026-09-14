@@ -14,6 +14,21 @@ Over budget: drop from the bottom first; truncate digest/lower-salience memory
 before anything pinned. ``accounting`` records per-section token estimates,
 the budget, and exactly what was dropped (telemetry for spec §9).
 
+Content policy (phase-2 P8, plan §11)
+-------------------------------------
+``scene["content_policy"]`` is a code-owned directive string (the player's
+content boundaries, rendered by the app's ``ContentPrefs.describe_for_prompt()``)
+appended to the SYSTEM message after the ruleset. Three properties are the whole
+point of the seam, and each is pinned by ``tests/test_content_policy.py``:
+
+* the ruleset prefix stays byte-identical, so provider-side prefix caching
+  (spec §4 priority #1) keeps hitting;
+* the directive is never truncated and never dropped — it is policy, not
+  context, so it survives any budget pressure (it is accounted as its own
+  ``content_policy`` section);
+* absent/empty/non-string ⇒ nothing is appended and the assembled prompt is
+  byte-identical to a prompt assembled without the key at all.
+
 Interfaces — what this module expects from its collaborators
 ------------------------------------------------------------
 ``scene`` — cheap reads supplied by the caller (the orchestrator), never
@@ -21,6 +36,7 @@ fetched here::
 
     {
       "ruleset": str,                      # optional static-block override
+      "content_policy": str,               # optional always-present system line
       "location": {"name", "description_static", "connections", ...} | str,
       "present_npcs": [{"id"|"npc_id", "name", "alive", "mood": {...},
                         "disposition"|"disposition_base", ...}, ...],
@@ -97,7 +113,9 @@ _SECTION_TITLES: dict[str, str] = {
 }
 _DYNAMIC_SECTIONS: tuple[str, ...] = tuple(_SECTION_TITLES)
 # Every accounted section, system first (it is delivered via the system role).
-_ACCOUNTING_SECTIONS: tuple[str, ...] = ("system", *_DYNAMIC_SECTIONS)
+# ``content_policy`` rides the system message too (appended after the ruleset),
+# but is accounted separately so a consumer can tell policy from cacheable text.
+_ACCOUNTING_SECTIONS: tuple[str, ...] = ("system", "content_policy", *_DYNAMIC_SECTIONS)
 # Telemetry order for the dropped list: lowest priority first.
 _DROP_ORDER: tuple[str, ...] = (
     "saga", "chronicle", "leads", "npc_memory", "scene", "system",
@@ -193,7 +211,11 @@ class ContextAssembler:
 
         ``dropped`` is ordered by drop priority (saga → chronicle → leads →
         npc_memory → scene → system); identical inputs produce identical
-        output, including the dropped list.
+        output, including the dropped list. ``sections["content_policy"]``
+        counts the policy tail of the system message (0 = no policy); it never
+        appears in ``dropped``. ``AssembledPrompt.system`` is
+        ``ruleset + "\\n\\n" + policy`` when a policy is present, the ruleset
+        alone otherwise.
         """
         scene = scene if isinstance(scene, dict) else {}
         intent = intent or Intent()
@@ -214,6 +236,12 @@ class ContextAssembler:
                 dropped, "system", "system_ceiling",
                 self.estimate_tokens(system_text), system_total,
             )
+
+        # 1b. content policy: appended AFTER the ruleset so the cacheable prefix
+        # stays byte-identical, and never truncated/dropped — policy, not
+        # context (phase-2 P8, plan §11).
+        policy_text = self._policy_text(scene)
+        system_prompt = f"{system_text}\n\n{policy_text}" if policy_text else system_text
 
         # 2/3. non-negotiables: this turn's mechanical outcome + pinned facts.
         mechanics_text = self._section_text("mechanics", self._mechanics_body(mechanical))
@@ -274,6 +302,9 @@ class ContextAssembler:
         text = "\n\n".join(section for _, section in sections)
 
         per_section = {"system": self.estimate_tokens(system_text)}
+        per_section["content_policy"] = (
+            self.estimate_tokens(policy_text) if policy_text else 0
+        )
         for name in _DYNAMIC_SECTIONS:
             per_section[name] = self.estimate_tokens(parts[name]) if parts[name] else 0
         used = sum(per_section.values())
@@ -293,7 +324,7 @@ class ContextAssembler:
             "dropped": [dropped[name] for name in _DROP_ORDER if name in dropped],
             "cacheable": ["system"],
         }
-        return AssembledPrompt(text=text, system=system_text,
+        return AssembledPrompt(text=text, system=system_prompt,
                                sections=sections, accounting=accounting)
 
     # -- budget ------------------------------------------------------------ #
@@ -480,6 +511,17 @@ class ContextAssembler:
         if isinstance(ruleset, str) and ruleset.strip():
             return ruleset.strip()
         return DEFAULT_RULESET_TEXT
+
+    @staticmethod
+    def _policy_text(scene: dict) -> str:
+        """The content-boundary directive to append to the system message.
+
+        Anything but a non-empty string (absent key, ``None``, wrong type,
+        whitespace) means "no policy": nothing is appended and the prompt is
+        byte-identical to one assembled without the key at all.
+        """
+        policy = scene.get("content_policy")
+        return policy.strip() if isinstance(policy, str) else ""
 
     @staticmethod
     def _present_npcs(scene: dict) -> list[dict]:

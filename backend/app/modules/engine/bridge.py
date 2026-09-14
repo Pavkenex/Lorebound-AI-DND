@@ -1,9 +1,9 @@
 """Engine bridge: campaign lifecycle, the one-turn wrapper, and the runtime-key flow.
 
-``docs/INTEGRATION_PLAN.md`` §2–§4 is the spec (settled). The rebuilt engine
-(``engine/``, stdlib-only) runs in-process: each campaign's game state lives in
-its own SQLite file (``paths.campaign_db_path``) while Postgres keeps the
-app-side rows (``models.py``).
+``docs/INTEGRATION_PLAN.md`` §2–§4 is the spec (settled); §11 governs content
+boundaries. The rebuilt engine (``engine/``, stdlib-only) runs in-process: each
+campaign's game state lives in its own SQLite file (``paths.campaign_db_path``)
+while Postgres keeps the app-side rows (``models.py``).
 
 Runtime-key contract (plan §4 — hard rules, do not relax):
 - ``provider_key`` is a runtime argument. It is handed to the engine adapter for
@@ -13,6 +13,17 @@ Runtime-key contract (plan §4 — hard rules, do not relax):
 - Provider failures keep the engine's scrubbing: the already-redacted message is
   surfaced as ``EngineBridgeError("provider_error", detail=…)``; the raw
   exception is never re-raised with the key attached.
+
+Content boundaries (plan §11 — do not relax either):
+- ``take_turn`` takes the player's ``narrator.prefs.ContentPrefs`` (the router
+  parses the ``X-Content-Prefs`` header with that model — no parallel
+  vocabulary here) and hands the engine ``prefs.describe_for_prompt()``
+  VERBATIM as the prompt's content policy. The directive is prompt-only: it is
+  never persisted, never logged, never echoed beyond the applied-prefs summary.
+- The applied prefs are echoed in the turn payload's ``content`` block (nsfw +
+  the four levels) so the client can show what bounds narration.
+- An unreadable header is NOT silently dropped (the legacy bug): the defaults
+  apply and ``CONTENT_DEFAULTS_NOTE`` is added to the turn's system lines.
 
 Transport-free by design — the flag-gated HTTP router (and account scoping via
 ``require_user``/``scope_campaign``) is later work on top of this surface.
@@ -36,6 +47,7 @@ from sqlalchemy.orm import Session
 from app.modules.campaign.models import Campaign
 from app.modules.engine import paths
 from app.modules.engine.models import EngineCampaignRow, EngineConnectionRow
+from app.modules.narrator.prefs import ContentPrefs
 
 #: Providers the app exposes (plan decision 3: openai-compatible only). The
 #: engine's anthropic/gemini adapters stay tested but are not app choices yet.
@@ -44,6 +56,11 @@ _LIVE_PROVIDERS = frozenset({"openai", "openai-compatible"})
 
 #: World fixtures the pilot can seed: name -> engine fixture payload (None = demo).
 WORLDS: dict[str, dict | None] = {"demo": None}
+
+#: System line shown when a supplied ``X-Content-Prefs`` payload was unreadable
+#: and the standard boundaries were applied instead (plan §11: never a silent
+#: drop — the legacy narrator did exactly that with a malformed payload).
+CONTENT_DEFAULTS_NOTE = "content: settings could not be read — standard boundaries applied"
 
 DEFAULT_TIMEOUT_S = 30
 MIN_TIMEOUT_S = 1
@@ -246,13 +263,23 @@ def take_turn(
     text: str,
     *,
     provider_key: str | None = None,
+    content_prefs: ContentPrefs | None = None,
+    content_prefs_invalid: bool = False,
 ) -> dict:
     """Run exactly one engine turn for ``campaign_id`` and return its payload.
 
     ``provider_key`` is a runtime-only BYOK value (plan §4): passed to the
     engine adapter for this call, never persisted, logged, or prompted. A live
     (non-stub) provider without a key raises ``EngineBridgeError('connect_your_ai')``.
+
+    ``content_prefs`` is the player's content boundaries (plan §11), parsed by
+    the router from ``X-Content-Prefs`` with ``narrator.prefs.ContentPrefs``;
+    ``None`` means no header was supplied and the defaults apply.
+    ``content_prefs_invalid`` marks a payload the router could not read: the
+    defaults are applied anyway and the turn carries ``CONTENT_DEFAULTS_NOTE``
+    in its system lines — never a silent drop.
     """
+    applied = content_prefs if isinstance(content_prefs, ContentPrefs) else ContentPrefs()
     db_path = _db_path_or_error(campaign_id)
     row = db.get(EngineCampaignRow, campaign_id)
     if row is None:
@@ -261,11 +288,16 @@ def take_turn(
 
     with _campaign_lock(campaign_id):
         session = PlaySession.start(
-            db_path=str(db_path), adapter=adapter, provider=provider_cfg
+            db_path=str(db_path), adapter=adapter, provider=provider_cfg,
+            # The player's boundaries, verbatim, as the prompt's content policy.
+            content_policy=applied.describe_for_prompt(),
         )
         try:
             result = session.act(str(text or ""))
-            payload = _turn_payload(result, session, live=adapter is not None)
+            payload = _turn_payload(
+                result, session, live=adapter is not None,
+                content_prefs=applied, content_prefs_invalid=content_prefs_invalid,
+            )
         except ProviderError as exc:
             # Already redacted by the engine's transport layer (plan §4).
             raise EngineBridgeError("provider_error", detail=str(exc)) from exc
@@ -328,8 +360,13 @@ def _db_path_or_error(campaign_id: str) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-def _turn_payload(result: Any, session: PlaySession, *, live: bool) -> dict:
+def _turn_payload(result: Any, session: PlaySession, *, live: bool,
+                  content_prefs: ContentPrefs | None = None,
+                  content_prefs_invalid: bool = False) -> dict:
     state = session.state_view()
+    system_lines = [str(line) for line in (getattr(result, "system_lines", None) or [])]
+    if content_prefs_invalid:
+        system_lines.append(CONTENT_DEFAULTS_NOTE)
     return {
         "turn": int(getattr(result, "turn", 0) or 0),
         "narration": str(getattr(result, "narration", "") or ""),
@@ -338,7 +375,22 @@ def _turn_payload(result: Any, session: PlaySession, *, live: bool) -> dict:
         "suggestions": _suggestions(state),
         "capability": _capability(session, live=live),
         "state": state,
-        "system_lines": [str(line) for line in (getattr(result, "system_lines", None) or [])],
+        "system_lines": system_lines,
+        # The boundaries narration actually ran under (plan §11) — the applied
+        # prefs, not the header: unreadable input reads back as the defaults.
+        "content": _content_view(content_prefs),
+    }
+
+
+def _content_view(prefs: ContentPrefs | None) -> dict:
+    """JSON-safe echo of the applied content boundaries (nsfw + four levels)."""
+    applied = prefs if isinstance(prefs, ContentPrefs) else ContentPrefs()
+    return {
+        "nsfw": bool(applied.nsfw),
+        "violence": str(applied.violence),
+        "horror": str(applied.horror),
+        "romance": str(applied.romance),
+        "language": str(applied.language),
     }
 
 

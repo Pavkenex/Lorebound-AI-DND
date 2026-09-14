@@ -4,7 +4,8 @@ Routes (all behind ``settings.ENGINE_MODE``; every path 404s when the flag is of
 
 - ``POST /engine/campaigns`` {name} -> 201 campaign — starts a pilot chronicle
 - ``GET  /engine/campaigns`` -> the caller's engine campaigns (id, name, world, last_turn_at)
-- ``POST /engine/campaigns/{id}/turns`` {text} (+ ``X-Provider-Key``) -> turn payload
+- ``POST /engine/campaigns/{id}/turns`` {text} (+ ``X-Provider-Key``, optional
+  ``X-Content-Prefs``) -> turn payload
 - ``GET  /engine/campaigns/{id}/state`` -> state snapshot
 - ``GET  /engine/connection`` / ``PUT /engine/connection`` -> non-secret prefs
 - ``POST /engine/connection/check`` (+ ``X-Provider-Key``) -> {reachable, native_tools, detail}
@@ -16,6 +17,16 @@ bodies or headers. Error details leave scrubbed — the engine redacts its own
 provider failures, and this boundary re-redacts with the exact runtime key as
 defense in depth. Nothing here (or below it) has a key-shaped storage slot.
 
+Content boundaries (plan §11): ``X-Content-Prefs`` carries the player's content
+limits as JSON — the ``narrator.prefs.ContentPrefs`` vocabulary (``violence`` /
+``horror`` / ``romance`` / ``language`` at ``off`` | ``reduced`` | ``standard``,
+plus the ``nsfw`` master switch). Same header the legacy play surface reads.
+Absent (or empty) means the defaults. A payload this layer cannot read falls
+back to the defaults AND the turn payload carries a system note saying so — the
+legacy silent drop is the bug being avoided, not a behaviour to copy. The applied
+prefs are echoed in the payload's ``content`` block; the header payload itself is
+never logged.
+
 Error shapes (plan §5): 400 ``{"detail": "connect_your_ai"}`` when a live provider
 is selected without a key; 502 for provider failures with the scrubbed detail; 404
 for unknown/foreign campaigns — ownership goes through ``scope_campaign``, which
@@ -23,6 +34,7 @@ never reveals whether another account's campaign id exists.
 """
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from engine.models import ChatMessage, ChatRequest, ProviderConfig
@@ -36,7 +48,7 @@ from engine.providers.registry import (
 )
 from engine.providers.transport import redact
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -46,6 +58,7 @@ from app.modules.auth.models import User
 from app.modules.campaign.models import Campaign
 from app.modules.engine import bridge
 from app.modules.engine.models import EngineCampaignRow, EngineConnectionRow
+from app.modules.narrator.prefs import ContentPrefs
 
 
 def require_engine_mode() -> None:
@@ -91,6 +104,35 @@ class ConnectionIn(BaseModel):
     base_url: str | None = None
     model: str | None = None
     timeout_s: int | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Content boundaries (plan §11) — parsed with the legacy ContentPrefs contract
+# --------------------------------------------------------------------------- #
+
+
+def content_prefs(raw: str | None) -> tuple[ContentPrefs, bool]:
+    """``(applied prefs, payload was readable)`` for an ``X-Content-Prefs`` value.
+
+    The validation model is ``narrator.prefs.ContentPrefs`` itself — the same
+    vocabulary (and the same level aliases) the legacy play surface accepts, so
+    the engine path can never drift from it. Absent/empty input is the normal
+    case (defaults, no note); anything unreadable — bad JSON, a non-object, an
+    out-of-vocabulary level — answers the defaults with ``readable=False`` so
+    the caller can surface the fallback instead of dropping it silently.
+    """
+    if raw is None or not raw.strip():
+        return ContentPrefs(), True
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return ContentPrefs(), False
+    if not isinstance(data, dict):
+        return ContentPrefs(), False
+    try:
+        return ContentPrefs(**data), True
+    except ValidationError:
+        return ContentPrefs(), False
 
 
 # --------------------------------------------------------------------------- #
@@ -204,12 +246,22 @@ def run_turn(
 
     The optional ``X-Provider-Key`` header is the runtime-only BYOK key for this
     call; nothing is stored from it.
+
+    The optional ``X-Content-Prefs`` header (plan §11) is the player's content
+    boundaries in the ``ContentPrefs`` JSON vocabulary. It is validated here and
+    handed to the bridge as an applied model; unreadable input falls back to the
+    defaults with a system note in the payload. The payload echoes the applied
+    prefs in its ``content`` block.
     """
     campaign = scope_campaign(db, user, campaign_id)
     provider_key = request.headers.get("X-Provider-Key")
+    parsed, readable = content_prefs(request.headers.get("X-Content-Prefs"))
     try:
         return bridge.take_turn(
-            db, user.id, campaign.id, body.text, provider_key=provider_key
+            db, user.id, campaign.id, body.text,
+            provider_key=provider_key,
+            content_prefs=parsed,
+            content_prefs_invalid=not readable,
         )
     except bridge.EngineBridgeError as exc:
         raise _http_error(exc, provider_key=provider_key) from exc

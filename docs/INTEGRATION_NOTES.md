@@ -17,6 +17,9 @@ results in §7 and the finalize block below):
 | P5 | Deploy docs + compose/deploy-artifact re-verification | this document + `INTEGRATION_DEPLOY.md` |
 | P6 | Ship — merge the frontend, full batteries, push | merged `b7806fe`; batteries + push recorded below |
 | P7 | Post-deploy live verify + first real BYOK turn | **parked** until a deploy sets `ENGINE_MODE=1` |
+| P8 | Content boundaries — `X-Content-Prefs` → engine prompt policy (plan §11) | landed (see §10) |
+| P9 | Frontend boundaries line on `/chronicle` | follows P8 |
+| P10 | Ship round 2 — merge, batteries, push | follows P8/P9 |
 
 ## 1. Decisions (settled in the plan — not revisited)
 
@@ -32,11 +35,17 @@ results in §7 and the finalize block below):
 
 ## 2. File map (what changed, where)
 
-Engine side — only packaging moved; no engine runtime code changed in phase 2:
+Engine side — packaging moved in P1 (`engine/pyproject.toml`), and P8 added the
+content-policy seam (`play.PlaySession.start` / `pipeline.Orchestrator` keyword
+`content_policy=`, the `scene["content_policy"]` key, the always-present system
+line plus its `accounting["sections"]["content_policy"]` row — see §10). No other
+engine runtime code changed in phase 2:
 
 - `engine/pyproject.toml` — explicit `setuptools.build_meta` backend; `store/schema.sql`
   declared as package data (`[tool.setuptools.package-data] engine = [...]`) so a
   non-editable install ships the file `engine.store` reads on every connect.
+- `engine/src/engine/{context,pipeline,play}.py` — the P8 policy line (docs in the
+  module docstrings; tests in `engine/tests/test_content_policy.py`).
 
 Backend (`backend/`):
 
@@ -82,16 +91,20 @@ total), and `test_ship.py` updated for the repo-root context.
 
 ```
 pilot UI (P4)                                      + X-Provider-Key when a key is set
-  → POST /engine/campaigns/{id}/turns {text}  ──────────────────────────────┐
+  → POST /engine/campaigns/{id}/turns {text}       + X-Content-Prefs (player boundaries) ─┐
   → FastAPI: require_engine_mode → require_user → scope_campaign (404 cross-account)
-  → bridge.take_turn(db, user_id, campaign_id, text, provider_key=<header>) │
+  → router.content_prefs(header) → (ContentPrefs, readable)   [§10]
+  → bridge.take_turn(db, user_id, campaign_id, text, provider_key=<header>,
+                     content_prefs=<parsed>, content_prefs_invalid=<not readable>)
       → connection prefs (non-secret) resolve provider (default "stub"; key required only when live)
       → per-campaign threading.Lock (single writer)
-      → PlaySession.start(db_path=…/{campaign_id}.db, adapter=…, provider=…)
+      → PlaySession.start(db_path=…/{campaign_id}.db, adapter=…, provider=…,
+                          content_policy=prefs.describe_for_prompt())
       → engine.act(): intent → Pass A–D → capability canary on first live use
         (verdict cached in the campaign DB's provider_caps table — no key material)
   → payload: turn, narration, dialogue[{npc_id,name,text}], mechanics, suggestions,
-             capability{provider,model,mode,native_tools,degraded}, state, system_lines
+             capability{provider,model,mode,native_tools,degraded}, state, system_lines,
+             content{nsfw,violence,horror,romance,language}   [§10]
   → last_turn_at updated in Postgres; state committed in the campaign SQLite file (WAL)
 ```
 
@@ -218,6 +231,83 @@ for `no_campaign` / `not_an_engine_campaign` (never reveals foreign ids); 502 sc
 2. Prove the landing with the chunk-hash poller (`coolify-deploys` skill) rather than
    eyeballing; hard-refresh before judging the frontend.
 3. Then un-park **P7**: one live BYOK turn (cheap model) + the degraded-banner check.
+
+## 10. Content boundaries on the engine path (P8, plan §11)
+
+The pilot reads the player's content limits and the engine narrator prompt always
+carries them. Round 2's frontend card (P9) renders the line; this section is the
+backend/engine contract it renders.
+
+**Request.** `POST /engine/campaigns/{id}/turns` accepts an optional
+`X-Content-Prefs` header — the same JSON vocabulary the legacy play surface reads
+(`violence`/`horror`/`romance`/`language` at `off|reduced|standard`, plus the
+`nsfw` master switch; `low|clean|mild` alias to `reduced`). The router validates it
+with `narrator.prefs.ContentPrefs` itself, so the two surfaces cannot drift.
+
+**Outcome per input.**
+
+| Header | Applied | Prompt | Payload |
+|---|---|---|---|
+| absent / empty | defaults | default directive | `content` = defaults, no note |
+| readable JSON object | those prefs | their directive | `content` = applied values |
+| unreadable (bad JSON, non-object, out-of-vocabulary level, wrong type) | **defaults** (safe: nsfw off, standard caps) | default directive | `content` = defaults **+ `CONTENT_DEFAULTS_NOTE`** in `system_lines` |
+
+The note exists because the legacy narrator *silently dropped* a malformed
+payload (a player's NSFW-off setting could just vanish); the pilot never does.
+Wording: ``content: settings could not be read — standard boundaries applied``
+(`bridge.CONTENT_DEFAULTS_NOTE`, the string a UI can match on).
+
+**Engine seam.** `bridge.take_turn(...)` renders `prefs.describe_for_prompt()`
+**verbatim** and hands it to the engine as the prompt's content policy:
+`PlaySession.start(..., content_policy=…)` → `Orchestrator(..., content_policy=…)`
+→ `scene["content_policy"]` → `ContextAssembler`, which appends it as the system
+message's last line — after the ruleset, so the cacheable prefix stays
+byte-identical; never truncated by the system ceiling; never dropped under budget
+pressure; accounted separately as `accounting["sections"]["content_policy"]`. A
+campaign with no policy assembles the pre-P8 prompt byte for byte (the engine
+suite pins that). The directive is **prompt-only**: it never reaches Postgres, the
+campaign SQLite file, or a log line, and it is re-read on every turn (flipping NSFW
+mid-campaign changes the next turn, not the last one).
+
+**Payload echo.** `payload["content"]` carries the *applied* boundaries —
+`{nsfw, violence, horror, romance, language}` — never the raw header, so aliases
+arrive canonical (`mild` → `reduced`) and unknown header keys never surface.
+
+**Tests.** `engine/tests/test_content_policy.py` (11) and
+`backend/tests/test_engine_content_prefs.py` (25, offline: recording fake adapter,
+in-memory app DB, throwaway `ENGINE_DATA_DIR`). The backend module pins the parser
+contract, the directive verbatim in the *recorded live prompt* (defaults, custom,
+NSFW, per-turn re-read), the fallback note, the applied-prefs echo, and the
+hygiene set: the header payload absent from `caplog.text`, from every app-DB row
+and from the campaign file, with a canary string smuggled into the header. The
+engine module pins the three assembly properties plus the byte-identical
+no-policy prompt.
+
+**P8 evidence** (commands + observed results; logs under `/opt/data/scratch/p8_gates/`):
+
+- `cd engine && .venv/bin/python -m pytest tests -o addopts="" -q -rA -p no:warnings`
+  → **799 passed** (788 pre-P8; +11); `.venv/bin/ruff check src tests evals` → clean.
+- `cd engine && .venv/bin/python -m evals --suite all` → `RESULT: OK` (core 5/5,
+  e2e 5/5); `evals/artifacts/r10_probe_mechanisms.py` → 14/14;
+  `r10_probe_mutations.py` → control clean, all 6 mutations detected.
+- `cd backend && .venv/bin/python -m pytest tests -o addopts="" -q -rA -p no:warnings`
+  → **527 passed** (502 pre-P8; +25); `.venv/bin/ruff check app tests` → clean.
+- **Live over-HTTP probe** against a real `uvicorn` from this tree
+  (`ENGINE_MODE=1`, scratch app DB + fresh engine dir, port 8003): a canonical
+  header (`violence:reduced, horror:off, romance:off, language:reduced,
+  nsfw:true`) echoes `content` exactly with no note; a malformed payload answers
+  the defaults **plus** the note in `system_lines`; an absent header answers the
+  defaults with no note — 3/3 turns, stub provider, no key. Driver
+  `/opt/data/scratch/p8/p8_content_prefs_e2e.py`, transcript
+  `p8_content_prefs_e2e.txt` (md5 `b6419f48a928dd70110c14e6f6e36638`).
+- P8 mutation probes (`/opt/data/scratch/p8_mutate/probe_mutations.py`): 7
+  deliberate removals of the new guards (policy never appended / policy made
+  truncatable / raw policy type accepted / header ignored / policy not threaded /
+  silent drop restored / header logged) — every one fails the new tests
+  (`probe_final.txt`: "RESULT: OK — every mutation detected").
+- Empty-policy byte-identity outside the unit tests: the checked-in 12-turn stub
+  transcript still hashes `b3fe0d66a353ffeb119709bec2579ac7` (the R9/R10 record),
+  i.e. the offline play path is unchanged when no policy is threaded.
 
 ---
 

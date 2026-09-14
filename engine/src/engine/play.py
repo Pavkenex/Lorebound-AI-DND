@@ -250,7 +250,10 @@ class PlaySession:
               config: EngineConfig | None = None,
               narrator: Any = None, rng: Any = None, adapter: Any = None,
               provider: ProviderConfig | None = None,
+              content_policy: str | None = None,
               auto_seed: bool = True, probe: bool = True) -> PlaySession:
+        """``content_policy`` is the code-owned content-boundary directive every
+        assembled prompt carries on its system line (plan §11; empty = none)."""
         config = config or EngineConfig()
         store = Store(db_path)
         if auto_seed and store.count("world") == 0:
@@ -269,6 +272,7 @@ class PlaySession:
             rng=rng if rng is not None else SeededRng(seed),
             adapter=adapter, provider=provider,
             context_window=config.budget.default_context_window,
+            content_policy=content_policy,
         )
         return cls(store=store, config=config, orchestrator=orchestrator,
                    turn=cls._next_turn(store))

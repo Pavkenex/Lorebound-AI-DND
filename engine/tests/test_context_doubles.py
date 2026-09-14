@@ -167,7 +167,8 @@ def pinned_fact(*, statement: str = "the player promised to find the shipment",
 
 
 def scene_dict(*, ruleset: str | None = None, location: dict | str | None = None,
-               npcs: list | None = None, player: dict | None = None) -> dict:
+               npcs: list | None = None, player: dict | None = None,
+               content_policy: str | None = None) -> dict:
     """A minimal valid ``scene`` dict (the shape context documents)."""
     scene: dict = {
         "location": location if location is not None else {
@@ -183,6 +184,8 @@ def scene_dict(*, ruleset: str | None = None, location: dict | str | None = None
     }
     if ruleset is not None:
         scene["ruleset"] = ruleset
+    if content_policy is not None:
+        scene["content_policy"] = content_policy
     return scene
 
 

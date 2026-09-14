@@ -351,9 +351,10 @@ def test_accounting_is_self_consistent() -> None:
     )
     accounting = prompt.accounting
     assert list(accounting["sections"]) == [
-        "system", "scene", "mechanics", "pinned_facts", "npc_memory", "leads",
-        "chronicle", "saga",
+        "system", "content_policy", "scene", "mechanics", "pinned_facts",
+        "npc_memory", "leads", "chronicle", "saga",
     ]
+    assert accounting["sections"]["content_policy"] == 0  # no policy in this scene
     assert accounting["sections"]["system"] == assembler.estimate_tokens(prompt.system)
     for name, text in prompt.sections:
         assert accounting["sections"][name] == assembler.estimate_tokens(text)

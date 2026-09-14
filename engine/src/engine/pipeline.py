@@ -20,7 +20,10 @@ Interfaces (R8 and the evals harness consume these; keep them stable)
   ``last_notes: list[str]`` (one-line diagnostics, surfaced in system_lines).
 * ``Orchestrator(store, config=None, narrator=None, *, rng=None, sim=None,
   components=None, assembler=None, adapter=None, provider=None,
-  context_window=None, effect_rules=None, ruleset=None, dc=None, now=None)``.
+  context_window=None, effect_rules=None, ruleset=None, dc=None,
+  content_policy=None, now=None)`` — ``content_policy`` is the code-owned
+  content-boundary directive appended to every prompt's system line (plan §11,
+  empty default).
 * ``Orchestrator.classify_intent(text) -> Intent`` — rules-first, store-aware
   for NPC targets.
 * ``Orchestrator.take_turn(*, player_input, turn) -> TurnResult``.
@@ -203,10 +206,17 @@ class Orchestrator:
                  context_window: int | None = None,
                  effect_rules: Sequence[Callable[[Intent, MechanicalOutcome], list[Delta]]] | None = None,
                  ruleset: str | None = None, dc: int | None = None,
+                 content_policy: str | None = None,
                  now: Callable[[], float] | None = None) -> None:
         """``narrator`` wins over ``adapter``; with only an adapter the live
         narrator (native tools / degraded JSON, spec §7) is built lazily with
-        the capability probe cached in ``provider_caps``."""
+        the capability probe cached in ``provider_caps``.
+
+        ``content_policy`` (keyword-only, default empty) is a code-owned
+        directive — the player's content boundaries — threaded into every
+        assembled prompt as its own system line after the ruleset (plan §11).
+        Empty means no line and byte-identical prompts to a pre-P8 assembly.
+        """
         self.store = store
         self.config = config or EngineConfig()
         self.narrator = narrator
@@ -219,6 +229,7 @@ class Orchestrator:
         self.context_window = context_window
         self.effect_rules = effect_rules
         self.ruleset = ruleset or default_ruleset_text()
+        self.content_policy = str(content_policy or "").strip()
         self.dc = dc
         self.now = now or time.time
         self._validator: Validator | None = None
@@ -459,6 +470,7 @@ class Orchestrator:
         }
         return {
             "ruleset": self.ruleset,
+            "content_policy": self.content_policy,
             "location": location,
             "present_npcs": self.present_npcs(turn),
             "player": player,

@@ -203,6 +203,18 @@ comparison of `534c43e` vs this tree.
     since the scaffold** (verified by an empty
     `git diff 534c43e..HEAD -- engine/src/engine/{models,config,similarity}.py
     engine/pyproject.toml`).
+16. **Phase 2 (P8, app plan §11) — content boundaries on the engine path.**
+    `play.PlaySession.start` and `pipeline.Orchestrator.__init__` gain
+    `content_policy=` (keyword-only, default empty); `Orchestrator._scene()`
+    carries it as `scene["content_policy"]`, and `context.ContextAssembler`
+    appends it to the system message **after** the ruleset — never truncated by
+    the system ceiling, never dropped under budget pressure, counted as its own
+    `accounting["sections"]["content_policy"]` row. Empty input leaves every
+    prompt byte-for-byte unchanged (the pre-P8 baseline). The directive string
+    is opaque to the engine; the app renders it with
+    `narrator.prefs.ContentPrefs.describe_for_prompt()`. Tests:
+    `tests/test_content_policy.py`; the app-side seam is documented in
+    `../docs/INTEGRATION_NOTES.md` §10.
 
 ### Final module inventory
 
