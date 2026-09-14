@@ -37,6 +37,7 @@ from app.modules.campaign import world as _world  # noqa: F401
 from app.modules.character import models as _char  # noqa: F401
 from app.modules.engine import bridge, paths
 from app.modules.engine import router as engine_router
+from app.modules.engine.models import EngineConnectionRow
 from app.modules.inventory import models as _inv  # noqa: F401
 from app.modules.play import models as pm  # noqa: F401
 
@@ -99,7 +100,7 @@ ENDPOINTS: tuple[tuple[str, str, dict | None], ...] = (
     ("POST", f"/engine/campaigns/{GHOST_ID}/turns", {"text": "look around"}),
     ("GET", f"/engine/campaigns/{GHOST_ID}/state", None),
     ("GET", "/engine/connection", None),
-    ("PUT", "/engine/connection", {"provider": "stub"}),
+    ("PUT", "/engine/connection", {"provider": "openai-compatible"}),
     ("POST", "/engine/connection/check", None),
 )
 
@@ -109,13 +110,20 @@ def _sweep_email(prefix: str, method: str, url: str) -> str:
     return f"{prefix}-{method.lower()}-{slug}@example.com"
 
 
-def _register(client: TestClient, email: str) -> dict:
+def _register_user(client: TestClient, email: str) -> tuple[dict, str]:
+    """Register and return ``(auth headers, user id)`` — the id seeds legacy rows."""
     r = client.post(
         "/auth/register",
         json={"email": email, "password": "password123", "display_name": email.split("@")[0]},
     )
     assert r.status_code == 201, r.text
-    return {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
+    data = r.json()
+    return {"Authorization": f"Bearer {data['token']['access_token']}"}, data["user"]["id"]
+
+
+def _register(client: TestClient, email: str) -> dict:
+    headers, _ = _register_user(client, email)
+    return headers
 
 
 def _create(client: TestClient, headers: dict, name: str = "Pilot") -> dict:
@@ -139,6 +147,71 @@ def _connect_live(
     r = client.put("/engine/connection", headers=headers, json=body)
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def _store_provider(user_id: str, provider: str, **prefs: Any) -> None:
+    """Seed connection prefs straight into the row — a legacy-row simulation.
+
+    Needed since P11: the PUT surface rejects anything but a live provider, so
+    a row created under the old ``"stub"`` default can only be seeded here.
+    Upserts: an earlier engine request may already have created the row.
+    """
+    db = TestingSession()
+    try:
+        row = db.get(EngineConnectionRow, user_id)
+        if row is None:
+            db.add(EngineConnectionRow(user_id=user_id, provider=provider, **prefs))
+        else:
+            for name, value in {"provider": provider, **prefs}.items():
+                setattr(row, name, value)
+        db.commit()
+    finally:
+        db.close()
+
+
+class _ScriptedAdapter:
+    """Fake live adapter (the P2 bridge-test shape): canary, then the delta envelope."""
+
+    name = "openai"
+
+    def __init__(self, cfg: Any, api_key: str | None = None) -> None:
+        self.cfg = cfg
+        self.api_key = api_key
+        self.caps = ProviderCaps(native_tools=True)
+
+    def capabilities(self) -> ProviderCaps:
+        return self.caps
+
+    def secrets(self) -> tuple[str, ...]:
+        return (self.api_key,) if self.api_key else ()
+
+    def complete(self, request: Any) -> ChatResponse:
+        names = {tool["function"]["name"] for tool in (request.tools or [])}
+        if "report_capability" in names:
+            return ChatResponse(
+                text="",
+                tool_calls=[ToolCall(name="report_capability", arguments={"ok": True})],
+            )
+        return ChatResponse(
+            text="",
+            tool_calls=[
+                ToolCall(
+                    name="propose_state_deltas",
+                    arguments={
+                        "narration": "The yard holds its breath while gulls wheel over the gate.",
+                        "npc_dialogue": [
+                            {"npc_id": "npc:1", "name": "Marla Quist", "text": "Mind the ruts."}
+                        ],
+                        "deltas": [],
+                    },
+                )
+            ],
+        )
+
+
+def _scripted_build(cfg: Any, *, api_key: str | None = None) -> _ScriptedAdapter:
+    """``bridge.build_adapter`` replacement: the scripted fake, no network."""
+    return _ScriptedAdapter(cfg, api_key)
 
 
 def _db_text() -> str:
@@ -232,11 +305,60 @@ def test_every_path_requires_auth_when_the_flag_is_on(client: TestClient, method
 
 
 # --------------------------------------------------------------------------- #
-# Stub flow: create -> turn -> state -> list
+# The model gate (P11): no keyless/stub play + the connected flow
 # --------------------------------------------------------------------------- #
 
 
-def test_stub_flow_create_turn_state_list(client: TestClient):
+def test_turns_without_a_connected_model_are_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Unset and the retired ``"stub"`` default both mean NOT CONNECTED.
+
+    P11: a turn answers the existing 400 ``connect_your_ai`` contract — the same
+    shape as the live-without-key case — and the engine is never reached.
+    """
+    headers, user_id = _register_user(client, "router-unconnected@example.com")
+    campaign_id = _create(client, headers)["id"]
+
+    # A fresh row (ORM default ""): refused with and without a runtime key.
+    for extra in ({}, {"X-Provider-Key": RUNTIME_KEY}):
+        r = client.post(
+            f"/engine/campaigns/{campaign_id}/turns",
+            headers={**headers, **extra},
+            json={"text": "I look around the yard"},
+        )
+        assert r.status_code == 400
+        assert r.json() == {"detail": "connect_your_ai"}
+
+    # A legacy row from the stub-default era reads identically — even with a
+    # runtime key handed in, and even with live-looking prefs beside it.
+    _store_provider(
+        user_id, "stub", base_url="https://api.example.test/v1", model="gpt-4o-mini"
+    )
+    monkeypatch.setattr(bridge, "build_adapter", _scripted_build)  # must not be reached
+    r = client.post(
+        f"/engine/campaigns/{campaign_id}/turns",
+        headers={**headers, "X-Provider-Key": RUNTIME_KEY},
+        json={"text": "I look around the yard"},
+    )
+    assert r.status_code == 400
+    assert r.json() == {"detail": "connect_your_ai"}
+
+    store = Store(paths.campaign_db_path(campaign_id))
+    try:
+        assert store.count("turn_log") == 0  # nothing ran, nothing spent
+    finally:
+        store.close()
+
+
+def test_connected_flow_create_turn_state_list(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """The pilot loop on a connected model: create -> turn -> state -> list.
+
+    The live transport is the scripted fake adapter (offline), the same shape
+    the key-path tests use; every assertion about the wire payload stays.
+    """
     headers = _register(client, "router-flow@example.com")
     created = _create(client, headers, "The chronicle")
     assert set(created) == {"id", "name", "world", "last_turn_at"}
@@ -245,19 +367,33 @@ def test_stub_flow_create_turn_state_list(client: TestClient):
     )
     campaign_id = created["id"]
 
+    # Not connected yet: refused (P11) — and that refusal advances nothing.
+    refused = client.post(
+        f"/engine/campaigns/{campaign_id}/turns",
+        headers={**headers, "X-Provider-Key": RUNTIME_KEY},
+        json={"text": "I take in the yard and the smell of salt on the wind"},
+    )
+    assert refused.status_code == 400
+    assert refused.json() == {"detail": "connect_your_ai"}
+
+    _connect_live(client, headers)
+    monkeypatch.setattr(bridge, "build_adapter", _scripted_build)
+
     r = client.post(
         f"/engine/campaigns/{campaign_id}/turns",
-        headers=headers,
+        headers={**headers, "X-Provider-Key": RUNTIME_KEY},
         json={"text": "I take in the yard and the smell of salt on the wind"},
     )
     assert r.status_code == 200, r.text
     turn = r.json()
     assert turn["turn"] == 1
-    assert turn["narration"].strip()
-    assert all(set(entry) == {"npc_id", "name", "text"} for entry in turn["dialogue"])
+    assert turn["narration"].startswith("The yard holds its breath")
+    assert turn["dialogue"] == [
+        {"npc_id": "npc:1", "name": "Marla Quist", "text": "Mind the ruts."}
+    ]
     assert turn["capability"] == {
-        "provider": "stub", "model": "stub", "mode": "stub",
-        "native_tools": False, "degraded": False,
+        "provider": "openai", "model": "gpt-4o-mini", "mode": "live",
+        "native_tools": True, "degraded": False,
     }
     assert isinstance(turn["suggestions"], list)
     assert turn["state"]["turn"] == 1
@@ -275,7 +411,9 @@ def test_stub_flow_create_turn_state_list(client: TestClient):
     assert rows[0]["last_turn_at"] is not None  # the turn stamped the side-row
 
 
-def test_list_is_mine_only_played_first_and_engine_only(client: TestClient):
+def test_list_is_mine_only_played_first_and_engine_only(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
     a = _register(client, "router-list-a@example.com")
     b = _register(client, "router-list-b@example.com")
 
@@ -286,9 +424,11 @@ def test_list_is_mine_only_played_first_and_engine_only(client: TestClient):
     legacy = client.post("/campaigns", headers=a, json={})
     assert legacy.status_code == 201, legacy.text
 
+    _connect_live(client, a)
+    monkeypatch.setattr(bridge, "build_adapter", _scripted_build)
     r = client.post(
         f"/engine/campaigns/{first['id']}/turns",
-        headers=a,
+        headers={**a, "X-Provider-Key": RUNTIME_KEY},
         json={"text": "I look around the yard"},
     )
     assert r.status_code == 200, r.text
@@ -366,46 +506,6 @@ def test_body_limits_are_enforced(client: TestClient):
 # --------------------------------------------------------------------------- #
 # Runtime key flow (plan §4)
 # --------------------------------------------------------------------------- #
-
-
-class _ScriptedAdapter:
-    """Fake live adapter (the P2 bridge-test shape): canary, then the delta envelope."""
-
-    name = "openai"
-
-    def __init__(self, cfg: Any, api_key: str | None = None) -> None:
-        self.cfg = cfg
-        self.api_key = api_key
-        self.caps = ProviderCaps(native_tools=True)
-
-    def capabilities(self) -> ProviderCaps:
-        return self.caps
-
-    def secrets(self) -> tuple[str, ...]:
-        return (self.api_key,) if self.api_key else ()
-
-    def complete(self, request: Any) -> ChatResponse:
-        names = {tool["function"]["name"] for tool in (request.tools or [])}
-        if "report_capability" in names:
-            return ChatResponse(
-                text="",
-                tool_calls=[ToolCall(name="report_capability", arguments={"ok": True})],
-            )
-        return ChatResponse(
-            text="",
-            tool_calls=[
-                ToolCall(
-                    name="propose_state_deltas",
-                    arguments={
-                        "narration": "The yard holds its breath while gulls wheel over the gate.",
-                        "npc_dialogue": [
-                            {"npc_id": "npc:1", "name": "Marla Quist", "text": "Mind the ruts."}
-                        ],
-                        "deltas": [],
-                    },
-                )
-            ],
-        )
 
 
 def test_live_turn_without_a_key_asks_to_connect(client: TestClient):
@@ -549,7 +649,7 @@ def test_connection_prefs_roundtrip_and_shape(client: TestClient):
     doc = got.json()
     assert set(doc) == {"provider", "base_url", "model", "timeout_s", "updated_at"}
     assert (doc["provider"], doc["base_url"], doc["model"], doc["timeout_s"]) == (
-        "stub", "", "", 30,
+        "", "", "", 30,
     )
     assert not any(
         word in field
@@ -585,6 +685,7 @@ def test_connection_prefs_roundtrip_and_shape(client: TestClient):
     assert again["model"] == "gpt-4o"  # persisted, not just echoed
 
     for bad in ({"provider": "carrier-pigeon"}, {"provider": "anthropic"},
+                {"provider": "stub"},  # the retired default is not a provider
                 {"timeout_s": 0}, {"timeout_s": 10_000},
                 {"model": "m" * 201}, {"base_url": "u" * 501}):
         r = client.put("/engine/connection", headers=headers, json=bad)
@@ -608,14 +709,48 @@ def test_put_ignores_unknown_fields_gracefully_and_never_echoes_a_key(client: Te
     r = client.put(
         "/engine/connection",
         headers=headers,
-        json={"provider": "stub", "timeout_s": 20, "api_key": RUNTIME_KEY, "has_key": True},
+        json={
+            "provider": "openai-compatible",
+            "timeout_s": 20,
+            "api_key": RUNTIME_KEY,
+            "has_key": True,
+        },
     )
     assert r.status_code == 200, r.text
     assert RUNTIME_KEY not in r.text
     doc = r.json()
     assert set(doc) == {"provider", "base_url", "model", "timeout_s", "updated_at"}
+    assert doc["provider"] == "openai-compatible"
     assert doc["timeout_s"] == 20
     assert RUNTIME_KEY not in _db_text()
+
+
+def test_legacy_stub_rows_read_as_not_connected_and_cannot_be_saved_back(
+    client: TestClient,
+):
+    """P11: a row written under the old ``"stub"`` default is not connected.
+
+    The GET normalizes it to ``""``; the PUT surface rejects the retired value
+    with a clean 400 (never a 500, never a silent stub turn).
+    """
+    headers, user_id = _register_user(client, "router-legacy-stub@example.com")
+    _store_provider(
+        user_id, "stub", base_url="https://api.example.test/v1", model="gpt-4o-mini"
+    )
+
+    got = client.get("/engine/connection", headers=headers)
+    assert got.status_code == 200
+    assert got.json()["provider"] == ""  # not connected
+    assert got.json()["base_url"] == "https://api.example.test/v1"  # non-secret prefs kept
+
+    rejected = client.put("/engine/connection", headers=headers, json={"provider": "stub"})
+    assert rejected.status_code == 400
+    assert rejected.json() == {
+        "detail": "provider 'stub' is not available; supported: openai, openai-compatible"
+    }
+
+    # A rejected save changes nothing: the row still reads as not connected.
+    assert client.get("/engine/connection", headers=headers).json()["provider"] == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -758,14 +893,25 @@ def test_connection_check_survives_unexpected_probe_errors(
     assert RUNTIME_KEY not in r.text
 
 
-def test_connection_check_stub_needs_no_key(client: TestClient):
-    headers = _register(client, "router-check-stub@example.com")
-    r = client.post("/engine/connection/check", headers=headers)
-    assert r.status_code == 200, r.text
-    verdict = r.json()
-    assert verdict["reachable"] is True
-    assert verdict["native_tools"] is False
-    assert "stub" in verdict["detail"]
+def test_connection_check_without_a_connected_model_asks_to_connect(client: TestClient):
+    """P11: unset and the retired ``"stub"`` default are both the keyless case."""
+    headers, user_id = _register_user(client, "router-check-unconnected@example.com")
+
+    # Fresh row: nothing to probe, key or no key.
+    for extra in ({}, {"X-Provider-Key": RUNTIME_KEY}):
+        r = client.post("/engine/connection/check", headers={**headers, **extra})
+        assert r.status_code == 400
+        assert r.json() == {"detail": "connect_your_ai"}
+
+    # A legacy 'stub' row answers the same, even with live-looking prefs.
+    _store_provider(
+        user_id, "stub", base_url="https://api.example.test/v1", model="gpt-4o-mini"
+    )
+    r = client.post(
+        "/engine/connection/check", headers={**headers, "X-Provider-Key": RUNTIME_KEY}
+    )
+    assert r.status_code == 400
+    assert r.json() == {"detail": "connect_your_ai"}
 
 
 def test_connection_check_live_without_key_asks_to_connect(client: TestClient):

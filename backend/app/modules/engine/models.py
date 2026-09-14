@@ -5,6 +5,11 @@ Runtime-only keys by design: provider API keys travel per request
 persisted — ``EngineConnectionRow`` deliberately has NO key column, and the
 module must never grow one (plan §4). Game state itself is not here: it lives
 in the campaign's own SQLite file (``paths.campaign_db_path``).
+
+Model gate (P11): a connection is either connected to a real provider or not.
+The ``provider`` column defaults to ``""`` (unset = not connected); an older
+row still carrying the retired ``"stub"`` default reads identically — see
+``bridge.connection_provider``. Client-side default only, so no migration.
 """
 from __future__ import annotations
 
@@ -48,7 +53,7 @@ class EngineConnectionRow(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
-    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="stub")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     base_url: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=30)

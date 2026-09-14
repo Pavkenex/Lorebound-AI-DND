@@ -27,10 +27,13 @@ legacy silent drop is the bug being avoided, not a behaviour to copy. The applie
 prefs are echoed in the payload's ``content`` block; the header payload itself is
 never logged.
 
-Error shapes (plan §5): 400 ``{"detail": "connect_your_ai"}`` when a live provider
-is selected without a key; 502 for provider failures with the scrubbed detail; 404
-for unknown/foreign campaigns — ownership goes through ``scope_campaign``, which
-never reveals whether another account's campaign id exists.
+Error shapes (plan §5): 400 ``{"detail": "connect_your_ai"}`` when no model is
+connected — provider unset, the retired ``"stub"`` default, or a live provider
+without a key (P11: the pilot is not playable without a connected model, and
+``"stub"`` is not a player provider); 502 for provider failures with the
+scrubbed detail; 404 for unknown/foreign campaigns — ownership goes through
+``scope_campaign``, which never reveals whether another account's campaign id
+exists.
 """
 from __future__ import annotations
 
@@ -325,9 +328,10 @@ def check_connection(
     """Canary-verify the SAVED connection prefs with this request's key (§4/§5).
 
     Provider outcomes always answer 200 with ``{reachable, native_tools, detail}``
-    — a check reports a verdict, it never fails the request. A live provider with
-    no key still answers 400 ``connect_your_ai``: there is nothing to probe with.
-    No store: the verdict is not cached (that happens on the first live turn).
+    — a check reports a verdict, it never fails the request. Without a connected
+    model there is nothing to probe: an unset/retired-``stub`` provider and a
+    live provider with no key both answer 400 ``connect_your_ai`` (P11). No
+    store: the verdict is not cached (that happens on the first live turn).
     """
     provider_key = request.headers.get("X-Provider-Key")
     prefs = bridge.connection_settings(db, user.id)
@@ -346,8 +350,12 @@ def _canary_verdict(prefs: EngineConnectionRow, provider_key: str | None) -> dic
     while this endpoint's whole point is reporting reachability honestly. The
     native-tools predicate is the same one the registry applies.
     """
-    mode = str(prefs.provider or "").strip().lower().replace("_", "-") or "stub"
+    mode = bridge.connection_provider(prefs)
+    if not mode or not str(provider_key or "").strip():
+        # Nothing connected (unset / retired "stub") or nothing to probe with.
+        raise bridge.EngineBridgeError("connect_your_ai")
     if mode not in bridge.SUPPORTED_PROVIDERS:
+        # A legacy/foreign value the PUT surface would never have accepted.
         raise bridge.EngineBridgeError(
             "unsupported_provider",
             detail=(
@@ -355,14 +363,6 @@ def _canary_verdict(prefs: EngineConnectionRow, provider_key: str | None) -> dic
                 f"supported: {', '.join(bridge.SUPPORTED_PROVIDERS)}"
             ),
         )
-    if mode == "stub":
-        return {
-            "reachable": True,
-            "native_tools": False,
-            "detail": "stub provider — no model call needed",
-        }
-    if not str(provider_key or "").strip():
-        raise bridge.EngineBridgeError("connect_your_ai")
 
     cfg = ProviderConfig(
         name="openai",

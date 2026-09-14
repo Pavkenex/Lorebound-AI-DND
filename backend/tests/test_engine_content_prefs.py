@@ -427,18 +427,27 @@ def test_the_applied_prefs_are_echoed_not_the_header(
     assert aliased["content"]["horror"] == "standard"   # untouched axes: defaults
 
 
-def test_stub_turns_carry_the_same_boundaries_payload(client: TestClient) -> None:
-    headers = _register(client, "prefs-stub@example.com")
-    r = client.post("/engine/campaigns", headers=headers, json={"name": "Stub"})
-    campaign_id = r.json()["id"]  # no /connection PUT -> the stub provider
+def test_an_unconnected_turn_is_refused_before_any_content_work(
+    client: TestClient, recorder: _Recorder
+) -> None:
+    """P11: with no model connected the turn is refused and nothing runs.
 
-    payload = _turn(client, headers, campaign_id, prefs=CUSTOM).json()
-    assert payload["capability"]["mode"] == "stub"
-    assert payload["content"] == {
-        "nsfw": False, "violence": "off", "horror": "reduced",
-        "romance": "reduced", "language": "reduced",
-    }
-    assert bridge.CONTENT_DEFAULTS_NOTE not in payload["system_lines"]
+    The engine is never reached, so no prompt is assembled, nothing is echoed,
+    and the boundaries payload cannot leak through a refusal.
+    """
+    headers = _register(client, "prefs-unconnected@example.com")
+    r = client.post("/engine/campaigns", headers=headers, json={"name": "Unconnected"})
+    campaign_id = r.json()["id"]  # no /connection PUT -> not connected
+
+    refused = _turn(client, headers, campaign_id, prefs=CUSTOM)
+    assert refused.status_code == 400
+    assert refused.json() == {"detail": "connect_your_ai"}
+    assert recorder.prompts == []  # no model call, so no prompt carried boundaries
+
+    # Browsing stays usable: the campaign exists, untouched by the refusal.
+    state = client.get(f"/engine/campaigns/{campaign_id}/state", headers=headers)
+    assert state.status_code == 200
+    assert state.json()["turn"] == 0
 
 
 # --------------------------------------------------------------------------- #

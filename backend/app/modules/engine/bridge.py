@@ -14,6 +14,15 @@ Runtime-key contract (plan §4 — hard rules, do not relax):
   surfaced as ``EngineBridgeError("provider_error", detail=…)``; the raw
   exception is never re-raised with the key attached.
 
+Model gate (owner ruling 2026-09-14 — do not relax):
+- The pilot is NOT playable without a connected model. ``"stub"`` is not a
+  player provider: an unset provider, the retired ``"stub"`` default (legacy
+  rows included) and a live provider without a runtime key all read as "not
+  connected" and answer ``EngineBridgeError("connect_your_ai")`` — the same
+  contract as the keyless live case.
+- The engine package's own stub narrator stays engine-internal dev/test
+  machinery; nothing on the player path may reach it.
+
 Content boundaries (plan §11 — do not relax either):
 - ``take_turn`` takes the player's ``narrator.prefs.ContentPrefs`` (the router
   parses the ``X-Content-Prefs`` header with that model — no parallel
@@ -51,8 +60,13 @@ from app.modules.narrator.prefs import ContentPrefs
 
 #: Providers the app exposes (plan decision 3: openai-compatible only). The
 #: engine's anthropic/gemini adapters stay tested but are not app choices yet.
-SUPPORTED_PROVIDERS: tuple[str, ...] = ("stub", "openai", "openai-compatible")
-_LIVE_PROVIDERS = frozenset({"openai", "openai-compatible"})
+#: The engine's internal ``stub`` is NOT a provider choice — keyless play was
+#: removed from the player surface (P11, owner ruling 2026-09-14).
+SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "openai-compatible")
+
+#: Stored values that mean "no model connected": unset, and the retired
+#: ``"stub"`` default legacy rows were created under.
+_NOT_CONNECTED = frozenset({"", "stub"})
 
 #: World fixtures the pilot can seed: name -> engine fixture payload (None = demo).
 WORLDS: dict[str, dict | None] = {"demo": None}
@@ -75,7 +89,8 @@ class EngineBridgeError(Exception):
 
     Codes: ``bad_campaign_id``, ``not_an_engine_campaign``, ``no_campaign``,
     ``unknown_world``, ``unsupported_provider``, ``invalid_prefs``,
-    ``connect_your_ai`` (live provider selected, no key supplied),
+    ``connect_your_ai`` (no connected model: provider unset, the retired
+    ``"stub"`` default, or a live provider with no key supplied),
     ``provider_error`` (engine-redacted provider failure; ``detail`` carries it).
     """
 
@@ -157,9 +172,13 @@ def save_connection(
 
 
 def connection_view(row: EngineConnectionRow) -> dict:
-    """JSON-safe prefs for the HTTP surface — never a key, because none exists."""
+    """JSON-safe prefs for the HTTP surface — never a key, because none exists.
+
+    The provider reads back as the connect surface sees it: unset and the
+    retired ``"stub"`` default both normalize to ``""`` (not connected).
+    """
     return {
-        "provider": row.provider,
+        "provider": connection_provider(row),
         "base_url": row.base_url,
         "model": row.model,
         "timeout_s": row.timeout_s,
@@ -167,8 +186,20 @@ def connection_view(row: EngineConnectionRow) -> dict:
     }
 
 
+def connection_provider(row: EngineConnectionRow) -> str:
+    """The row's provider as "which model is connected": ``""`` when none is.
+
+    One vocabulary for the model gate (P11): an unset value and the retired
+    ``"stub"`` default legacy rows carry both mean NOT CONNECTED — there is no
+    keyless/stub play on the player path.
+    """
+    mode = _provider_key(row.provider, strict=False)
+    return "" if mode in _NOT_CONNECTED else mode
+
+
 def _provider_key(provider: str, *, strict: bool) -> str:
-    mode = str(provider or "").strip().lower().replace("_", "-") or "stub"
+    """Normalize a provider value; ``strict`` rejects anything not offered."""
+    mode = str(provider or "").strip().lower().replace("_", "-")
     if strict and mode not in SUPPORTED_PROVIDERS:
         raise EngineBridgeError(
             "unsupported_provider",
@@ -269,8 +300,10 @@ def take_turn(
     """Run exactly one engine turn for ``campaign_id`` and return its payload.
 
     ``provider_key`` is a runtime-only BYOK value (plan §4): passed to the
-    engine adapter for this call, never persisted, logged, or prompted. A live
-    (non-stub) provider without a key raises ``EngineBridgeError('connect_your_ai')``.
+    engine adapter for this call, never persisted, logged, or prompted. A turn
+    needs a connected model: an unset provider, the retired ``"stub"`` default,
+    or a live provider without a key all raise
+    ``EngineBridgeError('connect_your_ai')`` (P11 — no keyless play).
 
     ``content_prefs`` is the player's content boundaries (plan §11), parsed by
     the router from ``X-Content-Prefs`` with ``narrator.prefs.ContentPrefs``;
@@ -295,7 +328,7 @@ def take_turn(
         try:
             result = session.act(str(text or ""))
             payload = _turn_payload(
-                result, session, live=adapter is not None,
+                result, session,
                 content_prefs=applied, content_prefs_invalid=content_prefs_invalid,
             )
         except ProviderError as exc:
@@ -311,13 +344,22 @@ def take_turn(
 
 def _resolve_provider(
     prefs: EngineConnectionRow, provider_key: str | None
-) -> tuple[ProviderConfig | None, Any]:
-    """``(provider config, adapter)`` for this turn; ``(None, None)`` on stub."""
-    mode = _provider_key(prefs.provider, strict=True)
-    if mode == "stub":
-        return None, None
-    if not str(provider_key or "").strip():
+) -> tuple[ProviderConfig, Any]:
+    """``(provider config, adapter)`` for this turn — or ``connect_your_ai``.
+
+    The single resolution point for the model gate (P11): ``"stub"`` no longer
+    resolves to the engine's built-in stub. An unset provider and the retired
+    ``"stub"`` default behave exactly like a keyless live provider — the turn
+    is refused before the engine is ever reached.
+    """
+    mode = connection_provider(prefs)
+    if not mode or not str(provider_key or "").strip():
         raise EngineBridgeError("connect_your_ai")
+    if mode not in SUPPORTED_PROVIDERS:  # a legacy/foreign value in the row
+        raise EngineBridgeError(
+            "unsupported_provider",
+            detail=f"provider {mode!r} is not available; supported: {', '.join(SUPPORTED_PROVIDERS)}",
+        )
     cfg = ProviderConfig(
         name="openai",
         model=str(prefs.model or ""),
@@ -360,7 +402,7 @@ def _db_path_or_error(campaign_id: str) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-def _turn_payload(result: Any, session: PlaySession, *, live: bool,
+def _turn_payload(result: Any, session: PlaySession,
                   content_prefs: ContentPrefs | None = None,
                   content_prefs_invalid: bool = False) -> dict:
     state = session.state_view()
@@ -373,7 +415,7 @@ def _turn_payload(result: Any, session: PlaySession, *, live: bool,
         "dialogue": _dialogue(getattr(result, "npc_dialogue", None)),
         "mechanics": _mechanics(getattr(result, "mechanics", None)),
         "suggestions": _suggestions(state),
-        "capability": _capability(session, live=live),
+        "capability": _capability(session),
         "state": state,
         "system_lines": system_lines,
         # The boundaries narration actually ran under (plan §11) — the applied
@@ -461,20 +503,13 @@ def _suggestions(state: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def _capability(session: PlaySession, *, live: bool) -> dict:
-    """What the turn ran on: stub, or a live model with/without native tools.
+def _capability(session: PlaySession) -> dict:
+    """What the turn ran on: the player's live model, with/without native tools.
 
-    ``degraded`` is live-only (the JSON-in-text fallback); a stub turn is not a
-    degraded model call, it is no model call at all.
+    Every player turn runs live (P11 — unconnected play is refused before the
+    engine is reached), so the keyset is stable: ``provider``/``model``/``mode``
+    plus the protocol verdict. ``degraded`` is the JSON-in-text fallback.
     """
-    if not live:
-        return {
-            "provider": "stub",
-            "model": "stub",
-            "mode": "stub",
-            "native_tools": False,
-            "degraded": False,
-        }
     narrator = session.narrator
     getter = getattr(narrator, "capabilities", None)
     caps = getter() if callable(getter) else None

@@ -1,9 +1,10 @@
 """Engine bridge (phase 2 P2): lifecycle, one-turn wrapper, runtime-key flow.
 
 Offline: real SQLite for the app rows and the engine campaign files (a tmp
-ENGINE_DATA_DIR monkeypatched into settings), stub narrators for the happy
-paths, and a scripted adapter / a hostile loopback provider for the key-path
-proofs (docs/INTEGRATION_PLAN.md §3–§4).
+ENGINE_DATA_DIR monkeypatched into settings), a scripted fake adapter for the
+happy paths, and a hostile loopback provider for the key-path proofs
+(docs/INTEGRATION_PLAN.md §3–§4). P11: a turn needs a connected model — see
+``test_unconnected_and_stub_rows_cannot_play``.
 """
 from __future__ import annotations
 
@@ -91,146 +92,12 @@ def _db_text(db: Session) -> str:
     return "\n".join(chunks)
 
 
-# --------------------------------------------------------------------------- #
-# Campaign lifecycle
-# --------------------------------------------------------------------------- #
-
-
-def test_create_campaign_seeds_the_engine_db(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-create@example.com")
-    campaign = bridge.create_campaign(db, user, "Pilot run", "demo")
-
-    assert campaign.owner_user_id == user.id
-    assert campaign.seed_key == "engine"
-    row = bridge.get_engine_campaign(db, campaign.id)
-    assert row is not None
-    assert (row.world, row.engine_version) == ("demo", engine.__version__)
-    assert row.last_turn_at is None
-
-    db_file = paths.campaign_db_path(campaign.id)
-    assert db_file.is_file()
-    assert db_file.parent == engine_data_dir
-    store = _store(db_file)
-    try:
-        assert store.count("world") == 1
-        assert store.count("characters") == 1
-        assert store.count("npcs") >= 1
-        assert store.find_one("characters")["name"] == "Rell"
-    finally:
-        store.close()
-
-
-def test_reseeding_an_existing_campaign_adds_nothing(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-reseed@example.com")
-    campaign = bridge.create_campaign(db, user, "Reseed")
-    bridge.take_turn(db, user.id, campaign.id, "I check the rope at my belt")
-    db_file = paths.campaign_db_path(campaign.id)
-
-    store = _store(db_file)
-    try:
-        before = store.count("turn_log")
-    finally:
-        store.close()
-    assert before == 1
-
-    bridge._seed_campaign_db(campaign.id, "demo")  # idempotent: store is not empty
-
-    store = _store(db_file)
-    try:
-        assert store.count("world") == 1
-        assert store.count("turn_log") == 1
-        assert store.count("characters") == 1
-    finally:
-        store.close()
-
-
-def test_unknown_world_is_rejected(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-world@example.com")
-    with pytest.raises(bridge.EngineBridgeError) as excinfo:
-        bridge.create_campaign(db, user, "Nope", "saltmarsh")
-    assert excinfo.value.code == "unknown_world"
-    assert bridge.get_engine_campaign(db, "00000000-0000-0000-0000-000000000000") is None
-
-
-# --------------------------------------------------------------------------- #
-# Stub turns
-# --------------------------------------------------------------------------- #
-
-
-def test_three_stub_turns_advance_the_campaign(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-turns@example.com")
-    campaign = bridge.create_campaign(db, user, "Turns")
-    row = bridge.get_engine_campaign(db, campaign.id)
-
-    actions = (
-        "I take in the yard and the smell of salt on the wind",
-        "I count the coins in my purse",
-        "I rest a while by the rope well",
+def _connect_live(db: Session, user: User) -> EngineConnectionRow:
+    """Save a live provider row (no key: the key is runtime-only, plan §4)."""
+    return bridge.save_connection(
+        db, user.id, provider="openai", model="gpt-4o-mini",
+        base_url="https://api.example.test/v1",
     )
-    for index, action in enumerate(actions, start=1):
-        payload = bridge.take_turn(db, user.id, campaign.id, action)
-        assert payload["turn"] == index
-        assert payload["narration"].strip()
-        assert isinstance(payload["dialogue"], list)
-        assert all(set(entry) == {"npc_id", "name", "text"} for entry in payload["dialogue"])
-        assert isinstance(payload["mechanics"]["verdict_line"], str)
-        assert isinstance(payload["suggestions"], list)
-        assert payload["capability"] == {
-            "provider": "stub",
-            "model": "stub",
-            "mode": "stub",
-            "native_tools": False,
-            "degraded": False,
-        }
-        assert payload["state"]["turn"] == index
-        assert isinstance(payload["system_lines"], list)
-
-    db.refresh(row)
-    assert row.last_turn_at is not None
-
-    store = _store(paths.campaign_db_path(campaign.id))
-    try:
-        assert store.count("turn_log") == 3
-    finally:
-        store.close()
-
-    snapshot = bridge.get_state(campaign.id)
-    assert snapshot["turn"] == 3
-    assert snapshot["location"]["id"] == "yard"
-    assert snapshot["hp"] == 11
-    assert [npc["name"] for npc in snapshot["present_npcs"]] == ["Marla Quist"]
-
-
-def test_suggestions_are_open_known_leads(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-suggest@example.com")
-    campaign = bridge.create_campaign(db, user, "Leads")
-    payload = bridge.take_turn(db, user.id, campaign.id, "I look around the yard")
-    assert "The missing salt shipment" in payload["suggestions"]  # accepted
-    assert "The gatehouse ledger" in payload["suggestions"]  # rumored
-    assert "What the well keeps" not in payload["suggestions"]  # unheard: not a move yet
-
-
-def test_get_state_never_creates_a_campaign(db: Session, engine_data_dir: Path):
-    with pytest.raises(bridge.EngineBridgeError) as excinfo:
-        bridge.get_state(str(uuid4()))
-    assert excinfo.value.code == "no_campaign"
-    assert list(engine_data_dir.rglob("*.db")) == []
-
-
-def test_take_turn_needs_an_engine_campaign(db: Session, engine_data_dir: Path):
-    user = _user(db, "bridge-legacy@example.com")
-    legacy = Campaign(owner_user_id=user.id, name="Legacy run", seed_key="hollow_crown")
-    db.add(legacy)
-    db.commit()
-
-    with pytest.raises(bridge.EngineBridgeError) as excinfo:
-        bridge.take_turn(db, user.id, legacy.id, "I look around")
-    assert excinfo.value.code == "not_an_engine_campaign"
-
-
-# --------------------------------------------------------------------------- #
-# Runtime-key flow (plan §4 — the hard rules)
-# --------------------------------------------------------------------------- #
 
 
 class _ScriptedAdapter:
@@ -271,6 +138,202 @@ class _ScriptedAdapter:
                 )
             ],
         )
+
+
+@pytest.fixture()
+def scripted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every adapter build in this test is the scripted fake (offline)."""
+    monkeypatch.setattr(bridge, "build_adapter", _ScriptedAdapter)
+
+
+# --------------------------------------------------------------------------- #
+# Campaign lifecycle
+# --------------------------------------------------------------------------- #
+
+
+def test_create_campaign_seeds_the_engine_db(db: Session, engine_data_dir: Path):
+    user = _user(db, "bridge-create@example.com")
+    campaign = bridge.create_campaign(db, user, "Pilot run", "demo")
+
+    assert campaign.owner_user_id == user.id
+    assert campaign.seed_key == "engine"
+    row = bridge.get_engine_campaign(db, campaign.id)
+    assert row is not None
+    assert (row.world, row.engine_version) == ("demo", engine.__version__)
+    assert row.last_turn_at is None
+
+    db_file = paths.campaign_db_path(campaign.id)
+    assert db_file.is_file()
+    assert db_file.parent == engine_data_dir
+    store = _store(db_file)
+    try:
+        assert store.count("world") == 1
+        assert store.count("characters") == 1
+        assert store.count("npcs") >= 1
+        assert store.find_one("characters")["name"] == "Rell"
+    finally:
+        store.close()
+
+
+def test_reseeding_an_existing_campaign_adds_nothing(
+    db: Session, engine_data_dir: Path, scripted: None
+):
+    user = _user(db, "bridge-reseed@example.com")
+    campaign = bridge.create_campaign(db, user, "Reseed")
+    _connect_live(db, user)
+    bridge.take_turn(
+        db, user.id, campaign.id, "I check the rope at my belt", provider_key=RUNTIME_KEY
+    )
+    db_file = paths.campaign_db_path(campaign.id)
+
+    store = _store(db_file)
+    try:
+        before = store.count("turn_log")
+    finally:
+        store.close()
+    assert before == 1
+
+    bridge._seed_campaign_db(campaign.id, "demo")  # idempotent: store is not empty
+
+    store = _store(db_file)
+    try:
+        assert store.count("world") == 1
+        assert store.count("turn_log") == 1
+        assert store.count("characters") == 1
+    finally:
+        store.close()
+
+
+def test_unknown_world_is_rejected(db: Session, engine_data_dir: Path):
+    user = _user(db, "bridge-world@example.com")
+    with pytest.raises(bridge.EngineBridgeError) as excinfo:
+        bridge.create_campaign(db, user, "Nope", "saltmarsh")
+    assert excinfo.value.code == "unknown_world"
+    assert bridge.get_engine_campaign(db, "00000000-0000-0000-0000-000000000000") is None
+
+
+# --------------------------------------------------------------------------- #
+# Turns on a connected model (P11: no keyless/stub play exists)
+# --------------------------------------------------------------------------- #
+
+
+def test_unconnected_and_stub_rows_cannot_play(db: Session, engine_data_dir: Path, scripted: None):
+    """P11: unset provider and the retired ``"stub"`` default both mean NOTHING runs.
+
+    The refusal is the existing ``connect_your_ai`` contract (same shape as the
+    keyless live case) and it leaves the campaign untouched.
+    """
+    user = _user(db, "bridge-unconnected@example.com")
+    campaign = bridge.create_campaign(db, user, "Unconnected")
+
+    # Fresh row: the ORM default is "" — refused with and without a runtime key.
+    for key in (None, RUNTIME_KEY):
+        with pytest.raises(bridge.EngineBridgeError) as excinfo:
+            bridge.take_turn(db, user.id, campaign.id, "I look around", provider_key=key)
+        assert excinfo.value.code == "connect_your_ai"
+        assert excinfo.value.detail == ""
+
+    # A legacy 'stub' row (the old default) reads identically — and even a
+    # live-looking base_url/model beside it changes nothing.
+    row = bridge.connection_settings(db, user.id)
+    row.provider = "stub"
+    row.base_url = "https://api.example.test/v1"
+    row.model = "gpt-4o-mini"
+    db.commit()
+    assert bridge.connection_view(row)["provider"] == ""  # normalized: not connected
+
+    with pytest.raises(bridge.EngineBridgeError) as excinfo:
+        bridge.take_turn(db, user.id, campaign.id, "I look around", provider_key=RUNTIME_KEY)
+    assert excinfo.value.code == "connect_your_ai"
+
+    store = _store(paths.campaign_db_path(campaign.id))
+    try:
+        assert store.count("turn_log") == 0  # nothing ran, nothing spent
+    finally:
+        store.close()
+
+
+def test_three_live_turns_advance_the_campaign(
+    db: Session, engine_data_dir: Path, scripted: None
+):
+    user = _user(db, "bridge-turns@example.com")
+    campaign = bridge.create_campaign(db, user, "Turns")
+    _connect_live(db, user)
+    row = bridge.get_engine_campaign(db, campaign.id)
+
+    actions = (
+        "I take in the yard and the smell of salt on the wind",
+        "I count the coins in my purse",
+        "I rest a while by the rope well",
+    )
+    for index, action in enumerate(actions, start=1):
+        payload = bridge.take_turn(db, user.id, campaign.id, action, provider_key=RUNTIME_KEY)
+        assert payload["turn"] == index
+        assert payload["narration"].startswith("The yard holds its breath")
+        assert payload["dialogue"] == [
+            {"npc_id": "npc:1", "name": "Marla Quist", "text": "Mind the ruts."}
+        ]
+        assert isinstance(payload["mechanics"]["verdict_line"], str)
+        assert isinstance(payload["suggestions"], list)
+        assert payload["capability"] == {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "mode": "live",
+            "native_tools": True,
+            "degraded": False,
+        }
+        assert payload["state"]["turn"] == index
+        assert isinstance(payload["system_lines"], list)
+
+    db.refresh(row)
+    assert row.last_turn_at is not None
+
+    store = _store(paths.campaign_db_path(campaign.id))
+    try:
+        assert store.count("turn_log") == 3
+    finally:
+        store.close()
+
+    snapshot = bridge.get_state(campaign.id)
+    assert snapshot["turn"] == 3
+    assert snapshot["location"]["id"] == "yard"
+    assert snapshot["hp"] == 11
+    assert [npc["name"] for npc in snapshot["present_npcs"]] == ["Marla Quist"]
+
+
+def test_suggestions_are_open_known_leads(db: Session, engine_data_dir: Path, scripted: None):
+    user = _user(db, "bridge-suggest@example.com")
+    campaign = bridge.create_campaign(db, user, "Leads")
+    _connect_live(db, user)
+    payload = bridge.take_turn(
+        db, user.id, campaign.id, "I look around the yard", provider_key=RUNTIME_KEY
+    )
+    assert "The missing salt shipment" in payload["suggestions"]  # accepted
+    assert "The gatehouse ledger" in payload["suggestions"]  # rumored
+    assert "What the well keeps" not in payload["suggestions"]  # unheard: not a move yet
+
+
+def test_get_state_never_creates_a_campaign(db: Session, engine_data_dir: Path):
+    with pytest.raises(bridge.EngineBridgeError) as excinfo:
+        bridge.get_state(str(uuid4()))
+    assert excinfo.value.code == "no_campaign"
+    assert list(engine_data_dir.rglob("*.db")) == []
+
+
+def test_take_turn_needs_an_engine_campaign(db: Session, engine_data_dir: Path):
+    user = _user(db, "bridge-legacy@example.com")
+    legacy = Campaign(owner_user_id=user.id, name="Legacy run", seed_key="hollow_crown")
+    db.add(legacy)
+    db.commit()
+
+    with pytest.raises(bridge.EngineBridgeError) as excinfo:
+        bridge.take_turn(db, user.id, legacy.id, "I look around")
+    assert excinfo.value.code == "not_an_engine_campaign"
+
+
+# --------------------------------------------------------------------------- #
+# Runtime-key flow (plan §4 — the hard rules)
+# --------------------------------------------------------------------------- #
 
 
 def test_live_provider_without_a_key_asks_to_connect(db: Session, engine_data_dir: Path):
@@ -444,14 +507,14 @@ def test_connection_row_creation_is_race_safe(db: Session, engine_data_dir: Path
 
     assert racer_done["value"] is True
     assert row.user_id == user.id
-    assert (row.provider, row.base_url, row.model, row.timeout_s) == ("stub", "", "", 30)
+    assert (row.provider, row.base_url, row.model, row.timeout_s) == ("", "", "", 30)
 
 
 def test_connection_prefs_crud(db: Session, engine_data_dir: Path):
     user = _user(db, "bridge-prefs@example.com")
 
     row = bridge.connection_settings(db, user.id)
-    assert (row.provider, row.base_url, row.model, row.timeout_s) == ("stub", "", "", 30)
+    assert (row.provider, row.base_url, row.model, row.timeout_s) == ("", "", "", 30)
     assert bridge.connection_settings(db, user.id) is row  # same row, not a second one
 
     saved = bridge.save_connection(
@@ -473,6 +536,7 @@ def test_connection_prefs_crud(db: Session, engine_data_dir: Path):
     for kwargs in (
         {"provider": "carrier-pigeon"},
         {"provider": "anthropic"},
+        {"provider": "stub"},  # P11: the retired default is not a provider
         {"timeout_s": 0},
         {"timeout_s": 10_000},
         {"timeout_s": "soon"},
@@ -526,7 +590,9 @@ def test_take_turn_rejects_a_bad_id(db: Session, engine_data_dir: Path):
 # --------------------------------------------------------------------------- #
 
 
-def test_lock_serializes_turns_on_one_campaign(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_lock_serializes_turns_on_one_campaign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scripted: None
+):
     # A file-backed app DB so each thread can hold its own session (Postgres-like),
     # unlike the module's shared StaticPool connection.
     app_engine = create_engine(
@@ -540,6 +606,7 @@ def test_lock_serializes_turns_on_one_campaign(tmp_path: Path, monkeypatch: pyte
     try:
         user = _user(setup, "bridge-lock@example.com")
         campaign = bridge.create_campaign(setup, user, "Locked")
+        _connect_live(setup, user)
         user_id, campaign_id = user.id, campaign.id
     finally:
         setup.close()
@@ -571,7 +638,9 @@ def test_lock_serializes_turns_on_one_campaign(tmp_path: Path, monkeypatch: pyte
     def run(text: str) -> None:
         session = factory()
         try:
-            results.append(bridge.take_turn(session, user_id, campaign_id, text))
+            results.append(
+                bridge.take_turn(session, user_id, campaign_id, text, provider_key=RUNTIME_KEY)
+            )
         except BaseException as exc:  # noqa: BLE001 - asserted below
             failures.append(exc)
         finally:
@@ -592,12 +661,17 @@ def test_lock_serializes_turns_on_one_campaign(tmp_path: Path, monkeypatch: pyte
     assert active["peak"] == 1  # two turns on one campaign never overlapped
 
 
-def test_a_deleted_campaign_file_reseeds_on_the_next_turn(db: Session, engine_data_dir: Path):
+def test_a_deleted_campaign_file_reseeds_on_the_next_turn(
+    db: Session, engine_data_dir: Path, scripted: None
+):
     user = _user(db, "bridge-heal@example.com")
     campaign = bridge.create_campaign(db, user, "Heal")
+    _connect_live(db, user)
     db_file = paths.campaign_db_path(campaign.id)
     db_file.unlink()
 
-    payload = bridge.take_turn(db, user.id, campaign.id, "I look around the yard")
-    assert payload["narration"].strip()
+    payload = bridge.take_turn(
+        db, user.id, campaign.id, "I look around the yard", provider_key=RUNTIME_KEY
+    )
+    assert payload["narration"].startswith("The yard holds its breath")
     assert db_file.is_file()  # reseeded rather than failing the turn
