@@ -199,3 +199,73 @@ Each NPC recalls *their* slice; a character who wasn't there doesn't know.
 - How loudly memories surface: explicit "she remembers…" lines vs silent
   weighting in decisions. Proposal: both — explicit for big beats, silent
   otherwise.
+
+## 11. As-built (P14) — every narration/dialogue is AI
+
+Owner ruling (2026-09-14, verbatim, typo normalized):
+
+> "There shouldnt be any scripted answers. Every narration/dialogue
+> should be ai."
+
+The ruling supersedes every authored story-prose surface on the play
+path — including P13's rotating authored variants — and completes the
+direction of P12/P13. **Every beat = one model call.** The line to hold:
+everything the player reads as STORY (scene narration, NPC dialogue,
+opening/prologue prose, return greetings, micro-scenes, repeat
+responses, diminishing replies) is written by the MODEL per turn.
+INTERFACE text stays code: the state machine, dice/check mechanics and
+their dice-voice prompts, button labels, scene labels, short action
+echoes ("You look closer.").
+
+### How the conversion landed
+
+- **The engine owns facts; the narrator owns words.** Each beat now
+  resolves state and returns a `BeatBrief(event, facts, speakers,
+  direction, length)`; the engine then calls the existing narrator
+  through `narrate()` with promised-state context ([Scene], [NPCs
+  present], leads, chronicle tail, saga, [Beat] facts, [Mechanical
+  result]). Facts stay code-owned so model phrasing cannot invent
+  truth; structure/state transitions are unchanged.
+- **One call per beat, after the anti-loop decision** — `act()`
+  narrates after the diminishing guard fires, so a guarded reply costs
+  exactly one call and reads from a brief naming the still-possible
+  moves. Repeats are never canned lines.
+- **The opening** (§intro): `seeded_state()` writes no prose; the seed
+  carries `opening_pending`. `POST /opening` (header campaign id)
+  narrates the chronicle's first page from the player's sheet
+  (`narrate_opening()`; 400 `connect_your_ai` when unconnected). The
+  adventure page asks for it as soon as the state says pending and a
+  model is connected. Character creation and New Journey re-mark the
+  opening pending (`reopen_prologue_opening`) so it is re-narrated from
+  the built sheet once.
+- **All authored story-prose constants are gone**: `INN_ARRIVAL`,
+  `INN_WELCOME_LINE`, `OPENING_BEAT`, `TALK_*`, `BOARD_*`, `LEDGER_*`,
+  `CELLAR_*`, `INSPECT_*`, `STRONGBOX_*`, `FIGHT_*`, `LEAVE/RETURN/
+  REST/MARKET/MONASTERY_*`, `TRACKS_*`, `LANTERNS_*`, `SELLA_*`,
+  `AMBUSH_*`, `CONFRONT_*`, `EPILOGUE`, `OFFER_*`, `BORIN_*`,
+  `FLIRT_*`, `UPSTAIRS_*`, `DOWNSTAIRS_*`, `PROLOGUE_TOWN_VIEW/_
+  LISTEN/_NORTH`, `DIMINISH_ACKS/LINES` and the `_GREETING_TEMPLATES`
+  class attr — verified by grep (zero matches under `app/`). The
+  `[Beat]` facts block sits between [Player action] and [Mechanical
+  result] in the prompt.
+- **Gate (tests)**: `tests/test_p14_hard_gate.py` is the static gate —
+  it scans `play/`, `story/`, `actions/` and fails the build if a
+  module-level prose constant (≥200 chars, interface allowlist) or an
+  inline prose literal (≥320 chars, docstrings/regexes excluded)
+  returns; its mutation probe re-injects the inventory's classic shape
+  and proves the scan catches it. The dynamic half: every beat
+  behaviour test asserts the model's words (fake-narrator MARK) and the
+  facts the prompt carried — the old "seed writes prose" and "authored
+  narration" assertions are replaced by model-call + bounded-brief
+  assertions (`test_every_beat_is_a_model_call_with_a_bounded_brief`,
+  `test_every_beat_counts_a_narration_call`,
+  `test_arc_beats_are_model_calls_with_bounded_briefs`).
+- **Scope**: main story game only (`play/`, `story/`, `narrator/`,
+  `actions/` + the adventure frontend). The rebuilt engine, its bridge
+  and the chronicle pilot stay exactly as built (owner directive
+  2026-09-14 — card item 4 cancelled).
+- **Evidence**: no authored story prose remains on the play path (grep
+  + the gate above); live fake-model transcript `/opt/data/kanban-evidence/
+  p14_transcript.txt` (13 legs: opening + arrival + talk + repeat +
+  market + persuade + road + tracks + lanterns + ambush + monastery +
+  confront + return; every response carries the model's mark).
