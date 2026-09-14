@@ -153,6 +153,10 @@ def _render(result) -> None:
         entry = line if isinstance(line, dict) else {}
         name = str(entry.get("name") or entry.get("npc_id") or "?")
         print(f'  {name}: "{entry.get("text") or ""}"')
+    mechanics = getattr(result, "mechanics", None)
+    verdict = str(getattr(mechanics, "verdict_line", "") or "").strip()
+    if verdict:
+        print(f"  (verdict: {verdict})")
     for note in result.system_lines or []:
         print(f"  ({note})")
 

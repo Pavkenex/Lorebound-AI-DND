@@ -42,6 +42,18 @@ def test_play_runs_offline_and_saves(capsys, tmp_path, stdin_lines) -> None:
     assert tmp_path.joinpath("c.db").exists()
 
 
+def test_play_prints_the_mechanics_verdict_line(capsys, tmp_path, stdin_lines) -> None:
+    """The human surface must show the code-owned verdict, not only its prose."""
+    stdin_lines("I search the yard for boot prints\nI try to climb the wall\n/quit\n")
+    assert main(["play", "--db", str(tmp_path / "v.db")]) == 0
+    out = capsys.readouterr().out
+
+    verdicts = [line for line in out.splitlines() if line.startswith("  (verdict: ")]
+    assert len(verdicts) == 2                    # one per played turn
+    assert all("check" in line for line in verdicts)
+    assert any("SUCCESS" in line or "FAILURE" in line for line in verdicts)
+
+
 def test_play_handles_eof_and_blank_lines(capsys, tmp_path, stdin_lines) -> None:
     stdin_lines("\n\nI wait\n")
     code = main(["play", "--db", str(tmp_path / "c.db")])
