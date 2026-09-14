@@ -98,8 +98,8 @@ export function actFailureText(code?: string | null, message?: string | null): s
     case "provider_failed":
     case "turn_failed":
       return msg
-        ? `The chronicler could not answer — ${msg} Retry, or check Settings → Tale-spinner (AI).`
-        : "The chronicler could not answer — the model call failed. Retry, or check Settings → Tale-spinner (AI).";
+        ? `the model call failed — ${msg}. Retry, or check Settings → Tale-spinner (AI).`
+        : "the model call failed. Retry, or check Settings → Tale-spinner (AI).";
     case "check_expired":
       return "The board has moved since the check was called — call it again.";
     case "unauthorized":
