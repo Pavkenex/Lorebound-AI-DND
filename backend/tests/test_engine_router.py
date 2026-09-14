@@ -186,6 +186,21 @@ def test_the_registered_surface_matches_plan_section_5():
     }
 
 
+def test_a_disabled_pilot_is_not_advertised_in_the_openapi_schema(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    assert any(path.startswith("/engine") for path in app.openapi()["paths"])  # flag on
+
+    monkeypatch.setattr(settings, "ENGINE_MODE", False)
+    spec = app.openapi()
+    assert not any(path.startswith("/engine") for path in spec["paths"])
+    assert "/health" in spec["paths"]  # the rest of the app is untouched
+
+    # Flipping back must not have been poisoned by the filtered view.
+    monkeypatch.setattr(settings, "ENGINE_MODE", True)
+    assert any(path.startswith("/engine") for path in app.openapi()["paths"])
+
+
 @pytest.mark.parametrize(("method", "url", "body"), ENDPOINTS)
 def test_flag_off_hides_every_path(client: TestClient, monkeypatch: pytest.MonkeyPatch,
                                    method: str, url: str, body: dict | None):

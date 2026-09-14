@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.core.schema import ensure_schema
 
 
@@ -78,3 +79,28 @@ include_optional("app.modules.campaign.saves_api")  # save slots (list/create/fe
 include_optional("app.modules.campaign.api")  # campaign lifecycle (create/list)
 include_optional("app.modules.play.router")  # live play: /act, /state, screens
 include_optional("app.modules.engine.router")  # phase 2: /engine pilot (flag-gated)
+
+_fastapi_openapi = app.openapi  # FastAPI's own (cached) schema generator
+
+
+def _openapi_without_a_disabled_pilot() -> dict:
+    """With the pilot off, /openapi.json (and /docs) must not advertise it.
+
+    The routes stay registered so the guard dependency answers per request (and
+    tests can flip the flag per case), but a disabled surface has no business
+    listing itself in the public schema.
+    """
+    schema = _fastapi_openapi()
+    if settings.ENGINE_MODE:
+        return schema
+    return {
+        **schema,
+        "paths": {
+            path: item
+            for path, item in schema["paths"].items()
+            if not path.startswith("/engine")
+        },
+    }
+
+
+app.openapi = _openapi_without_a_disabled_pilot
