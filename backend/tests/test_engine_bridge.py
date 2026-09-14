@@ -182,7 +182,7 @@ def test_three_stub_turns_advance_the_campaign(db: Session, engine_data_dir: Pat
             "native_tools": False,
             "degraded": False,
         }
-        assert payload["state_summary"]["turn"] == index
+        assert payload["state"]["turn"] == index
         assert isinstance(payload["system_lines"], list)
 
     db.refresh(row)

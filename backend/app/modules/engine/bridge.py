@@ -337,7 +337,7 @@ def _turn_payload(result: Any, session: PlaySession, *, live: bool) -> dict:
         "mechanics": _mechanics(getattr(result, "mechanics", None)),
         "suggestions": _suggestions(state),
         "capability": _capability(session, live=live),
-        "state_summary": state,
+        "state": state,
         "system_lines": [str(line) for line in (getattr(result, "system_lines", None) or [])],
     }
 
