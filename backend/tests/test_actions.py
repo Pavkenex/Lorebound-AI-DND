@@ -137,3 +137,74 @@ def test_six_roles_defined_and_prompted():
         assert len(prompt) > 50
     interp = build_role_prompt("interpreter")
     assert "NEVER" in interp and "world fact" in interp.lower()
+
+
+# --- P13 audit: a word in the room is not a weapon, comfort is not a feat -----
+# "fire" is the hearth in every inn, "strike" strikes a match, "hit" hits the
+# road, "bow" bows to the innkeeper, "push back my chair" is not a feat. Every
+# case below offered a surfaced die before the audit — the reported one was
+# "I sit down by the fire." calling Swordsmanship, so a hearth became a weapon.
+MUNDANE_NO_CHECK = [
+    "I sit down by the fire.",
+    "I ponder the fire.",
+    "I warm my hands at the hearth.",
+    "I put another log on the fire.",
+    "I strike a match.",
+    "I strike up a tune.",
+    "I hit the road.",
+    "I hit the sack.",
+    "I bow to Marla.",
+    "I bow my head to the fire.",
+    "I lie down by the fire.",
+    "I swing by the market.",
+    "I walk to the bar.",
+    "I push my chair back from the table.",
+    "I break my fast with bread and ale.",
+    "I break the crust of my bread.",
+    "I lift my cup.",
+    "I force a smile.",
+    "I climb into bed.",
+]
+
+#: The same vocabulary, meant as a blow or an effort: the check still comes.
+MUNDANE_STILL_ROLLS = [
+    ("I fire an arrow at the wolf.", "attack", "Swordsmanship"),
+    ("I fire at the wolf.", "attack", "Swordsmanship"),
+    ("I shoot my bow at the guard.", "attack", "Swordsmanship"),
+    ("I strike the guard with my fist.", "attack", "Swordsmanship"),
+    ("I hit the guard.", "attack", "Swordsmanship"),
+    ("I swing my sword at the rope.", "attack", "Swordsmanship"),
+    ("I ready my bow.", "other", "Swordsmanship"),
+    ("I push the boulder aside.", "other", "Athletics"),
+    ("I break the door down.", "other", "Athletics"),
+    ("I climb the cliff.", "move", "Athletics"),
+]
+
+
+def test_mundane_actions_offer_no_absurd_check():
+    for text in MUNDANE_NO_CHECK:
+        i = parse(text)
+        assert [c.skill for c in i.checks] == [], f"absurd check for {text!r}: {[c.skill for c in i.checks]}"
+        assert i.kind != IntentKind.ATTACK, f"read as a blow: {text!r}"
+
+
+def test_a_real_attempt_still_calls_its_check():
+    for text, kind, skill in MUNDANE_STILL_ROLLS:
+        i = parse(text)
+        assert i.kind.value == kind, f"{text!r}: kind {i.kind.value}"
+        assert [c.skill for c in i.checks] == [skill], f"{text!r}: {[c.skill for c in i.checks]}"
+
+
+def test_moving_across_a_room_is_not_a_feat():
+    """P13: the MOVE fallback is gone — walking has no failure to model."""
+    i = parse("I walk to the bar.")
+    assert i.kind == IntentKind.MOVE and i.checks == []
+    assert i.risk.value == "low"
+
+
+def test_a_fib_offers_insight_but_lying_down_does_not():
+    fib = parse("I lie to the guard.")
+    assert fib.kind == IntentKind.SOCIAL
+    assert [c.skill for c in fib.checks] == ["Insight"] and fib.checks[0].hidden
+    down = parse("I lie down by the fire.")
+    assert down.kind == IntentKind.OTHER and down.checks == []
