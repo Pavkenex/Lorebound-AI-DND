@@ -1,5 +1,7 @@
 """t_24aace96: Ravenford content integrity."""
 
+import re
+
 import pytest
 
 try:
@@ -65,6 +67,13 @@ BANNED_TERMS = (
     "tarrasque",
 )
 
+_URL_RE = re.compile(r"(?:https?://|git@)\S+")
+"""URLs are not content terms — a git remote URL contains 'gith' (GitHub)."""
+
+
+def _scanned_text(path) -> str:
+    return _URL_RE.sub(" ", path.read_text()).lower()
+
 
 def test_no_licensed_terms_in_shipped_content():
     """Every content term traces to docs/IP_GLOSSARY.md (in-house only).
@@ -82,7 +91,7 @@ def test_no_licensed_terms_in_shipped_content():
         for path in sorted(root.glob("*.md" if root.name == "docs" else "*.py")):
             if path.name == "IP_GLOSSARY.md":
                 continue
-            text = path.read_text().lower()
+            text = _scanned_text(path)
             checked += 1
             for term in BANNED_TERMS:
                 assert term not in text, f"licensed term {term!r} in {path}"
