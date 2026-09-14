@@ -356,6 +356,22 @@ function asStrings(value: unknown): string[] {
   return value.map((v) => plainValue(v)).filter((v) => v !== "—");
 }
 
+/** One carried thing: engine inventory rows are `{item_id, qty, flags}`. */
+function inventoryLine(item: unknown): string {
+  if (item && typeof item === "object" && !Array.isArray(item)) {
+    const row = item as Record<string, unknown>;
+    const name = plainValue(row.item_id ?? row.name ?? row.id);
+    const qty = row.qty ?? row.quantity;
+    if (name !== "—") return typeof qty === "number" && qty > 1 ? `${name} ×${qty}` : name;
+  }
+  return plainValue(item);
+}
+
+function asInventory(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(inventoryLine).filter((v) => v !== "—");
+}
+
 function hpLine(hp: unknown, maxHp: unknown): string {
   const cur = plainValue(hp);
   const max = plainValue(maxHp);
@@ -405,7 +421,7 @@ export function engineStateSections(state?: unknown): StateSection[] {
   ];
   const description = String(locationView?.description_static ?? "").trim();
 
-  const inventory = asStrings(snapshot.inventory);
+  const inventory = asInventory(snapshot.inventory);
   const effects = asStrings(snapshot.status_effects);
   const leads = asRecords(snapshot.leads);
   const present = asRecords(snapshot.present_npcs);

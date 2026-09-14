@@ -338,6 +338,17 @@ test("engineStateSections reads a sparse snapshot with named fallbacks", () => {
   assert.equal(sections[5].note, "Nothing pinned yet.");
 });
 
+test("engineStateSections reads carried things from the engine's item rows", () => {
+  const sections = engineStateSections({
+    inventory: [
+      { item_id: "coil of rope", qty: 1, flags: {} },
+      { item_id: "salt token", qty: 3, flags: { stamped: "salt-gate" } },
+      { item_id: "old lantern", qty: 0, flags: {} },
+    ],
+  });
+  assert.equal(sections[1].rows[0].value, "coil of rope, salt token ×3, old lantern");
+});
+
 test("engineStateSections degrades to plain rows on a shape it does not know", () => {
   const sections = engineStateSections({ mood_ring: "warm", coats: ["rain", "wool"] });
   assert.equal(sections.length, 1);
