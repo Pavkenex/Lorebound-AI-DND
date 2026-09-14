@@ -180,3 +180,32 @@ class FactStore:
 def auto_pin_worthy(statement: str, *, kind: str | None = None) -> bool:
     """Promises, deaths, betrayals, explicit player-establishments -> True (§3.6)."""
     raise NotImplementedError("R3 card implements auto_pin_worthy")
+
+
+class MemoryBundle:
+    """Wires every memory component to one store — the surface context.py and
+    the pipeline consume. Tests may substitute a double implementing the same
+    method surface (memory is built in parallel with context; see
+    engine/ARCHITECTURE.md ownership)."""
+
+    def __init__(self, *, npc_memory: NPCMemoryStore, chronicle: Chronicle,
+                 ledger: RelationshipLedger, moods: MoodTracker,
+                 saga: SagaDigest, facts: FactStore) -> None:
+        self.npc_memory = npc_memory
+        self.chronicle = chronicle
+        self.ledger = ledger
+        self.moods = moods
+        self.saga = saga
+        self.facts = facts
+
+    @classmethod
+    def build(cls, store: Any, config: EngineConfig | None = None,
+              sim: Similarity | None = None) -> MemoryBundle:
+        return cls(
+            npc_memory=NPCMemoryStore(store, config, sim),
+            chronicle=Chronicle(store, config),
+            ledger=RelationshipLedger(store, config),
+            moods=MoodTracker(store, config),
+            saga=SagaDigest(store, config),
+            facts=FactStore(store, config, sim),
+        )

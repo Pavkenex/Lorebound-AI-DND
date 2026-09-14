@@ -25,10 +25,14 @@ from .similarity import LexicalSimilarity, Similarity
 
 class ContextAssembler:
     def __init__(self, store: Any, config: EngineConfig | None = None,
-                 *, sim: Similarity | None = None) -> None:
+                 *, sim: Similarity | None = None, components: Any = None) -> None:
+        """``components`` — a ``memory.MemoryBundle`` (or a test double with the
+        same method surface; memory lands in parallel with context). When None,
+        built from ``store`` lazily on first use."""
         self.store = store
         self.config = config or EngineConfig()
         self.sim = sim or LexicalSimilarity()
+        self.components = components
 
     def estimate_tokens(self, text: str) -> int:
         """Deterministic heuristic (~4 chars/token); overridable per provider."""
