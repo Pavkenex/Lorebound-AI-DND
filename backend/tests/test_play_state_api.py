@@ -74,9 +74,9 @@ def test_fresh_campaign_state_shape(client: TestClient):
     assert "the town below" in s["interactables"]
     assert s["party"][0]["name"] == "Kaelis"
     assert s["party"][0]["hp"] == "32/32"
-    assert len(s["feed"]) == 1  # the arrival narration alone
-    assert s["feed"][0]["kind"] == "narration"
-    assert "Kaelis Thorn" in s["feed"][0]["text"]
+    # P14: the seed carries no prose; the opening is written on demand, and
+    # the state says so until it has been (POST /opening).
+    assert s["feed"] == [] and s["opening_pending"] is True
     assert s["character"]["name"] == "Kaelis Thorn"
     assert s["character"]["hp"] == {"cur": 32, "max": 32}
     assert s["completed"] is False

@@ -55,18 +55,21 @@ def test_chronicle_retrieval_is_capped_and_keeps_the_tail():
 
 
 def test_second_turn_prompt_carries_the_first_turn_chronicle():
-    st = seeded_state()  # the prologue's arrival (§intro) sits in the feed
+    st = seeded_state()  # the seed writes no prose at all (P14)
     prov = _CapturingProvider()
     engine = ActEngine(PlaySession("chron-prompt", st), provider=prov)
 
+    engine.act("I head down to the inn and step inside")  # a beat: the arrival
     engine.act("I settle by the hearth and hum a lamplighter's tune")
     engine.act("I keep humming the same tune under my breath.")
-    assert len(prov.prompts) == 2, "both turns must ride the narrator pipeline"
+    assert len(prov.prompts) == 3, "every turn rides the narrator"
 
-    first, second = prov.prompts
-    # Turn one already knows the arrival the player just read (the chronicle
-    # line is elided head+tail when long, so we check what survives at the head)...
-    assert "the rain has settled in for the night" in first
+    beat, _first, second = prov.prompts
+    # The arrival is prompted as *facts* — the beat block carries what the
+    # model must convey, and no authored line could leak in beside it (P14).
+    assert "[Beat]" in beat and "event: inn.first" in beat
+    assert "never came back down the Northern Road" in beat
+    assert "Rain needles the shutters" not in beat
     # ...and turn two carries what turn one told the player: their own words,
     # the prose, and the spoken line — the scene continues instead of restarting.
     assert "hum a lamplighter's tune" in second        # the earlier action echo

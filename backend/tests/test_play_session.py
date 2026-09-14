@@ -48,8 +48,9 @@ def test_seeded_state_defaults():
     assert st.lead_stage == "unheard"
     assert st.completed is False
     assert st.pc["name"] == "Kaelis Thorn"
-    assert [e["kind"] for e in st.feed] == ["narration"]
-    assert "Kaelis Thorn" in st.feed[0]["text"]  # the arrival reads the sheet
+    # P14: the seed writes no prose — the chronicle's first page is the model's
+    # and is asked for once the state says it is pending (POST /opening).
+    assert st.feed == [] and st.opening_pending is True
     assert st.silver == 8 and st.visits == 1
 
 

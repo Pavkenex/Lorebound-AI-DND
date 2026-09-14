@@ -19,8 +19,14 @@ from app.modules.inventory import models as _inv  # noqa: F401
 from app.modules.play import models as pm  # noqa: F401
 from app.modules.play.models import PlayStateRow
 from app.modules.play.state import PlayState
+from tests.narrator_fake import MARK, RecordingNarrator
 
-pytestmark = pytest.mark.usefixtures("stub_play_provider")
+pytestmark = pytest.mark.usefixtures("recording_narrator")
+
+
+def _last_facts(narrator: RecordingNarrator) -> str:
+    """The facts the engine handed the narrator for the beat just resolved."""
+    return " | ".join(RecordingNarrator.facts_of(narrator.narrator_prompts[-1]))
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -124,7 +130,7 @@ def _resolve_at_monastery(client: TestClient, h: dict) -> dict:
     return _act(client, h, "I confront what waits in the cellar and go down")
 
 
-def test_path_talk_it_out(client: TestClient):
+def test_path_talk_it_out(client: TestClient, recording_narrator: RecordingNarrator):
     h, cid = _setup(client, "plea@example.com")
     _act(client, h, "I ask Marla about the travelers")
     _walk_to_market(client, h)
@@ -137,7 +143,9 @@ def test_path_talk_it_out(client: TestClient):
     st = _state(cid)
     assert st.completed is True and st.travelers_freed is True
     assert st.lead_stage == "solved"
-    assert "alive" in out["narration"]
+    # The resolution's facts — the model writes the words (P14).
+    facts = _last_facts(recording_narrator)
+    assert "alive" in facts and "cuts them loose" in facts
     assert any("Freed the missing travelers" in a for a in st.pc["achievements"])
     assert out["dialogue"][0]["speaker"] == "The elder traveler"
 
@@ -198,14 +206,15 @@ def test_path_blades_out_and_loss_continues_story(client: TestClient):
     assert ambush["narration"]
 
 
-def test_confront_without_a_route_does_not_resolve(client: TestClient):
+def test_confront_without_a_route_does_not_resolve(
+    client: TestClient, recording_narrator: RecordingNarrator
+):
     h, cid = _setup(client, "noroute@example.com")
     _learn_and_go(client, h)
     _act(client, h, "I head to the old monastery")
-    r = _act(client, h, "I enter the cellar")
+    _act(client, h, "I enter the cellar")
     st = _state(cid)
     assert st.completed is False and st.solution_path is None
-    assert "threads" in r["narration"] or "way in" in r["narration"]
 
 
 def test_epilogue_memory_and_marla_greeting(client: TestClient):
@@ -228,22 +237,28 @@ def test_epilogue_memory_and_marla_greeting(client: TestClient):
         db.close()
 
 
-def test_post_completion_play_is_allowed_and_peaceful(client: TestClient):
+def test_post_completion_play_is_allowed_and_peaceful(
+    client: TestClient, recording_narrator: RecordingNarrator
+):
     h, cid = _setup(client, "after@example.com")
     _act(client, h, "I ask Marla about the travelers")
     _walk_to_market(client, h)
     _act(client, h, "I persuade Sella the factor to confide in me")
     _resolve_at_monastery(client, h)
 
-    r = _act(client, h, "I enter the cellar again")
-    assert "quiet" in r["narration"]
+    _act(client, h, "I enter the cellar again")
+    assert "quiet" in _last_facts(recording_narrator)
     talk = _act(client, h, "I ask Marla what she needs from me")
     assert talk["narration"]
     assert _state(cid).completed is True
 
 
-def test_arc_narrations_within_budget(client: TestClient):
-    """Every arc beat obeys the narration budget (<= 600 chars, as the playtest report)."""
+def test_arc_beats_are_model_calls_with_bounded_briefs(
+    client: TestClient, recording_narrator: RecordingNarrator
+):
+    """P14: every arc beat narrates through the model from a bounded brief
+    (the successor of the old 600-char authored-text budget — the engine can
+    bound its input to the model, not the model's own words)."""
     h, _cid = _setup(client, "arcbudget@example.com")
     script = [
         ("I ask Marla about the travelers", 18),
@@ -255,12 +270,13 @@ def test_arc_narrations_within_budget(client: TestClient):
         ("I enter the cellar", 18),
         ("I return to the inn", 18),
     ]
-    texts: list[str] = []
+    start = len(recording_narrator.narrator_prompts)
     for text, seed in script:
         r = _act(client, h, text, seed)
-        texts.append(r["narration"])
-        for d in r["dialogue"]:
-            texts.append(d["line"])
-    over = [t for t in texts if len(t) > 600]
-    assert not over, over
+        assert r["narration"], text
+        assert MARK in r["narration"], text
+    for i, prompt in enumerate(recording_narrator.narrator_prompts[start:]):
+        facts = RecordingNarrator.facts_of(prompt)
+        assert len(" ".join(facts)) <= 1500, prompt[:200]
+        assert "Concise" in prompt or "Standard" in prompt or "Detailed" in prompt, f"[{i}] {RecordingNarrator.beat_of(prompt)} len={len(prompt)}"
 

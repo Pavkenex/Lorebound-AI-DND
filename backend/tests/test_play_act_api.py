@@ -19,8 +19,14 @@ from app.modules.inventory import models as _inv  # noqa: F401
 from app.modules.play import models as pm  # noqa: F401
 from app.modules.play.models import PlayStateRow
 from app.modules.play.state import PlayState
+from tests.narrator_fake import MARK, RecordingNarrator
 
-pytestmark = pytest.mark.usefixtures("stub_play_provider")
+pytestmark = pytest.mark.usefixtures("recording_narrator")
+
+
+def _last_facts(narrator: RecordingNarrator) -> str:
+    """The facts the engine handed the narrator for the beat just resolved."""
+    return " | ".join(RecordingNarrator.facts_of(narrator.narrator_prompts[-1]))
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -119,8 +125,9 @@ def test_talk_discovers_then_accepted_and_feed_grows(client: TestClient):
     st = _state(cid)
     kinds = [e["kind"] for e in st.feed]
     assert "system" in kinds and "dialogue" in kinds and "lead" in kinds
-    # The chronicle feed mirrors every action's response (reload reconstructs it):
-    # opening narration + one narration per action; the response dialogue lands too.
+    # The chronicle feed mirrors every action's response (reload reconstructs
+    # it): one narration per action — the walk-in, the talk, the acceptance —
+    # and the response dialogue lands too (each beat's words are the model's).
     narrations = [e for e in st.feed if e["kind"] == "narration"]
     assert len(narrations) >= 3
     assert st.feed[-1]["kind"] == "dialogue"
@@ -180,7 +187,8 @@ def test_fight_win_and_lose(client: TestClient):
     assert st2.pc["hp"]["cur"] == 26  # 32 - 6
 
 
-def test_leave_return_and_memory_greeting(client: TestClient):
+def test_leave_return_and_memory_greeting(client: TestClient,
+                                          recording_narrator: RecordingNarrator):
     h, cid = _setup(client, "leave@example.com")
     _act(client, h, "I steal the storeroom strongbox", seed=15)
     left = _act(client, h, "I step out into the rain and take the northern road")
@@ -190,8 +198,12 @@ def test_leave_return_and_memory_greeting(client: TestClient):
     back = _act(client, h, "I return to the inn")
     st = _state(cid)
     assert st.location == "lantern-inn" and st.visits == 2
-    assert "remembers" in back["dialogue"][0]["line"]
-    assert "missing silver" in back["dialogue"][0]["line"]
+    # The room's welcome is the model's now, and what it is given is the
+    # engine's: who Marla is and what she holds against the player (P14).
+    assert back["dialogue"] and back["dialogue"][0]["speaker"] == "Marla Voss"
+    facts = _last_facts(recording_narrator)
+    assert "missing silver" in facts
+    assert "not forgotten" in facts
 
 
 def test_world_fact_attempts_grant_nothing(client: TestClient):
@@ -213,10 +225,10 @@ def test_idempotent_replay_applies_once(client: TestClient):
     assert _state(cid).silver == 22  # applied exactly once
 
 
-def test_free_text_falls_back_to_pipeline_with_stub(client: TestClient):
+def test_free_text_falls_back_to_the_pipeline(client: TestClient):
     h, cid = _setup(client, "free@example.com")
     r = _act(client, h, "I hum a marching tune and dry my boots by the hearth")
-    assert len(r["narration"]) > 40  # stub narrator produced prose
+    assert len(r["narration"]) > 40  # the narrator answered (P14: all prose)
     assert _state(cid).actions_taken == 2  # the walk-in, then the hum
 
 
@@ -229,10 +241,13 @@ def test_rest_restores_and_time_advances(client: TestClient):
     assert st.day >= 2  # 19:00 + 6h rolls to the next day
 
 
-def test_all_beat_narrations_within_budget(client: TestClient):
-    """Playtest narration discipline: no beat text exceeds 600 chars."""
+def test_every_beat_is_a_model_call_with_a_bounded_brief(
+    client: TestClient, recording_narrator: RecordingNarrator
+):
+    """P14's successor to the narration-budget rule: the engine's *input* to
+    the model is what it can bound — every beat carries facts, the brief stays
+    small, and every word the player read came from the provider."""
     h, _cid = _setup(client, "budget@example.com")
-    seen: list[str] = []
     scripts = [
         ("I ask Marla about the travelers", 18),
         ("I ask what she needs", 18),
@@ -249,10 +264,16 @@ def test_all_beat_narrations_within_budget(client: TestClient):
         ("I rest for the night", 18),
         ("I hum a tune", 18),
     ]
+    start = len(recording_narrator.narrator_prompts)
     for text, seed in scripts:
         r = _act(client, h, text, seed=seed)
-        seen.append(r["narration"])
-        for d in r["dialogue"]:
-            seen.append(d["line"])
-    for text in seen:
-        assert len(text) <= 600, f"over budget ({len(text)}): {text[:80]}…"
+        assert r["narration"], text
+        assert MARK in r["narration"], text  # the model's words, never a constant
+    prompts = recording_narrator.narrator_prompts[start:]
+    for prompt in prompts:
+        facts = RecordingNarrator.facts_of(prompt)
+        assert len(" ".join(facts)) <= 1500, prompt[:200]
+        assert "Concise" in prompt or "Standard" in prompt  # a declared length
+    # The fourteen actions above are thirteen beats plus one pipeline action;
+    # every one of them asked the narrator for its words.
+    assert len(prompts) >= len(scripts)

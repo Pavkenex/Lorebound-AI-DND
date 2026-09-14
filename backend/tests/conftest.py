@@ -30,3 +30,21 @@ def stub_play_provider(monkeypatch):
     monkeypatch.setattr(
         play_router, "resolve_provider", lambda db, user_id: StubProvider()
     )
+
+
+@pytest.fixture()
+def recording_narrator(monkeypatch):
+    """A connected model on the play path that writes prose and keeps prompts.
+
+    The P14 contract is "every story word is the model's, written from the
+    engine's facts", so a test that wants to inspect the promise (what the
+    engine handed the narrator) or prove the delivery (the player-visible text
+    came from the provider) injects this double instead of the stub, at the
+    same seam production resolves a provider from.
+    """
+    import app.modules.play.router as play_router
+    from tests.narrator_fake import RecordingNarrator
+
+    narrator = RecordingNarrator()
+    monkeypatch.setattr(play_router, "resolve_provider", lambda db, user_id: narrator)
+    return narrator

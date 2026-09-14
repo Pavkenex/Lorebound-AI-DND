@@ -1,8 +1,10 @@
-"""The playable journey, start to finish, over HTTP with the stub provider.
+"""The playable journey, start to finish, over HTTP with the recording narrator.
 
-register -> login -> campaign -> opening state -> seven flows -> clues ->
-resolution -> epilogue -> save -> reload -> completed; plus idempotent replay
-and post-completion free play. Runs in CI like any other suite.
+register -> login -> campaign -> opening state -> narrated opening -> seven
+flows -> clues -> resolution -> epilogue -> save -> reload -> completed; plus
+idempotent replay and post-completion free play. Runs in CI like any other
+suite. P14: every word the player reads in the journey is written by the
+narrator double — the seed's own page (POST /opening) included.
 """
 from __future__ import annotations
 
@@ -22,8 +24,14 @@ from app.modules.campaign import world as _world  # noqa: F401
 from app.modules.character import models as _char  # noqa: F401
 from app.modules.inventory import models as _inv  # noqa: F401
 from app.modules.play import models as pm  # noqa: F401
+from tests.narrator_fake import MARK, RecordingNarrator
 
-pytestmark = pytest.mark.usefixtures("stub_play_provider")
+pytestmark = pytest.mark.usefixtures("recording_narrator")
+
+
+def _last_facts(narrator: RecordingNarrator) -> str:
+    """The facts the engine handed the narrator for the beat just resolved."""
+    return " | ".join(RecordingNarrator.facts_of(narrator.narrator_prompts[-1]))
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -51,7 +59,8 @@ def client():
             app.dependency_overrides[get_db] = previous
 
 
-def test_full_journey_start_to_finish(client: TestClient):
+def test_full_journey_start_to_finish(client: TestClient,
+                                      recording_narrator: RecordingNarrator):
     # -- 1. Account: register, then log in with a real credentials round-trip.
     email, pw = "journey@example.com", "password123"
     reg = client.post("/auth/register", json={"email": email, "password": pw, "display_name": "Journey"})
@@ -73,8 +82,18 @@ def test_full_journey_start_to_finish(client: TestClient):
     st = client.get("/state", headers=h).json()
     assert st["location"] == "The road to Ravenford"  # the prologue (§intro)
     assert st["lead_stage"] == "unheard"
-    assert len(st["feed"]) == 1  # the arrival narration alone
+    # P14: the seed carries no prose; the state says the opening is owed.
+    assert st["feed"] == [] and st["opening_pending"] is True
     assert st["character"]["name"] == "Kaelis Thorn"
+
+    # -- 2a. The chronicle's opening page is asked for once, written once.
+    opening = client.post("/opening", headers=h, json={})
+    assert opening.status_code == 200, opening.text
+    assert MARK in opening.json()["narration"]           # the model's words
+    assert client.post("/opening", headers=h, json={}).json()["already"] is True
+    st = client.get("/state", headers=h).json()
+    assert st["feed"][0]["kind"] == "narration"
+    assert st["opening_pending"] is False
 
     def act(text: str, seed: int = 18, key: str | None = None) -> dict:
         headers = dict(h)
@@ -115,9 +134,12 @@ def test_full_journey_start_to_finish(client: TestClient):
     act("I step out into the rain and take the northern road")
     assert "Northern Road" in client.get("/state", headers=h).json()["location"]
     back = act("I return to the inn")
-    assert "remembers" in back["dialogue"][0]["line"]
-    assert "missing silver" in back["dialogue"][0]["line"]  # the theft persists
-    assert "brawl" in back["dialogue"][0]["line"]  # so does the fight
+    assert back["dialogue"] and back["dialogue"][0]["speaker"] == "Marla Voss"
+    # The welcome is the model's now; what it is given is the engine's —
+    # Marla's working memory: the theft and the brawl persist (P14).
+    facts = _last_facts(recording_narrator)
+    assert "missing silver" in facts
+    assert "brawl" in facts
 
     # -- 4. Investigation: clues -> investigating -> a route opens.
     act("I step out and take the northern road")
@@ -146,9 +168,13 @@ def test_full_journey_start_to_finish(client: TestClient):
     # -- 7. Resolution: the road ends at the monastery cellar.
     act("I head to the old monastery")
     fin = act("I confront what waits below and enter the cellar")
-    assert "alive" in fin["narration"]
+    facts = _last_facts(recording_narrator)
+    assert "alive" in facts and "cuts them loose" in facts
     assert fin["dialogue"][0]["speaker"] == "The elder traveler"
-    assert any(d["speaker"] == "The chronicler" for d in fin["dialogue"])  # the epilogue
+    # P14: even the epilogue is the model's — carried by the resolution facts
+    # (the travelers walk the north road home; Ravenford wakes to the story),
+    # never a code-owned closing line.
+    assert "north road" in facts or "over Ravenford" in facts
 
     st = client.get("/state", headers=h).json()
     assert st["completed"] is True

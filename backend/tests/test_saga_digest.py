@@ -11,10 +11,11 @@ from app.modules.story.saga import (
     refresh_saga,
     saga_due,
 )
+from tests.narrator_fake import RecordingNarrator
 
 
-def _engine(campaign_id: str = "saga-digest") -> ActEngine:
-    return ActEngine(PlaySession(campaign_id, seeded_state()))
+def _engine(campaign_id: str = "saga-digest", narrator=None) -> ActEngine:
+    return ActEngine(PlaySession(campaign_id, seeded_state()), provider=narrator)
 
 
 def test_fresh_digest_names_hero_and_road():
@@ -79,7 +80,7 @@ def test_refresh_cadence():
 
 
 def test_walk_into_town_writes_the_digest():
-    engine_obj = _engine("saga-walk-in")
+    engine_obj = _engine("saga-walk-in", narrator=RecordingNarrator())
     assert engine_obj.state.saga == ""
     engine_obj.act("I head down to the inn and step inside")
     assert engine_obj.state.saga != ""

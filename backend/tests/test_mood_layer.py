@@ -43,7 +43,7 @@ from app.modules.play.models import PlayStateRow
 from app.modules.play.session import PlaySession
 from app.modules.play.state import PlayState
 
-pytestmark = pytest.mark.usefixtures("stub_play_provider")
+pytestmark = pytest.mark.usefixtures("recording_narrator")
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)

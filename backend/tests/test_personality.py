@@ -55,8 +55,9 @@ from app.modules.rules.checks import (
     apply_social_policy,
     is_long_odds,
 )
+from tests.narrator_fake import RecordingNarrator
 
-pytestmark = pytest.mark.usefixtures("stub_play_provider")
+pytestmark = pytest.mark.usefixtures("recording_narrator")
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -466,12 +467,17 @@ def test_a_peddler_reads_bought_coin_as_suspicion(client: TestClient):
     assert st.mood_of("tomm")["mood"] == "suspicious"   # caution 0.8 rewrites warmth
 
 
-def test_paying_a_character_who_is_not_here_finds_no_taker(client: TestClient):
+def test_paying_a_character_who_is_not_here_finds_no_taker(
+    client: TestClient, recording_narrator: RecordingNarrator
+):
     h, cid = _setup(client, "pers-nobody@example.com")
     out = _act(client, h, "I offer the peddler four guilders for the truth")
     assert "pending_check" not in out
     assert _state(cid).silver == 8
-    assert "no one here to take it" in out["narration"]
+    # The refusal's words are the model's; the fact the engine hands over is
+    # that there is no taker here (P14).
+    facts = " | ".join(RecordingNarrator.facts_of(recording_narrator.narrator_prompts[-1]))
+    assert "nobody here to take it" in facts
 
 
 # ------------------------------------------------------- pressure's own price

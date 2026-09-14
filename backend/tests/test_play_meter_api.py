@@ -62,11 +62,12 @@ def _setup(client: TestClient, email: str) -> dict:
     return headers
 
 
-def test_authored_beat_headers_are_stub_honest(client: TestClient):
+def test_every_beat_counts_a_narration_call(client: TestClient):
+    """P14: an authored beat no longer narrates itself — it calls the model."""
     h = _setup(client, "meter1@example.com")
     r = client.post("/act", headers=h, json={"text": "I ask Marla about the travelers"})
     assert r.status_code == 200
-    assert r.headers["x-ai-calls"] == "0"  # authored beat: no provider call
+    assert r.headers["x-ai-calls"] == "1"  # the beat's prose is the model's now
     assert r.headers["x-ai-cost-usd"] == "0.000000"  # stub is free
     assert r.headers["x-cache"] == "miss"
 
