@@ -4,7 +4,7 @@
 // called-check throws (t_84c31095 follow-up): a surfaced check waits for the
 // player's die — the prompt owns the throw, nothing rolls behind the player.
 import { useEffect, useRef, useState } from "react";
-import { api, aiSettingsApi, newActionKey, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type AiSettingsDoc, type ActResponse, type PendingCheck, type NpcEntry, type NpcDetail } from "../../lib/api";
+import { api, aiSettingsApi, newActionKey, openChronicle, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type AiSettingsDoc, type ActResponse, type PendingCheck, type NpcEntry, type NpcDetail } from "../../lib/api";
 import { aiConnected, aiConnectionLine, aiNotConnectedReason, aiPlayGate, actFailureText } from "../../lib/ai";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
@@ -100,6 +100,31 @@ export default function AdventurePage() {
     void loadState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
+
+  // The chronicle's first page (P14): the seed carries no prose at all, so a
+  // new journey asks the narrator for its opening once the state says it is
+  // pending — and only once a model is connected (the act gate already says
+  // why when there is none: no model, no narration).
+  const [openingAsked, setOpeningAsked] = useState(false);
+  useEffect(() => {
+    if (!hydrated || openingAsked || !gs.opening_pending) return;
+    if (!ai?.connected) return;
+    setOpeningAsked(true);
+    void (async () => {
+      const o = await openChronicle(content);
+      if (!o.ok || o.data.already) return;
+      addCost(o.cost);
+      const fresh: FeedEvent[] = [];
+      if (o.data.narration)
+        fresh.push({ id: nid(), kind: "narration", text: o.data.narration });
+      for (const d of o.data.dialogue ?? [])
+        fresh.push({ id: nid(), kind: "dialogue", speaker: d.speaker, text: d.line });
+      if (!fresh.length) return;
+      setEvents((e) => (e.length ? [...e, ...fresh] : fresh));
+      setGs((g) => ({ ...g, opening_pending: false }));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, ai, gs.opening_pending, openingAsked]);
 
   // The account's AI connection (P12): the SAME resolution /act uses, so this
   // page can say "connect your AI" before a turn is wasted — and can name the

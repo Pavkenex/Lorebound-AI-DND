@@ -173,7 +173,7 @@ export interface ActResponse {
  * never landed) — plus the scrubbed message when there is one. */
 export type ActOutcome =
   | { ok: true; data: ActResponse; cost: CostInfo }
-  | { ok: false; code: string; message: string; status: number | null };
+  | ActFailureDoc;
 
 /** A fresh idempotency key for one player action.
  *
@@ -184,8 +184,16 @@ export function newActionKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Why a turn did not happen (P12): the backend's machine code + scrubbed text. */
+export type ActFailureDoc = {
+  ok: false;
+  code: string;
+  message: string;
+  status: number | null;
+};
+
 /** Read a failed /act: ``{detail: "code"}`` or ``{detail: {code, message}}``. */
-async function actFailure(res: Response): Promise<ActOutcome> {
+async function actFailure(res: Response): Promise<ActFailureDoc> {
   let body: unknown = null;
   try {
     body = await res.json();
@@ -248,8 +256,37 @@ export async function submitAction(
   }
 }
 
-/** Throw the called check's die: sends the settled face to resolve the beat.
+/** Write the chronicle's opening page once (§intro, P14).
  *
+ *  The seed carries no prose: a new journey's first page is the model's, and
+ *  the page asks for it as soon as the state says it is pending. Same failure
+ *  contract as ``submitAction`` — ``connect_your_ai`` / ``provider_failed`` /
+ *  ``turn_failed`` come back as ``{ok: false}``, never as cover prose. */
+export async function openChronicle(
+  prefs?: ContentPrefs
+): Promise<{ ok: true; data: OpeningDoc; cost: CostInfo } | ActFailureDoc> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 25000);
+    const res = await fetch(`${BASE}/opening`, {
+      method: "POST",
+      signal: ctl.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...prefsHeaders(prefs),
+        ...authHeaders(),
+      },
+      body: "{}",
+    });
+    clearTimeout(t);
+    if (!res.ok) return actFailure(res);
+    return { ok: true, data: (await res.json()) as OpeningDoc, cost: readCost(res) };
+  } catch {
+    return { ok: false, status: null, code: "unreachable", message: "" };
+  }
+}
+
+/** Throw the called check's die: sends the settled face to resolve the beat.
  * A throw that fails to send is never faked into a resolution: it answers
  * ``{ok: false}`` (409 → ``check_expired``) so the UI offers a resend of the
  * SAME face, and the same action can be retried with the same key. */
@@ -351,7 +388,20 @@ export type LiveGameState = Omit<typeof fixtures.gameState, "npcs"> & {
   npcs: NpcEntry[];
   /** The live scene block (§7): id/label/goal of where the player stands. */
   scene?: { id: string; label: string; goal?: string; state?: string };
+  /** True until the chronicle's first page has been written (P14): the seed
+   *  carries no prose, so the page asks the narrator for it once (POST /opening). */
+  opening_pending?: boolean;
 };
+
+/** The chronicle's opening page (POST /opening): the model's words for the
+ *  road above Ravenford, written once per journey from the player's own sheet. */
+export interface OpeningDoc {
+  narration: string;
+  dialogue: { speaker: string; line: string }[];
+  suggestions: { label: string; command: string }[];
+  /** Already written: this journey's page is in the chronicle. */
+  already: boolean;
+}
 
 export interface TutorialDoc {
   id: string;
