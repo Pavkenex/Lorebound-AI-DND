@@ -618,3 +618,68 @@ wording). Engine suite untouched.
   `496972e` (failure wording, tip); pushed `01a7431..496972e` to `origin/main`;
   `git log origin/main..HEAD` empty afterwards. Owner redeploys manually
   (Coolify) — the runbook's §3 now walks the story game's four states too.
+
+### P7 finalize block (post-deploy live verification, filled during the card)
+
+- Deploy verified live on the owner's redeploy: the frontend chunk fingerprint
+  moved (5 added / 3 removed, the `/chronicle` chunk among them) and
+  `openapi.json` carries the five `/engine/*` paths — the running build is the
+  phase-2 tip `3327c8d`. ("Stub play" no longer exists to verify: P11 made the
+  pilot require a connected model, so the keyed turn below is the live flow.)
+- No-key legs (Phase A, `p7_live_verify.py`, transcript `p7_live_verify.txt`,
+  md5 `70686241…`): **19/19** — backend health; openapi lists the pilot; the nav
+  carries Chronicle; `/chronicle` SSR renders the pilot, not the flag-off notice;
+  scratch register + campaign create; **unconnected pilot turn refused
+  `400 connect_your_ai` with the state snapshot unchanged**; `GET
+  /engine/connection` reads unconnected; **`PUT provider=stub` rejected**
+  (`provider 'stub' is not available; supported: openai, openai-compatible`); a
+  stray `api_key` in the PUT body is neither stored nor echoed; a *live provider
+  without a key* is refused the same way; story side: `GET /ai/settings` names
+  `unset`, and `/act` refuses `connect_your_ai` with nothing persisted.
+- Live BYOK turns (Phase B, `p7_live_turn.py`, transcript `p7_live_turn.txt`,
+  md5 `21b942ae…`): **15/15**. The sandbox is unreachable from the deployed
+  backend (NAT), so the run goes through a public quick tunnel to a controlled
+  OpenAI-compatible fake on this box with a dummy runtime key — three real turns
+  against the deployed stack: canary verdict `reachable + native tools` → turn 1
+  `200 0.2s mode=live native_tools=true degraded=false`, narration is the model's
+  prose, and a real called check rides the payload (`Perception check vs dc 12:
+  SUCCESS (19 vs 12, margin 7)`, roll 17) → turn 2 with `X-Content-Prefs: nsfw
+  on` flips the applied echo → turn 3 with a malformed prefs header applies
+  defaults + the visible `CONTENT_DEFAULTS_NOTE` → state advanced three turns →
+  **the runtime key is absent from every response** and **arrives at the provider
+  via `Authorization`** alongside the engine tool schemas → the NSFW prompt
+  carries the uncensored directive + the hard minors exclusion, the default
+  prompt the standard directive.
+- Degraded / failure / recovery legs on the same live stack
+  (`p7_live_degraded.py` 7/8 + `p7_live_healed.py` 3/3): a tool-less model (no
+  `report_capability` call) caches `native_tools=false` and the turn still answers
+  `200 mode=live degraded=true` with prose via the JSON fallback; a provider
+  answering `500` yields the honest `502 {"detail":"provider HTTP 500: …"}`, key
+  scrubbed, turn counter unchanged; after the heal a fresh model name re-probes
+  and the native path answers `200 native_tools=true`.
+- Live UI (real browser, scratch account; files in `/opt/data/kanban-evidence/`):
+  `t_da57fd43-ui-chronicle-turn.png` (md5 `7b6e3e26…`) — a played pilot turn with
+  "◈ p7-ui-model", the echoed action, the model's prose, the mechanics line, the
+  suggestion chips and "a key is kept in this browser"; the fake's request log
+  also shows the browser store's content prefs riding the prompt (reduced/off
+  directives), so the request-time prefs read is proven from the real client.
+  `t_da57fd43-ui-adventure-gate.png` (md5 `69d520e4…`) — `data-gate="connect"` +
+  the P12 wording, act input disabled. `t_da57fd43-ui-degraded-banner.png`
+  (md5 `172beee3…`) — the tool-less model: "⚠ Compatibility mode — … using its
+  JSON fallback. Turns work; the prose is plainer." + the `compatibility` chip.
+  The full request log is kept at `t_da57fd43-fake-provider-log.jsonl`
+  (md5 `0493c9f6…`).
+- Live finding (needs the owner's ruling; not fixed here — `engine/` and
+  `backend/app/modules/engine/` are frozen by the standing owner directive): in
+  the JSON-fallback path a reply whose *text* is empty (model answered only with
+  tool calls, or nothing) is retried once, then shipped as empty prose — the turn
+  commits, the feed shows `◈ narrator: json: the reply was empty; regenerating` /
+  `… regeneration exhausted, using the reply as prose`, and that action's
+  chronicle line has no narration. Reproduced live twice (API and UI). A real
+  tool-less model answers with text, so it takes a model returning empty content —
+  rare, but the player silently loses a turn's prose when it happens.
+- Remaining owner steps: the real BYOK turn on a phone (`/chronicle` → Connect
+  your AI → base URL + model + key → Save → Test connection → play a turn), craft
+  notes on real-model prose, and the story game's connected legs (`/adventure` and
+  Settings → Tale-spinner with the same key). This card changed docs only — no
+  deploy is needed for it.
