@@ -12,6 +12,7 @@ node_modules/
 .next-archive-*/
 *.tsbuildinfo
 dist/
+build/
 coverage/
 htmlcov/
 alembic/versions/__pycache__/
