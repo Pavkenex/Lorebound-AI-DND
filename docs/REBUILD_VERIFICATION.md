@@ -75,7 +75,7 @@ Observed: every check prints `ok`; `RESULT: OK — all 14 mechanism probes passe
 | 11 | lead state-machine gates (`unheard → resolved` refused, `unheard → rumored` accepted + history row) | §3.4 | `... --only probe_lead_gates` | 2/2 ok |
 | 12 | degraded JSON-in-text chain (fenced extraction, repair note, bounded regeneration, unknown delta dropped with a note) | §5B, §7 | `... --only probe_json_protocol` | 7/7 ok |
 | 13 | full offline loop: seeded determinism, one verdict line per turn, one row per turn in turn_log/telemetry/chronicle, rules-first intent classification | §1, §9, §10 | `... --only probe_offline_loop` | 6/6 ok |
-| 14 | `decay_class` seam between validator and memory (recorded, not endorsed — see §7) | §3.5 | `... --only probe_decay_class_seam` | 2/2 ok — memory tags `durable` by magnitude; the validator writes `slow` |
+| 14 | `decay_class` derivation — validator + memory share the magnitude rule; explicit tags win (decision 1a, see §7) | §3.5 | `... --only probe_decay_class_seam` | 3/3 ok — both paths derive `durable`; a `fast` tag wins |
 
 ## 4. Probe sensitivity (mutation meta-check)
 
@@ -128,17 +128,20 @@ The checked-in 12-turn transcript still matches its recorded digest:
 
 ## 7. Discrepancies, notes, resolutions
 
-1. **`decay_class` derivation seam (open, documented — not introduced by R10).**
-   `engine/src/engine/validate.py::_apply_relationship` (line ~1022) writes the
-   delta's tagged class when it is one of `DECAY_CLASSES`, else
-   `DEFAULT_DECAY_CLASS = "slow"`. `engine/src/engine/memory.py::append_delta`
-   derives the class from magnitude (≥25 durable, ≥10 slow, else fast). Same
-   −30 betrayal: memory path → `durable`, validator path → `slow`; `durable`/`fast`
-   are unreachable through the validator, i.e. in real play. Probe 14 records this
-   divergence explicitly (it asserts both halves), so it cannot drift silently.
-   **Resolution: left open on purpose** — changing either side changes committed
-   data, and I2 (`t_2e5797de`, comment #9) flagged it as a decision, not a bug
-   fix. Also listed under "known gaps" in `docs/REBUILD_NOTES.md`.
+1. **`decay_class` derivation — RESOLVED post-rebuild (owner decision 1a,
+   commit `519c838`).** As built: `engine/src/engine/validate.py::_apply_relationship`
+   wrote the delta's tagged class when valid, else `DEFAULT_DECAY_CLASS = "slow"`,
+   while `engine/src/engine/memory.py::append_delta` derives the class from
+   magnitude (≥25 durable, ≥10 slow, else fast) — so `durable`/`fast` were
+   unreachable through the validator, i.e. in real play. Probe 14 recorded the
+   divergence explicitly (both halves asserted) and I2 (`t_2e5797de`, comment #9)
+   flagged it as a decision, not a bug fix; it was listed under "known gaps" in
+   `docs/REBUILD_NOTES.md`. **Fix (2026-09-14):** the validator derives the class
+   from the APPLIED (post-clamp) magnitude via
+   `RelationshipLedger.default_decay_class`; explicit tags still win;
+   `DEFAULT_DECAY_CLASS` is gone. Probe 14 now asserts the unified rule (3/3)
+   and a mutation case reverts to the flat `"slow"` default to keep it honest;
+   `boundary-clamps`' Marla slack now uses the `fast` rate.
 2. **Card tooling vs. project `addopts`.** The card's suggested
    `pytest tests -q` is already `-q` via `pyproject.toml`; counts need
    `-o addopts=""`. Cosmetic, noted so the next reader is not surprised by a

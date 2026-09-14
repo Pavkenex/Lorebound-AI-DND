@@ -110,13 +110,15 @@ mechanism from §0–§10; they are seams and un-exercised paths.
    Request/response shapes are pinned both directions, but the first real
    model call (auth, rate limits, real token accounting, prose quality) is
    unexercised.
-2. **`decay_class` derivation is unresolved.** `validate.py::_apply_relationship`
-   writes the delta's tagged class else `"slow"` (the frozen
-   `models.RelationshipDelta` default), so `memory.append_delta`'s magnitude
-   rule (≥25 durable, ≥10 slow, else fast) never applies to validator-committed
-   rows and `durable`/`fast` are unreachable in real play. No test pins either
-   rule; flagged in I2 (`t_2e5797de` comment #9). Do not pick a side silently —
-   it changes committed data.
+2. **`decay_class` derivation — RESOLVED post-rebuild (owner decision 1a, 2026-09-14,
+   commit `519c838`).** `validate.py::_apply_relationship` now derives the class
+   from the APPLIED (post-clamp) magnitude via
+   `RelationshipLedger.default_decay_class` (≥25 durable, ≥10 slow, else fast)
+   when the delta carries no valid tag; an explicit narrator tag still wins.
+   Both write paths now share one rule. Follow-ups: +6 validator-side test cases
+   (suite 788), `boundary-clamps`' Marla probe now uses the `fast` rate
+   (0.08/turn), probe 14 asserts the unified rule (3/3), and a 6th mutation case
+   covers a revert to the flat `"slow"` default.
 3. **No player-travel mechanism.** There is no `move`/location delta kind in
    `DELTA_KINDS`, and no module writes `characters.location_id` except the
    validator's character writer (used by hp/stat/inventory deltas). Observed:
