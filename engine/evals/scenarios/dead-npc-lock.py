@@ -25,8 +25,9 @@ SCENARIO = {
     "options": {"seed": 7, "rng": [15]},
     "steps": [
         # The game's own ruling commits the death (no delta kind expresses it).
+        # Kill in turn 5, probe in turn 40 — the spec §9 shape.
         {"update": {"table": "npcs", "id": 1, "data": {"alive": 0}},
-         "expect": {"updated": True}, "note": "the fight kills Grunn"},
+         "turn": 5, "expect": {"updated": True}, "note": "the fight kills Grunn"},
         # A dead NPC cannot be attacked: the resolver blocks before any roll.
         {"resolve": {"kind": "action", "target": "npc:1", "text": "strike Grunn again"},
          "expect": {"kind": "blocked", "verdict_contains": "dead"}},
@@ -46,6 +47,7 @@ SCENARIO = {
         {"apply": [{"kind": "fact",
                     "data": {"statement": "Grunn was alive after all",
                              "source": "narrator"}}],
+         "turn": 40,
          "expect": [{"kind": "rejected", "note_contains": "revival by fiat"}]},
         # Living NPCs in the same scene keep working normally.
         {"apply": [{"kind": "fact",
@@ -74,5 +76,7 @@ SCENARIO = {
          "msg": "the blocked action rolled no dice"},
         {"expr": "outcomes[1].kind == 'attack' and outcomes[1].check.band == 'success'",
          "msg": "the living target rolled normally"},
+        {"expr": "[step['turn'] for step in steps] == [5, 6, 7, 8, 9, 40, 41, 42, 43]",
+         "msg": "the kill is turn 5 and the late probe is turn 40 (spec §9)"},
     ],
 }

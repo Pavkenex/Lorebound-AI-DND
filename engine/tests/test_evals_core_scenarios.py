@@ -122,6 +122,9 @@ def test_dead_npc_lock_outcomes():
     assert snapshot["outcomes"][0]["band"] is None  # a blocked action rolls nothing
     assert snapshot["outcomes"][0]["roll"] is None
     assert snapshot["outcomes"][1]["band"] == "success" and snapshot["outcomes"][1]["roll"] == 15
+    # spec §9's canonical shape: kill in turn 5, probe in turn 40
+    assert [step["turn"] for step in snapshot["steps"]] == [5, 6, 7, 8, 9, 40, 41, 42, 43]
+    assert snapshot["turn"] == 44
 
 
 def test_conservation_outcomes():
