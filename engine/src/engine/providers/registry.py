@@ -10,8 +10,9 @@
 
 Diagnostics-only slots (``streaming``, ``json_mode``, ``context_window``) are
 never guessed by the canary: they come from ``cfg.context_window`` and from
-``cfg.extra["caps"]`` declarations. Only *successful* probes are cached —
-caching a transient failure would degrade a working key forever.
+``cfg.extra["caps"]`` declarations. Verdicts that came from a real model
+response are cached (tools *and* no-tools); probes that failed before any
+response are not, so a transient outage can never freeze a wrong verdict.
 
 ``probe_capabilities`` never raises: capability detection is advisory, and a
 failed probe must cost quality, never the game (spec §7 quality floor).
@@ -28,7 +29,7 @@ from .anthropic import AnthropicAdapter
 from .base import NarratorAdapter
 from .gemini import GeminiAdapter
 from .openai_compat import OpenAICompatAdapter
-from .transport import as_int
+from .transport import AdapterBase, as_int
 
 CANARY_TOOL_NAME = "report_capability"
 CANARY_PROMPT = (
@@ -70,8 +71,12 @@ def canary_tool_schema() -> list[dict]:
     ]
 
 
-def build_adapter(cfg: ProviderConfig, *, api_key: str | None = None) -> NarratorAdapter:
-    """Wire adapter for ``cfg.api_mode`` (``openai`` | ``anthropic`` | ``gemini``)."""
+def build_adapter(cfg: ProviderConfig, *, api_key: str | None = None) -> AdapterBase:
+    """Wire adapter for ``cfg.api_mode`` (``openai`` | ``anthropic`` | ``gemini``).
+
+    The returned adapter satisfies ``NarratorAdapter`` (``complete`` /
+    ``capabilities``); being concrete it also carries the probe/transport knobs.
+    """
     mode = (cfg.api_mode or "openai").strip().lower()
     adapter_cls = _API_MODES.get(mode)
     if adapter_cls is None:
@@ -110,8 +115,11 @@ def probe_capabilities(
     on probe failure returns conservative defaults (native_tools=False).
 
     A cached verdict for this provider+model+base_url is reused unless
-    ``force=True``. Successful probes are attached to the adapter (if it exposes
-    a ``caps`` attribute) so ``adapter.capabilities()`` reflects reality.
+    ``force=True``. Verdicts that came from a real model response (tools or no
+    tools) are cached; probes that failed before any response (timeout, HTTP
+    error, sick store) are not, so a transient outage can never freeze a wrong
+    verdict. Successful probes are attached to the adapter (if it exposes a
+    ``caps`` attribute) so ``adapter.capabilities()`` reflects reality.
     """
     key = cache_key(cfg)
     if not force:
@@ -119,9 +127,9 @@ def probe_capabilities(
         if cached is not None:
             _attach_caps(adapter, cached)
             return cached
-    caps = _run_canary(adapter, cfg)
+    caps, answered = _run_canary(adapter, cfg)
     _attach_caps(adapter, caps)
-    if caps.native_tools:
+    if answered:
         _write_cache(store, key, caps)
     return caps
 
@@ -131,7 +139,8 @@ def cache_key(cfg: ProviderConfig) -> str:
     return f"{cfg.name}|{cfg.model}|{cfg.base_url}|{cfg.api_mode}"
 
 
-def _run_canary(adapter: NarratorAdapter, cfg: ProviderConfig) -> ProviderCaps:
+def _run_canary(adapter: NarratorAdapter, cfg: ProviderConfig) -> tuple[ProviderCaps, bool]:
+    """``(caps, answered)`` — ``answered`` is False when no response came back."""
     declared = declared_caps(cfg)
     try:
         response = adapter.complete(
@@ -144,9 +153,9 @@ def _run_canary(adapter: NarratorAdapter, cfg: ProviderConfig) -> ProviderCaps:
             )
         )
     except Exception:  # advisory probe: any failure means "no native tools"
-        return ProviderCaps(native_tools=False, probed_at=_now(), **declared)
+        return ProviderCaps(native_tools=False, probed_at=_now(), **declared), False
     native = any(call.name == CANARY_TOOL_NAME for call in response.tool_calls or [])
-    return ProviderCaps(native_tools=bool(native), probed_at=_now(), **declared)
+    return ProviderCaps(native_tools=bool(native), probed_at=_now(), **declared), True
 
 
 def _now() -> int:
@@ -177,14 +186,16 @@ def _read_cache(store: Any, key: str) -> ProviderCaps | None:
     if not isinstance(payload, dict):
         return None
     fields = {field.name for field in dataclasses.fields(ProviderCaps)}
-    caps = ProviderCaps(**{k: v for k, v in payload.items() if k in fields})
+    data = {key: value for key, value in payload.items() if key in fields}
+    for flag in ("native_tools", "streaming", "json_mode"):
+        if flag in data and not isinstance(data[flag], bool):
+            return None  # corrupt/hand-edited row: re-probe instead of trusting it
+    for number in ("probed_at", "context_window"):
+        if number in data and data[number] is not None and not isinstance(data[number], int):
+            return None
+    caps = ProviderCaps(**data)
     if not caps.probed_at:
         caps.probed_at = as_int(row.get("probed_at"))
-    caps.native_tools = bool(caps.native_tools)
-    caps.streaming = bool(caps.streaming)
-    caps.json_mode = bool(caps.json_mode)
-    if caps.context_window is not None:
-        caps.context_window = as_int(caps.context_window)
     return caps
 
 

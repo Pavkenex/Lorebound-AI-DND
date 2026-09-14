@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from http.client import HTTPException
 from typing import Any
 
-from ..models import ChatRequest, ProviderCaps, ProviderConfig
+from ..models import ChatRequest, ChatResponse, ProviderCaps, ProviderConfig
 from .base import ProviderError
 
 RETRYABLE_STATUSES: frozenset[int] = frozenset({408, 425, 429})
@@ -182,6 +182,10 @@ class AdapterBase:
         self.backoff_base_s = max(0.0, float(backoff_base_s))
 
     # -- capabilities ------------------------------------------------------ #
+    def complete(self, request: ChatRequest) -> ChatResponse:
+        """One round-trip (wire adapters implement this; the base is abstract)."""
+        raise NotImplementedError
+
     def declared_caps(self) -> ProviderCaps:
         """Capabilities of the wire family before any probe.
 

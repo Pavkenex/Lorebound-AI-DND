@@ -19,13 +19,17 @@ The delta payload schema is frozen in engine/ARCHITECTURE.md ("Frozen
 contracts" #3); DELTA_KINDS/DELTA_REQUIRED live in ``models``.
 
 Parsing policy: strict ``json.loads`` first, then a tolerant extraction of the
-outermost JSON *object* (code fences, preamble, trailing prose). Formatting
-noise is tolerated; genuinely broken JSON is not repaired here — the caller
-regenerates (bounded) instead of guessing at state-changing data.
+outermost JSON *object* (code fences, preamble, trailing prose), then — for the
+pipeline's ``strict parse -> repair -> regenerate`` chain (ARCHITECTURE
+"Frozen contracts" #6) — ONE conservative textual repair (``parse_with_repair``)
+that fixes the most common model slip (a comma before a closing brace).
+Anything beyond that is left broken on purpose: state-changing data is never
+guessed at, the caller regenerates instead (bounded).
 """
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 from ..models import DELTA_KINDS, DELTA_REQUIRED, Delta, ProposalSet, ToolCall
 
@@ -286,35 +290,52 @@ def _fenced_blocks(text: str) -> list[str]:
         remainder = remainder[end + 3 :]
 
 
+def _matching_brace(text: str, begin: int) -> int:
+    """Index just past the ``}`` matching the ``{`` at ``begin`` (``-1`` if open)."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(begin, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return -1
+
+
+def _brace_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Balanced ``{...}`` spans in order (nested objects are not re-offered)."""
+    start = 0
+    while True:
+        begin = text.find("{", start)
+        if begin == -1:
+            return
+        end = _matching_brace(text, begin)
+        if end == -1:
+            return
+        yield begin, end
+        start = end
+
+
 def _extract_object(text: str) -> dict | None:
     """First balanced ``{...}`` span that decodes to a JSON object."""
-    for start, char in enumerate(text):
-        if char != "{":
-            continue
-        depth = 0
-        in_string = False
-        escaped = False
-        for index in range(start, len(text)):
-            current = text[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif current == "\\":
-                    escaped = True
-                elif current == '"':
-                    in_string = False
-                continue
-            if current == '"':
-                in_string = True
-            elif current == "{":
-                depth += 1
-            elif current == "}":
-                depth -= 1
-                if depth == 0:
-                    parsed = _try_json_object(text[start : index + 1])
-                    if parsed is not None:
-                        return parsed
-                    break
+    for begin, end in _brace_spans(text):
+        parsed = _try_json_object(text[begin:end])
+        if parsed is not None:
+            return parsed
     return None
 
 
@@ -323,8 +344,9 @@ def parse_tolerant(text: str) -> dict | None:
 
     Handles exact JSON, ```json fenced blocks, preamble ("Here is my reply:"),
     and trailing prose. Returns ``None`` when nothing decodes to a JSON object —
-    broken JSON is NOT repaired (state-changing data is never guessed at; the
-    caller regenerates instead).
+    broken JSON is NOT repaired here (state-changing data is never guessed at;
+    ``parse_with_repair`` attempts one conservative repair, the caller
+    regenerates after that).
     """
     if not text or not isinstance(text, str):
         return None
@@ -336,6 +358,59 @@ def parse_tolerant(text: str) -> dict | None:
         if candidate is not None:
             return candidate
     return _extract_object(text)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Drop ``,`` before a closing ``}``/``]`` (string-aware)."""
+    kept: list[str] = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            kept.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+            kept.append(char)
+        elif char == ",":
+            lookahead = index + 1
+            while lookahead < len(text) and text[lookahead] in " \t\r\n":
+                lookahead += 1
+            if not (lookahead < len(text) and text[lookahead] in "}]"):
+                kept.append(char)
+        else:
+            kept.append(char)
+        index += 1
+    return "".join(kept)
+
+
+def parse_with_repair(text: str) -> tuple[dict | None, str]:
+    """``strict parse -> repair`` step of the degradation chain.
+
+    Returns ``(payload, note)``: ``note`` is ``""`` on a clean parse, a one-line
+    description when a conservative repair made it parse, or the failure reason
+    when nothing parsed — which the caller feeds to ``regenerate_note`` for the
+    bounded regenerate-on-parse-failure round (spec §7).
+    """
+    payload = parse_tolerant(text)
+    if payload is not None:
+        return payload, ""
+    if not text or not isinstance(text, str):
+        return None, "the reply was empty"
+    for begin, end in _brace_spans(text):
+        repaired = _strip_trailing_commas(text[begin:end])
+        if repaired != text[begin:end]:
+            parsed = _try_json_object(repaired)
+            if parsed is not None:
+                return parsed, "repaired a trailing comma before a closing brace or bracket"
+    return None, "the reply contained no valid JSON object"
 
 
 def should_regenerate(

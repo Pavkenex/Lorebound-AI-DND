@@ -254,7 +254,8 @@ def test_failed_probe_is_not_cached() -> None:
         store.close()
 
 
-def test_corrupt_cache_row_triggers_a_fresh_probe() -> None:
+@pytest.mark.parametrize("bad_caps", ["not json", '{"native_tools": "yes"}', '{"probed_at": "soon"}', "[]"])
+def test_corrupt_cache_row_triggers_a_fresh_probe(bad_caps: str) -> None:
     with FakeProviderServer() as server:
         server.enqueue(200, canary_ok())
         cfg = make_cfg(server)
@@ -262,7 +263,7 @@ def test_corrupt_cache_row_triggers_a_fresh_probe() -> None:
         try:
             store.upsert(
                 "provider_caps",
-                {"provider_key": cache_key(cfg), "caps": "not json", "probed_at": 1},
+                {"provider_key": cache_key(cfg), "caps": bad_caps, "probed_at": 1},
                 conflict="provider_key",
             )
             caps = probe_capabilities(make_adapter(server), cfg, store=store)

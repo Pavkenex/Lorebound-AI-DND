@@ -21,6 +21,7 @@ from engine.providers.jsonproto import (
     build_json_protocol_prompt,
     delta_tool_schema,
     parse_tolerant,
+    parse_with_repair,
     proposals_from_payload,
     proposals_from_tool_calls,
     regenerate_note,
@@ -238,6 +239,42 @@ def test_parse_tolerant_extracts_the_envelope_from_a_chatty_reply() -> None:
     payload = parse_tolerant(reply)
     assert payload is not None
     assert proposals_from_payload(payload).narration == ENVELOPE["narration"]
+
+
+# --------------------------------------------------------------------------- #
+# parse_with_repair — the "repair" step of strict parse -> repair -> regenerate
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    ("text", "expected", "note_contains"),
+    [
+        ('{"a": 1}', {"a": 1}, ""),
+        ('```json\n{"a": 1}\n```', {"a": 1}, ""),
+        ('preamble {"a": 1} trailing', {"a": 1}, ""),
+        ('{"a": 1,}', {"a": 1}, "trailing comma"),
+        ('here: {"a": [1, 2,],}', {"a": [1, 2]}, "trailing comma"),
+        ('{"a": {"b": 1,},}', {"a": {"b": 1}}, "trailing comma"),
+        ('{"a": "x", } and more prose', {"a": "x"}, "trailing comma"),
+        ('{"s": "brace, } and \\" quote", }', {"s": 'brace, } and " quote'}, "trailing comma"),
+        ("still chatting", None, "no valid JSON object"),
+        ('{"a": }', None, "no valid JSON object"),
+        ("{unclosed", None, "no valid JSON object"),
+        ("", None, "empty"),
+    ],
+)
+def test_parse_with_repair(text: str, expected: dict | None, note_contains: str) -> None:
+    payload, note = parse_with_repair(text)
+    assert payload == expected
+    if note_contains:
+        assert note_contains in note
+    else:
+        assert note == ""
+
+
+def test_parse_tolerant_still_refuses_broken_json() -> None:
+    # the pinned behavior: repair is a separate, explicit step
+    assert parse_tolerant('{"a": 1,}') is None
+    assert parse_with_repair('{"a": 1,}')[0] == {"a": 1}
 
 
 # --------------------------------------------------------------------------- #
