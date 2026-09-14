@@ -1,11 +1,43 @@
 """Eval harness + scenario suites (spec §9).
 
-Contract (R6 card, extended by R8): scripted play sessions with expected state
-outcomes, run against deterministic fake narrators; contradiction-injection
-rigs; cross-model (fake) matrix; telemetry checks. ``python -m engine.evals``
-is the entry point (see cli).
+Core suite (this card): scripted scenarios that drive the real state layer —
+``engine.store.Store`` + ``engine.resolve`` + ``engine.validate`` — in
+throwaway SQLite DBs and assert exact state outcomes. Pipeline-level e2e
+suites (fake narrators, contradiction injection, cross-model matrix) are R8's
+``run_e2e``. Entry point: ``python -m evals`` from the ``engine/`` directory.
 """
 
-from .harness import EvalReport, EvalResult, Scenario, run_all, run_e2e, run_scenarios
+import sys
+from pathlib import Path
 
-__all__ = ["EvalReport", "EvalResult", "Scenario", "run_all", "run_e2e", "run_scenarios"]
+# ``python -m evals`` runs from engine/ without the pyproject pythonpath, so
+# make the real engine package importable before harness.py imports it.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from .harness import (  # noqa: E402
+    DEFAULT_SEED,
+    SCENARIOS_DIR,
+    EvalReport,
+    EvalResult,
+    EvalSession,
+    Scenario,
+    load_scenarios,
+    run_all,
+    run_e2e,
+    run_scenarios,
+)
+
+__all__ = [
+    "DEFAULT_SEED",
+    "SCENARIOS_DIR",
+    "EvalReport",
+    "EvalResult",
+    "EvalSession",
+    "Scenario",
+    "load_scenarios",
+    "run_all",
+    "run_e2e",
+    "run_scenarios",
+]
