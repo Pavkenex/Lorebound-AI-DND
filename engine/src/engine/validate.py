@@ -60,6 +60,12 @@ Conventions this module pins (callers depend on them; all are deterministic):
   raw ``disposition_base + Σ ledger deltas`` (an undecayed upper bound;
   conservative). An NPC already outside the range can only be pushed back
   toward it, never further out.
+* **Relationship decay class (post-rebuild decision 1a, 2026-09-14).** At commit
+  the delta's tagged class wins when it is one of ``DECAY_CLASSES``; otherwise
+  the class derives from the APPLIED (post-clamp) magnitude via
+  ``memory.RelationshipLedger.default_decay_class`` — ``|delta| >= 25`` durable,
+  ``>= 10`` slow, else fast. This mirrors ``memory.append_delta``, so validator-
+  and ledger-written rows can no longer disagree.
 * **Commit order.** ``commit`` applies the verdicts it is handed, in order,
   inside ``store.transaction()`` when the store provides one; verdicts rejected
   at validate time are never re-applied, and facts are re-checked at commit
@@ -115,7 +121,8 @@ MAX_HP_KEY = "max_hp"
 CURRENCY_KEY = "currency"
 CURRENCY_ALIASES = ("gold",)
 DECAY_CLASSES = frozenset({"durable", "slow", "fast"})
-DEFAULT_DECAY_CLASS = "slow"
+# No flat default: untagged relationship deltas derive their class from the
+# applied magnitude in ``_apply_relationship`` (decision 1a, 2026-09-14).
 REINFORCE_SIMILARITY = 0.85  # >= this against an existing fact: reinforce, don't duplicate
 CONFLICT_SIM = 0.30  # similarity floor for a conflict with an unpinned fact
 CONFLICT_SIM_PINNED = 0.20  # ... pinned facts are protected more aggressively (bias)
@@ -1019,15 +1026,23 @@ class Validator:
         return None
 
     def _apply_relationship(self, delta: Delta, data: Mapping[str, Any], *, turn: int) -> Verdict | None:
+        value = _as_number(data.get("delta")) or 0.0
         decay_class = str(data.get("decay_class") or "").strip().lower()
+        if decay_class not in DECAY_CLASSES:
+            # Decision 1a (2026-09-14): no valid tag -> derive from the APPLIED
+            # (post-clamp) magnitude, the same rule memory.append_delta uses.
+            # Explicit tags still win; durable/fast are reachable in play again.
+            from .memory import RelationshipLedger
+
+            decay_class = RelationshipLedger.default_decay_class(value)
         self.store.insert("relationship_ledger", {
             "npc_id": self._npc_key(delta.target),
             "player_id": str(self.config.player_id),
             "turn": turn,
-            "delta": _as_number(data.get("delta")) or 0.0,
+            "delta": value,
             "reason": str(data.get("reason") or delta.reason or ""),
             "category": str(data.get("category") or "").strip().lower(),
-            "decay_class": decay_class if decay_class in DECAY_CLASSES else DEFAULT_DECAY_CLASS,
+            "decay_class": decay_class,
         })
         return None
 

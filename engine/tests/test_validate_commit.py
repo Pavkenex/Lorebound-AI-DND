@@ -196,13 +196,34 @@ def test_relationship_commit_appends_ledger_row() -> None:
 
 
 def test_relationship_commit_defaults_decay_class() -> None:
+    # An invalid tag falls back to the magnitude rule (decision 1a), not a flat
+    # "slow": a 5-point delta is "fast".
     store, validator = _setup()
     insert_npc(store, name="Marla", row_id=3)
     _commit(validator, [
         Delta(kind="relationship", target="npc:3", data={
             "category": "trust", "delta": 5, "decay_class": "geologic"}),
     ], turn=1)
-    assert store.find_one("relationship_ledger", {"npc_id": "npc:3"})["decay_class"] == "slow"
+    assert store.find_one("relationship_ledger", {"npc_id": "npc:3"})["decay_class"] == "fast"
+
+
+@pytest.mark.parametrize(("proposed", "expected_class"), [
+    (30, "durable"), (25, "durable"), (24.9, "slow"),
+    (-15, "slow"), (9.9, "fast"), (5, "fast"),
+])
+def test_relationship_commit_derives_decay_class_from_applied_magnitude(
+        proposed: float, expected_class: str) -> None:
+    # Decision 1a: untagged deltas get the class from the APPLIED magnitude
+    # (>= 25 durable, >= 10 slow, else fast) — the same rule memory uses.
+    store, validator = _setup()
+    insert_npc(store, name="Marla", row_id=3)
+    _commit(validator, [
+        Delta(kind="relationship", target="npc:3", data={
+            "category": "trust", "delta": proposed}),
+    ], turn=1)
+    row = store.find_one("relationship_ledger", {"npc_id": "npc:3"})
+    assert row["delta"] == pytest.approx(proposed)
+    assert row["decay_class"] == expected_class
 
 
 # --------------------------------------------------------------------------- #

@@ -43,8 +43,9 @@ Conventions this module pins (callers depend on them; all are deterministic):
 * **Relationship decay classes**: ``append_delta`` derives the class from the
   magnitude when the caller does not pass one — ``|delta| >= 25`` is
   ``durable`` (betrayals don't fade), ``10 <= |delta| < 25`` is ``slow``,
-  everything smaller is ``fast``. Decay is exponential with the per-class
-  per-turn rate from ``config.memory.relationship_decay_per_turn``:
+  everything smaller is ``fast``; ``validate`` derives the same way at commit
+  time (an explicit narrator tag wins in both paths). Decay is exponential with
+  the per-class per-turn rate from ``config.memory.relationship_decay_per_turn``:
   ``delta * exp(-rate * age)``. Currents are returned per category (each
   meter = the anchor + that category's decayed sum, so ``validate``'s ±100
   clamp sees the NPC's baseline) plus a ``total`` (the anchor counted once

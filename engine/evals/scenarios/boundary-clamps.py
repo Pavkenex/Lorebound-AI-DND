@@ -8,18 +8,20 @@ committed rows must hold the exact edge value — no overshoot, no drift.
 Relationship meters are read DECAYED (spec §3.5: current = anchor + Σ decayed
 deltas), so a meter driven to ±100 one turn earlier sits one decay step inside
 the edge when the follow-up probe arrives: the clamp is then the decayed slack,
-not 0.0 — and the meter still lands exactly on ±100. ``slow`` deltas decay
-0.01/turn (ARCHITECTURE), the paired probes are one turn apart, and
-``RelationshipLedger.currents`` rounds to 6 dp, hence the two constants below.
+not 0.0 — and the meter still lands exactly on ±100. The class follows the
+APPLIED magnitude (>=25 durable, >=10 slow, else fast; post-rebuild decision
+"1a"): the +10 remainder is ``slow`` (0.01/turn) and the -5 remainder is
+``fast`` (0.08/turn), the paired probes are one turn apart, and
+``RelationshipLedger.currents`` rounds to 6 dp — hence the two constants below.
 """
 
 import math
 
 # Slack the decay opened at the ±100 edges one turn after the edge-driving
 # write (see the module docstring): 100 - round6(90 + 10*exp(-0.01)) and
-# -100 - round6(-95 - 5*exp(-0.01)).
+# -100 - round6(-95 - 5*exp(-0.08)).
 _TAM_SLACK = round(100 - round(90 + 10 * math.exp(-0.01), 6), 6)
-_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.01), 6), 6)
+_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.08), 6), 6)
 
 SCENARIO = {
     "name": "boundary-clamps",

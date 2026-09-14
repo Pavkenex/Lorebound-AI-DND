@@ -26,7 +26,7 @@ Probe map (mechanism -> probe -> spec section):
 11. lead state machine gating                     -> §3.4
 12. degraded JSON-in-text protocol chain          -> §5B, §7
 13. full offline loop determinism + telemetry     -> §1, §9, §10
-14. decay_class seam (validator vs. memory path)  -> §3.5 (recorded, not endorsed)
+14. decay_class derivation: validator + memory agree, tags win -> §3.5 (decision 1a)
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ from engine.providers.jsonproto import (  # noqa: E402
 )
 from engine.resolve import resolve_action, resolve_check  # noqa: E402
 from engine.store import Store  # noqa: E402
-from engine.validate import DEFAULT_DECAY_CLASS, Validator  # noqa: E402
+from engine.validate import Validator  # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -413,12 +413,17 @@ def probe_validator(tmp: Path) -> None:
     rows = store.find("relationship_ledger", {"npc_id": marla_key}, order_by="id")
     currents = MemoryBundle.build(store).ledger.currents(
         npc_id=marla_key, player_id="player", turn=7)
-    expected = 12.0 + sum(float(row["delta"]) * math.exp(-0.01 * (7 - int(row["turn"])))
-                          for row in rows)
-    check("the per-event bound clamps +90 to +40",
-          [row["delta"] for row in rows][0] == 40.0, str([row["delta"] for row in rows]))
-    check("the meter clamps at +100 from the decayed slack and reports the applied value",
-          report.clamped and "±100" in report.clamped[0].note and close(currents["trust"], expected),
+    rates = {"durable": 0.0, "slow": 0.01, "fast": 0.08}
+    expected = 12.0 + sum(
+        float(row["delta"]) * math.exp(-rates[row["decay_class"]] * (7 - int(row["turn"])))
+        for row in rows)
+    check("the per-event bound clamps +90 to +40, and magnitudes drive the classes",
+          [row["delta"] for row in rows] == [40.0, 40.0, 8.0]
+          and [row["decay_class"] for row in rows] == ["durable", "durable", "fast"],
+          str([(row["delta"], row["decay_class"]) for row in rows]))
+    check("the meter clamps at +100 off the stored current and reports the applied value",
+          report.clamped and "±100" in report.clamped[0].note
+          and report.clamped[0].clamped_to == 8.0 and close(currents["trust"], expected),
           f"meter={currents['trust']} recomputed={expected:.6f}")
 
     report = commit([Delta(kind="inventory_remove", target="coil of rope",
@@ -661,7 +666,7 @@ def probe_offline_loop(tmp: Path) -> None:
 
 
 def probe_decay_class_seam(tmp: Path) -> None:
-    print("probe 14: decay_class derivation seam (I2 t_2e5797de #9) — recorded, not endorsed")
+    print("probe 14: decay_class derivation — validator + memory share the magnitude rule (decision 1a)")
     store = fresh_store(tmp, "p14")
     config = EngineConfig()
     memory = MemoryBundle.build(store, config)
@@ -675,15 +680,19 @@ def probe_decay_class_seam(tmp: Path) -> None:
                data={"category": "trust", "delta": -30.0,
                      "reason": "validator path: the same 30-point betrayal"})], turn=1)
     validator.commit(verdicts, turn=1)
+    tagged = validator.validate(
+        [Delta(kind="relationship", target=marla_key,
+               data={"category": "trust", "delta": -30.0, "decay_class": "fast",
+                     "reason": "validator path: same size, narrator tags it fast"})], turn=2)
+    validator.commit(tagged, turn=2)
     rows = store.find("relationship_ledger", order_by="id")
     classes = [row["decay_class"] for row in rows]
     check("memory.append_delta derives 'durable' from the magnitude rule (>=25)",
-          len(classes) == 2 and classes[0] == "durable", str(classes))
-    check("a validator-committed delta of the same size carries the 'slow' default instead",
-          verdicts[0].kind == "accepted" and classes[1] == "slow",
-          "seam: validate.py::_apply_relationship writes DECAY_CLASSES-validated input or "
-          f"{DEFAULT_DECAY_CLASS!r}; durable/fast are unreachable through the validator "
-          f"(rows: {classes})")
+          len(classes) == 3 and classes[0] == "durable", str(classes))
+    check("a validator-committed delta of the same size now derives 'durable' too",
+          verdicts[0].kind == "accepted" and classes[1] == "durable", str(classes))
+    check("an explicit tag still wins over the magnitude rule",
+          tagged[0].kind == "accepted" and classes[2] == "fast", str(classes))
     store.close()
 
 

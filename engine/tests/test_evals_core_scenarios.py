@@ -17,12 +17,14 @@ EXPECTED = ("boundary-clamps", "conservation", "contradiction-bait",
             "dead-npc-lock", "lead-gates")
 
 # boundary-clamps reads its relationship meters DECAYED (spec §3.5), so a meter
-# driven to ±100 one turn earlier sits one "slow" (0.01/turn) decay step inside
-# the edge: the follow-up probe clamps to the slack the decay opened, not 0.0 —
-# and the meter still lands exactly on ±100. The scenario file derives the same
+# driven to ±100 one turn earlier sits one decay step inside the edge: the
+# follow-up probe clamps to the slack the decay opened, not 0.0 — and the meter
+# still lands exactly on ±100. Classes follow the applied magnitude (>=25
+# durable, >=10 slow, else fast): the +10 remainder is "slow" (0.01/turn) and
+# the -5 remainder is "fast" (0.08/turn). The scenario file derives the same
 # constants beside the steps that pin their turns.
 _TAM_SLACK = round(100 - round(90 + 10 * math.exp(-0.01), 6), 6)
-_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.01), 6), 6)
+_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.08), 6), 6)
 
 
 def _snapshot(name: str, report) -> dict:

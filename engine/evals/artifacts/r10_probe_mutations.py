@@ -40,6 +40,9 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("pipeline: Pass D ignores dead-NPC speech", "src/engine/pipeline.py",
      "problems.extend(self._dead_npc_speech(narration, dialogue or []))",
      "problems.extend([])"),
+    ("validate: decay class pinned to the old 'slow' default", "src/engine/validate.py",
+     "decay_class = RelationshipLedger.default_decay_class(value)",
+     "decay_class = \"slow\"  # mutation: the pre-1a flat default"),
 ]
 
 
