@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "lorebound-engine"
 version = "0.1.0"
@@ -5,6 +9,14 @@ description = "Lorebound rebuilt engine — AI Dungeon Master system (state-firs
 requires-python = ">=3.13"
 # Runtime is stdlib-only ON PURPOSE (see ARCHITECTURE.md "Decisions").
 dependencies = []
+
+# src-layout discovery + the one runtime data file (store/schema.sql is read by
+# engine.store at connect time — pip installs it only when declared here).
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+engine = ["store/schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
