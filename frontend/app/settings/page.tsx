@@ -12,7 +12,9 @@ import {
   testAiSettingsApi,
   getToken,
   type AiSettingsDoc,
+  type AiSettingsPayload,
 } from "../../lib/api";
+import { aiConnected, aiConnectionLine, aiNotConnectedReason } from "../../lib/ai";
 import type { ContentPrefs } from "../../lib/store-types";
 
 const OPTS: { key: Exclude<keyof ContentPrefs, "nsfw">; label: string; choices: string[]; help: string }[] = [
@@ -111,14 +113,14 @@ export default function SettingsPage() {
 
 /** Bring-your-own AI: point the chronicle at any OpenAI-compatible endpoint.
  *  Stored per account on the server; the API key is write-only (never echoed).
- *  Sent to the chronicler with every /act so free-text beats are narrated by
- *  your model. Default: the built-in storyteller (no AI calls, free). */
+ *  There is no built-in storyteller to fall back on (P12): the chronicle is
+ *  playable only with a connected model, so this card states exactly which
+ *  model the server will use — the SAME resolution /act uses. */
 function AiProviderPanel() {
   const [doc, setDoc] = useState<AiSettingsDoc | null>(null);
   const [signedIn, setSignedIn] = useState(true);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"stub" | "openai-compatible">("stub");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -131,7 +133,6 @@ function AiProviderPanel() {
     setSignedIn(true);
     const d = r.doc;
     setDoc(d);
-    setMode(d.provider ?? (d.env_provider === "openai-compatible" ? "openai-compatible" : "stub"));
     setBaseUrl(d.base_url);
     setModel(d.model);
     setTimeoutS(d.timeout_s);
@@ -141,35 +142,38 @@ function AiProviderPanel() {
 
   async function save() {
     setBusy(true); setStatus(null);
-    const r = await saveAiSettingsApi({
-      provider: mode,
+    const payload: AiSettingsPayload = {
+      provider: "openai-compatible",
       base_url: baseUrl,
       model,
-      api_key: apiKey ? apiKey : undefined,
       timeout_s: timeoutS,
-    });
+    };
+    // A typed key replaces the stored one; a blank field keeps it (write-only).
+    if (apiKey) payload.api_key = apiKey;
+    const r = await saveAiSettingsApi(payload);
     setBusy(false);
     if (!r.ok) { setStatus({ kind: "err", text: r.error }); return; }
     setApiKey("");
     setDoc(r.doc);
     setStatus({
       kind: "ok",
-      text: r.doc.active_provider === "stub"
-        ? "Saved — the built-in storyteller writes the chronicle."
-        : `Saved — the chronicle now asks ${r.doc.model || "your endpoint"} for narration.`,
+      text: r.doc.connected
+        ? `Saved — the chronicle will ask ${r.doc.active_model || "your endpoint"} for narration.`
+        : "Saved — but the endpoint is not complete yet, so the chronicle stays closed until it is.",
     });
-    setMode(r.doc.provider ?? "stub");
   }
 
   async function test() {
     setBusy(true); setStatus(null);
-    const r = await testAiSettingsApi({
+    const draft: { base_url?: string; model?: string; api_key?: string; timeout_s?: number } = {
       base_url: baseUrl || undefined,
       model: model || undefined,
-      // Blank field: reuse the saved key when one exists, else test without auth.
-      api_key: apiKey ? apiKey : (doc?.has_key ? undefined : ""),
       timeout_s: timeoutS,
-    });
+    };
+    // Blank key field: reuse the stored key when there is one, else test bare.
+    if (apiKey) draft.api_key = apiKey;
+    else if (!doc?.has_key) draft.api_key = "";
+    const r = await testAiSettingsApi(draft);
     setBusy(false);
     if (!r.ok) { setStatus({ kind: "err", text: r.error }); return; }
     const d = r.doc;
@@ -178,55 +182,52 @@ function AiProviderPanel() {
       : { kind: "err", text: d.error ?? "The endpoint did not answer." });
   }
 
-  const activeText = doc?.active_provider === "openai-compatible"
-    ? `your endpoint${doc.model ? ` (${doc.model})` : ""}`
-    : "the built-in storyteller (free, no AI calls)";
-  const activeSource = doc?.active_source === "env" ? "from the environment config" : doc?.active_source === "settings" ? "from your settings" : "";
+  const connected = aiConnected(doc);
+  const who = aiConnectionLine(doc);
+  const source = doc?.active_source === "env"
+    ? "from the server's environment config"
+    : doc?.active_source === "settings" ? "from your settings" : "";
 
   return (
     <div className="parchment card">
       {!signedIn ? (
-        <p className="sys" style={{ margin: 0 }}>Sign in to add your own AI endpoint — it is stored with your account.</p>
+        <p className="sys" style={{ margin: 0 }}>
+          Sign in to connect your AI — the chronicle narrates with a model, and this is where
+          you point it at yours. Settings are stored with your account.
+        </p>
       ) : (
         <>
-          <p className="sys" style={{ marginTop: 0 }}>
-            Right now: <strong>{activeText}</strong>{activeSource ? ` — ${activeSource}` : ""}. Applies to free-text actions in the chronicle.
+          <p className="sys" style={{ marginTop: 0 }} role="status" data-ai="state">
+            {connected ? (
+              <>Right now: <strong>{who}</strong>{source ? ` — ${source}` : ""}. The chronicle is playable.</>
+            ) : (
+              <>Right now: <strong>nothing connected</strong> — {aiNotConnectedReason(doc)} The
+              chronicle cannot take a turn until a model is connected.</>
+            )}
           </p>
           <div style={{ display: "grid", gap: 8, margin: "10px 0" }}>
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="radio" name="ai-provider" checked={mode === "stub"} onChange={() => setMode("stub")} />
-              Built-in storyteller (free)
+            <label htmlFor="ai-base-url">Base URL
+              <input id="ai-base-url" className="input-parch" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" autoComplete="off" />
             </label>
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="radio" name="ai-provider" checked={mode === "openai-compatible"} onChange={() => setMode("openai-compatible")} />
-              My own OpenAI-compatible endpoint
+            <label htmlFor="ai-model">Model
+              <input id="ai-model" className="input-parch" value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-5-mini, llama-3.3-70b, …" autoComplete="off" />
+            </label>
+            <label htmlFor="ai-api-key">API key
+              <input id="ai-api-key" className="input-parch" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="new-password"
+                placeholder={doc?.has_key ? "•••• saved — leave blank to keep it" : "sk-… (leave blank for keyless local servers)"} />
+            </label>
+            <label htmlFor="ai-timeout">Timeout (seconds)
+              <input id="ai-timeout" className="input-parch" type="number" min={1} max={120} style={{ width: 110 }} value={timeoutS} onChange={(e) => setTimeoutS(Number(e.target.value))} />
             </label>
           </div>
-          {mode === "openai-compatible" && (
-            <div style={{ display: "grid", gap: 8 }}>
-              <label htmlFor="ai-base-url">Base URL
-                <input id="ai-base-url" className="input-parch" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" autoComplete="off" />
-              </label>
-              <label htmlFor="ai-model">Model
-                <input id="ai-model" className="input-parch" value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-5-mini, llama-3.3-70b, …" autoComplete="off" />
-              </label>
-              <label htmlFor="ai-api-key">API key
-                <input id="ai-api-key" className="input-parch" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="new-password"
-                  placeholder={doc?.has_key ? "•••• saved — leave blank to keep it" : "sk-… (leave blank for keyless local servers)"} />
-              </label>
-              <label htmlFor="ai-timeout">Timeout (seconds)
-                <input id="ai-timeout" className="input-parch" type="number" min={1} max={120} style={{ width: 110 }} value={timeoutS} onChange={(e) => setTimeoutS(Number(e.target.value))} />
-              </label>
-              {doc?.has_key && (
-                <button className="btn btn-ghost" style={{ width: "fit-content" }} onClick={() => { setApiKey(""); void saveWithClearKey(); }} disabled={busy}>
-                  Remove stored key
-                </button>
-              )}
-            </div>
-          )}
           <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn" onClick={() => void save()} disabled={busy}>{busy ? "…" : "Save"}</button>
+            <button className="btn" onClick={() => void save()} disabled={busy || !baseUrl.trim() || !model.trim()}>{busy ? "…" : "Save"}</button>
             <button className="btn btn-ghost" onClick={() => void test()} disabled={busy || !baseUrl.trim() || !model.trim()}>Test connection</button>
+            {doc?.has_key && (
+              <button className="btn btn-ghost" onClick={() => { setApiKey(""); void saveWithClearKey(); }} disabled={busy}>
+                Remove stored key
+              </button>
+            )}
             {status && (
               <span className="sys" role="status" style={{ color: status.kind === "err" ? "#e09a9a" : "var(--parch-1)" }}>
                 {status.text}
@@ -234,7 +235,10 @@ function AiProviderPanel() {
             )}
           </div>
           <p className="sys" style={{ marginBottom: 0 }}>
-            The key is stored on the server for your account and never shown again; requests go straight from this server to your endpoint.
+            The key is stored on the server for your account and never shown again; requests go
+            straight from this server to your endpoint. There is no keyless mode: a saved endpoint
+            that is missing its base URL or model reads as not connected, and nothing else
+            narrates in its place.
           </p>
         </>
       )}
@@ -247,7 +251,7 @@ function AiProviderPanel() {
     setBusy(false);
     if (!r.ok) { setStatus({ kind: "err", text: r.error }); return; }
     setDoc(r.doc);
-    setStatus({ kind: "ok", text: "Stored key removed." });
+    setStatus({ kind: "ok", text: "Stored key removed — the endpoint is still connected if it needs no key." });
   }
 }
 

@@ -123,14 +123,9 @@ export const fixtures = {
     { id: "save-1", slot: "manual", label: "Before the Hollow Road", checkpoint: "chapter-1", created_at: "2026-09-01T21:00:00Z" },
     { id: "save-2", slot: "autosave", label: "Autosave — met the carter", checkpoint: "met-carter", created_at: "2026-09-05T19:30:00Z" },
   ],
-  fallbackNarration(text: string) {
-    const t = text.toLowerCase();
-    if (t.includes("marla") || t.includes("talk") || t.includes("ask"))
-      return "Marla leans close, voice dropping under the rain. \"Ask at the wreck in Hollow Road — but go lamplit. Things walk it that fear the flame.\"";
-    if (t.includes("board") || t.includes("notice") || t.includes("read"))
-      return "The newest parchment is a guild notice: a wagon overdue from Greyfen. The wax seal is cracked — pressed in haste, or opened and resealed.";
-    return "The inn holds its breath. Rain, hearth-crackle — and somewhere upstairs, a floorboard sighs. (The world remembers.)";
-  },
+  // P12: there is no fallbackNarration any more. A canned line pretending to
+  // be the world's answer is exactly the fake play the story game no longer
+  // does — with no model connected the turn is refused, not invented.
 };
 
 export type Fixtures = typeof fixtures;

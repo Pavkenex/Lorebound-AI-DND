@@ -4,7 +4,8 @@
 // called-check throws (t_84c31095 follow-up): a surfaced check waits for the
 // player's die — the prompt owns the throw, nothing rolls behind the player.
 import { useEffect, useRef, useState } from "react";
-import { api, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type ApiResult, type ActResponse, type PendingCheck, type NpcEntry, type NpcDetail } from "../../lib/api";
+import { api, aiSettingsApi, newActionKey, streamNarration, submitAction, rollCheck, LAST_SAVE_KEY, getToken, ensureCampaign, setCampaignId, type LiveGameState, type AiSettingsDoc, type ActResponse, type PendingCheck, type NpcEntry, type NpcDetail } from "../../lib/api";
+import { aiConnected, aiConnectionLine, aiNotConnectedReason, aiPlayGate, actFailureText } from "../../lib/ai";
 import { fixtures, type FeedEvent } from "../../lib/fixtures";
 import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
@@ -42,7 +43,15 @@ export default function AdventurePage() {
   const [streaming, setStreaming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [preserved, setPreserved] = useState(""); // failed input kept for retry
+  /** Failed input kept for retry — WITH its idempotency key, so the retry is a
+   *  replay of the same action, not a second application of it (P12). */
+  const [preserved, setPreserved] = useState<{ text: string; key: string } | null>(null);
+  /** The account's AI connection (P12): what /act will narrate with, or why
+   *  there is nothing to narrate with. null while unknown. */
+  const [ai, setAi] = useState<AiSettingsDoc | null>(null);
+  /** The backend itself refused a turn with `connect_your_ai`: the gate closes
+   *  no matter what the last settings fetch said. */
+  const [connectNeeded, setConnectNeeded] = useState(false);
   const [toasts, setToasts] = useState<string[]>([]);
   const [scene, setScene] = useState("tavern interior");
   const [pending, setPending] = useState<PendingThrow | null>(null);
@@ -51,7 +60,6 @@ export default function AdventurePage() {
   const [npcInfo, setNpcInfo] = useState<NpcDetail | null>(null); // its deeper fetch, when live
   /** Mobile pane: one thumb-reach tab at a time (Chronicle / Status / World). */
   const [tab, setTab] = useState<"tale" | "hero" | "world">("tale");
-  const keyRef = useRef(0);
   const sendingRef = useRef(false); // one throw resolves once
   const bottomRef = useRef<HTMLDivElement>(null);
   // Dice events created in this session roll their 3D animation on mount (t_ae0e86a6).
@@ -93,6 +101,16 @@ export default function AdventurePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated]);
 
+  // The account's AI connection (P12): the SAME resolution /act uses, so this
+  // page can say "connect your AI" before a turn is wasted — and can name the
+  // model that will answer. Re-read once the live state lands.
+  useEffect(() => {
+    if (!hydrated || !getToken()) return;
+    void aiSettingsApi().then((r) => {
+      if (r.ok) setAi(r.doc);
+    });
+  }, [hydrated, live]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
   }, [events, streaming, ack]);
@@ -104,31 +122,31 @@ export default function AdventurePage() {
   }
 
   /** Fold one resolved response into the chronicle + panels (both legs share it). */
-  function applyActResult(r: ApiResult<ActResponse>, text: string, opts?: { settledDice?: boolean }) {
-    setAck(r.data.ack);
-    setSuggestions(r.data.suggestions ?? []);
+  function applyActResult(data: ActResponse, text: string, opts?: { settledDice?: boolean }) {
+    setAck(data.ack);
+    setSuggestions(data.suggestions ?? []);
     // Mechanics resolve fast; narration streams into its slot.
     const pendingEvents: FeedEvent[] = [];
-    for (const s of r.data.system ?? [])
+    for (const s of data.system ?? [])
       pendingEvents.push({ id: nid(), kind: "system", text: s });
-    if (r.data.mechanics) {
+    if (data.mechanics) {
       const diceId = nid();
       // A die the player just threw in the prompt shows settled here, not re-rolled.
       if (!opts?.settledDice) freshDiceRef.current.add(diceId);
-      pendingEvents.push({ id: diceId, kind: "dice", roll: { label: r.data.mechanics.label, dice: r.data.mechanics.roll, total: r.data.mechanics.total, detail: r.data.mechanics.detail, d20: r.data.mechanics.d20, outcome: r.data.mechanics.outcome, dc: r.data.mechanics.dc, d20_second: r.data.mechanics.d20_second, advantage: r.data.mechanics.advantage } });
+      pendingEvents.push({ id: diceId, kind: "dice", roll: { label: data.mechanics.label, dice: data.mechanics.roll, total: data.mechanics.total, detail: data.mechanics.detail, d20: data.mechanics.d20, outcome: data.mechanics.outcome, dc: data.mechanics.dc, d20_second: data.mechanics.d20_second, advantage: data.mechanics.advantage } });
     }
     let full = "";
     setStreaming("");
     void (async () => {
-      for await (const chunk of streamNarration(r.data.narration ?? "")) {
+      for await (const chunk of streamNarration(data.narration ?? "")) {
         full = chunk;
         if (!compactNarration) setStreaming(chunk);
       }
       setStreaming(null);
-      pendingEvents.push({ id: nid(), kind: "narration", text: full || (r.data.narration ?? "") });
-      for (const d of r.data.dialogue ?? [])
+      pendingEvents.push({ id: nid(), kind: "narration", text: full || (data.narration ?? "") });
+      for (const d of data.dialogue ?? [])
         pendingEvents.push({ id: nid(), kind: "dialogue", speaker: d.speaker, text: d.line });
-      for (const l of r.data.newLeads ?? []) {
+      for (const l of data.newLeads ?? []) {
         pendingEvents.push({ id: nid(), kind: "lead", lead: l });
         pushToast(l);
       }
@@ -146,14 +164,48 @@ export default function AdventurePage() {
     else if (text.toLowerCase().match(/monastery|chapel|beacon|monk/)) setScene("monastery");
   }
 
-  async function runSubmit(text: string) {
+  /** Re-read the connection: a refusal means the last fetch is stale. */
+  function refreshAi() {
+    if (!getToken()) return;
+    void aiSettingsApi().then((r) => {
+      if (r.ok) setAi(r.doc);
+    });
+  }
+
+  /** A failed (or refused) turn: say what happened, keep the words and their
+   *  key. Nothing is invented and nothing is lost (P12). */
+  function onActFailure(code: string, message: string, text: string, key: string) {
+    if (code === "connect_your_ai") {
+      setConnectNeeded(true);
+      refreshAi();
+      setInput((cur) => cur || text);
+      setPreserved({ text, key });
+      setAck(null); setStreaming(null);
+      return;
+    }
+    setError(actFailureText(code, message));
+    setPreserved({ text, key });
+    setAck(null); setStreaming(null);
+  }
+
+  async function runSubmit(text: string, reuseKey?: string) {
     if (busy || pending) return;
-    const key = `${Date.now()}-${keyRef.current++}`;
+    if (gate.blocked) {
+      // Defence in depth for the chip/inspiration/retry paths (P12).
+      if (gate.kind === "connect") setConnectNeeded(true);
+      return;
+    }
+    // A deliberate retry resends the SAME key (a replay); a new action gets one.
+    const key = reuseKey ?? newActionKey();
     setBusy(true); setError(null);
     setSuggestions([]);
     setAck(`You steel yourself — “${text}”`);
     try {
       const r = await submitAction(text, content, key);
+      if (!r.ok) {
+        onActFailure(r.code, r.message, text, key);
+        return;
+      }
       addCost(r.cost);
       if (r.data.pending_check) {
         // The engine has called a check and is holding the beat: the die waits
@@ -162,12 +214,7 @@ export default function AdventurePage() {
         setAck(null);
         return;
       }
-      applyActResult(r, text);
-    } catch {
-      // A killed call never loses game state: action + mechanics stand, narration retries.
-      setError("The sending failed before the chronicler could answer.");
-      setPreserved(text);
-      setAck(null); setStreaming(null);
+      applyActResult(r.data, text);
     } finally {
       setBusy(false);
     }
@@ -180,20 +227,26 @@ export default function AdventurePage() {
     setPending({ ...p, phase: "sending" });
     try {
       const r = await rollCheck(p.text, p.face, p.spec.token, content, `${p.key}-roll`, p.face2 ?? undefined);
-      if (r.conflict) {
-        // check_expired: the board moved — the throw had no target, nothing was taken.
-        setPending(null);
-        setError("The moment moved on — that throw had no target, so nothing happened. Say it again.");
-        return;
-      }
-      if (r.fromFixture) {
+      if (!r.ok) {
+        if (r.code === "check_expired") {
+          // The board moved — the throw had no target, nothing was taken.
+          setPending(null);
+          setError(actFailureText(r.code, r.message));
+          return;
+        }
         // Thrown, but the sending failed: keep the die and offer the same face again.
         setPending({ ...p, phase: "retry" });
+        if (r.code === "connect_your_ai") {
+          setConnectNeeded(true);
+          refreshAi();
+        } else {
+          setError(actFailureText(r.code, r.message));
+        }
         return;
       }
       addCost(r.cost);
       setPending(null);
-      applyActResult(r, p.text, { settledDice: true });
+      applyActResult(r.data, p.text, { settledDice: true });
     } finally {
       sendingRef.current = false;
     }
@@ -232,9 +285,14 @@ export default function AdventurePage() {
     e.preventDefault();
     const text = input.trim();
     if (!text || busy || pending) return;
+    if (gate.blocked) {
+      // No turn happens without a model (P12) — the notice above says why.
+      if (gate.kind === "connect") setConnectNeeded(true);
+      return;
+    }
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setError("You seem to be off the road (offline). Your words are kept below — retry when ready.");
-      setPreserved(text);
+      setPreserved({ text, key: newActionKey() });
       return;
     }
     setInput("");
@@ -265,15 +323,15 @@ export default function AdventurePage() {
       void runSubmit(`I look closely at ${target}`);
       return;
     }
-    setEvents((e) => [...e, {
-      id: nid(), kind: "system",
-      text: gs.interactables.includes(name.toLowerCase()) || gs.npcs.some((x) => x.name === name) || gs.leads.includes(name)
-        ? `❧ ${name} — noted in your journal.`
-        : `❧ ${name} — the chronicler makes a note of it.`,
-    }]);
+    // Demo pages: local notes only — nothing here pretends the world answered.
+    setEvents((e) => [...e, { id: nid(), kind: "system", text: `❧ (demo) ${name} — noted in your journal.` }]);
   }
 
   const ch = gs.character ?? fixtures.character;
+  // The play gate (P12): signed out = the sample pages (read, don't play);
+  // nothing connected = the connect notice; backend silent = offline.
+  const signedIn = Boolean(getToken());
+  const gate = aiPlayGate({ signedIn, live, doc: ai, connectNeeded });
 
   return (
     <div className="shell" data-tab={tab}>
@@ -313,6 +371,11 @@ export default function AdventurePage() {
             {ch.conditions.map((c) => <span className="tag red" key={c}>{c}</span>)}
           </p>
           {!live && <p className="sys">Reading from local pages (backend unreachable).</p>}
+          {live && aiConnected(ai) && (
+            <p className="sys" style={{ margin: "8px 0 0" }} data-ai="connected">
+              ✎ Narrated by {aiConnectionLine(ai)}
+            </p>
+          )}
         </div>
         <div className="parchment card" style={{ marginTop: 12 }}>
           <h3>Party</h3>
@@ -344,13 +407,41 @@ export default function AdventurePage() {
         )}
         {!loading && <Feed events={events} streaming={streaming} onInspect={inspect} freshDice={freshDiceRef.current} />}
         {ack && <p className="ack" role="status">{ack}</p>}
+        {!loading && gate.blocked && (
+          <div className="parchment card" role="status" data-gate={gate.kind} aria-label="Play gate">
+            <p style={{ margin: 0 }}>✋ {gate.notice}</p>
+            {gate.kind === "connect" && (
+              <p className="sys" style={{ margin: "6px 0 0" }}>
+                Nothing is connected because {aiNotConnectedReason(ai)}{" "}
+                <a className="entity" href="/settings">Settings → Tale-spinner (AI)</a>
+              </p>
+            )}
+            {gate.kind === "demo" && (
+              <p className="sys" style={{ margin: "6px 0 0" }}>
+                These pages are a sample — <a className="entity" href="/settings">sign in</a> to
+                start a tale of your own.
+              </p>
+            )}
+            {gate.kind === "offline" && (
+              <button className="btn btn-ghost" type="button" style={{ marginTop: 6 }} onClick={() => window.location.reload()}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         {error && (
           <ErrorBanner
             message={error}
-            onRetry={() => { const t = preserved; setPreserved(""); setError(null); if (t) void runSubmit(t); }}
+            onRetry={() => {
+              // Retry resends the SAME words with the SAME idempotency key: a
+              // replay, not a second application (P12).
+              const p = preserved;
+              setPreserved(null); setError(null);
+              if (p) void runSubmit(p.text, p.key);
+            }}
           />
         )}
-        {preserved && error && <p className="sys">Kept: “{preserved}”</p>}
+        {preserved && error && <p className="sys">Kept: “{preserved.text}”</p>}
         <div ref={bottomRef} />
         </div>
         {pending && (
@@ -391,14 +482,14 @@ export default function AdventurePage() {
                 : "Attempt anything — ask Marla about the wagon, inspect the seal, step into the rain…"
             }
             aria-label="action input"
-            disabled={busy || !!pending}
+            disabled={busy || !!pending || gate.blocked}
             autoComplete="off"
           />
           <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-            <button className="btn" type="submit" disabled={busy || !!pending || !input.trim()}>
-              {busy ? "The quill moves…" : pending ? "The die waits…" : "Act ↵"}
+            <button className="btn" type="submit" disabled={busy || !!pending || gate.blocked || !input.trim()}>
+              {busy ? "The quill moves…" : pending ? "The die waits…" : gate.blocked ? "Not connected" : "Act ↵"}
             </button>
-            {typeof gs.inspiration === "number" && gs.inspiration > 0 && !pending && (
+            {typeof gs.inspiration === "number" && gs.inspiration > 0 && !pending && !gate.blocked && (
               <button
                 className="btn btn-ghost"
                 type="button"
@@ -409,7 +500,9 @@ export default function AdventurePage() {
                 ✦ Spend ({gs.inspiration})
               </button>
             )}
-            <span className="sys">No wrong verbs. No timed decisions.</span>
+            <span className="sys">
+              {gate.blocked ? "The chronicle waits for a connected model." : "No wrong verbs. No timed decisions."}
+            </span>
           </div>
         </form>
         <div className="toast-stack" aria-live="polite">

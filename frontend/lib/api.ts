@@ -165,11 +165,61 @@ export interface ActResponse {
   system?: string[];
 }
 
-/** Retry-safe submit: idempotency key per player action (t_18510814). */
+/** What /act answered: the resolved turn, or exactly why there is no turn (P12).
+ *
+ * Failures carry the backend's machine code — ``connect_your_ai`` (nothing
+ * connected), ``provider_failed`` / ``turn_failed`` (the model failed
+ * mid-turn), ``check_expired`` (moved board), ``unreachable`` (the request
+ * never landed) — plus the scrubbed message when there is one. */
+export type ActOutcome =
+  | { ok: true; data: ActResponse; cost: CostInfo }
+  | { ok: false; code: string; message: string; status: number | null };
+
+/** A fresh idempotency key for one player action.
+ *
+ * Exported so a retry can resend the SAME key it already used: a retried
+ * action is then a replay (the backend serves the stored response) rather
+ * than a second application. */
+export function newActionKey(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Read a failed /act: ``{detail: "code"}`` or ``{detail: {code, message}}``. */
+async function actFailure(res: Response): Promise<ActOutcome> {
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string" && detail) {
+    return { ok: false, status: res.status, code: detail, message: "" };
+  }
+  if (detail && typeof detail === "object") {
+    const d = detail as { code?: unknown; message?: unknown };
+    return {
+      ok: false,
+      status: res.status,
+      code: typeof d.code === "string" && d.code ? d.code : `http_${res.status}`,
+      message: typeof d.message === "string" ? d.message : "",
+    };
+  }
+  return { ok: false, status: res.status, code: `http_${res.status}`, message: "" };
+}
+
+/** Retry-safe submit: idempotency key per player action (t_18510814).
+ *
+ * P12: there is no fixture branch — a story the backend did not narrate is
+ * not a story. A refusal or a failed model call comes back as
+ * ``{ok: false, code, message}`` so the UI can say exactly what happened
+ * (``connect_your_ai`` → nothing connected; ``provider_failed``/``turn_failed``
+ * → the model failed mid-turn; ``unreachable`` → the request never landed).
+ */
 export async function submitAction(
   text: string, prefs?: ContentPrefs, idempotencyKey?: string
-): Promise<ApiResult<ActResponse>> {
-  const key = idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+): Promise<ActOutcome> {
+  const key = idempotencyKey ?? newActionKey();
   const cid = getCampaignId();
   try {
     const ctl = new AbortController();
@@ -190,38 +240,25 @@ export async function submitAction(
       }),
     });
     clearTimeout(t);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) return actFailure(res);
     const data = (await res.json()) as ActResponse;
-    return { data, cost: readCost(res), fromFixture: false };
+    return { ok: true, data, cost: readCost(res) };
   } catch {
-    // Fixture fallback: instant ack + canned narration so play never blocks.
-    await new Promise((r) => setTimeout(r, 350));
-    return {
-      data: {
-        ack: "The chronicler nods…",
-        mechanics: null,
-        narration: fixtures.fallbackNarration(text),
-        dialogue: [],
-        newLeads: [],
-      },
-      cost: { calls: 0, costUsd: 0, cached: true },
-      fromFixture: true,
-    };
+    return { ok: false, status: null, code: "unreachable", message: "" };
   }
 }
 
 /** Throw the called check's die: sends the settled face to resolve the beat.
  *
- * Deliberately NOT the submitAction fallback: a throw that fails to send is
- * never faked into a resolution — it returns fromFixture so the UI offers a
- * resend of the SAME face, and a 409 (moved board) returns conflict: true. */
+ * A throw that fails to send is never faked into a resolution: it answers
+ * ``{ok: false}`` (409 → ``check_expired``) so the UI offers a resend of the
+ * SAME face, and the same action can be retried with the same key. */
 export async function rollCheck(
   text: string, roll: number, token: string, prefs?: ContentPrefs, idempotencyKey?: string,
   roll2?: number
-): Promise<ApiResult<ActResponse> & { conflict?: boolean }> {
-  const key = idempotencyKey ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+): Promise<ActOutcome> {
+  const key = idempotencyKey ?? newActionKey();
   const cid = getCampaignId();
-  const empty: ActResponse = { ack: "", mechanics: null, narration: null, dialogue: [], newLeads: [], system: [] };
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 25000);
@@ -244,15 +281,11 @@ export async function rollCheck(
       }),
     });
     clearTimeout(t);
-    if (res.status === 409) {
-      // check_expired: the board moved between the call and the throw.
-      return { data: empty, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: false, conflict: true };
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) return actFailure(res);
     const data = (await res.json()) as ActResponse;
-    return { data, cost: readCost(res), fromFixture: false };
+    return { ok: true, data, cost: readCost(res) };
   } catch {
-    return { data: empty, cost: { calls: 0, costUsd: 0, cached: true }, fromFixture: true };
+    return { ok: false, status: null, code: "unreachable", message: "" };
   }
 }
 
@@ -365,19 +398,27 @@ export async function registerApi(email: string, password: string, displayName: 
 
 /** --- AI provider settings (bring your own OpenAI-compatible endpoint) --- */
 export interface AiSettingsDoc {
-  provider: "stub" | "openai-compatible" | null;
+  /** What is stored (a legacy row may still hold "stub" — it is not connected). */
+  provider: string | null;
   configured: boolean;
   base_url: string;
   model: string;
   has_key: boolean;
   timeout_s: number;
+  /** The resolution /act uses (P12): is there a model to narrate with? */
+  connected: boolean;
   active_provider: string;
   active_source: "settings" | "env" | "default";
+  active_model: string;
+  active_base_url: string;
+  /** Why not connected: unset | stub | incomplete | misconfigured | unsupported. */
+  active_reason: string;
   env_provider: string;
+  providers: string[];
 }
 
 export interface AiSettingsPayload {
-  provider: "stub" | "openai-compatible";
+  provider: "openai-compatible";
   base_url?: string;
   model?: string;
   /** Omit to keep the stored key; empty string also keeps it (write-only field). */
