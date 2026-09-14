@@ -1,7 +1,8 @@
 # Integration Plan — Rebuilt Engine → Live App (Phase 2)
 
 Status: **settled** (owner decisions 2026-09-14). This is the spec for the phase-2
-cards on kanban board `default` (`created_by='phase2'`, P1–P7). If a card body and
+cards on kanban board `default` (`created_by='phase2'`, P1–P10 — round 2 added
+mid-flight, see §11). If a card body and
 this file disagree, this file wins — note the discrepancy in the card's completion.
 
 Owner decisions (locked):
@@ -135,7 +136,11 @@ idempotency keys; travel/location mechanic (engine gap — later card).
 ```
 P1 packaging (main) → P2 bridge module (main) → P3 router (main) → ┬ P4 frontend pilot (worktree p2/frontend)
                                                                    └ P5 deploy docs (main)
-P6 ship: merge P4, full batteries, push (main) → P7 parked: post-deploy live verify + first BYOK turn (owner-gated)
+P6 ship: merge P4, full batteries, push (main) ✅ → P7 parked: post-deploy live verify + first BYOK turn (owner-gated)
+
+Round 2 (added 2026-09-14 mid-flight — content boundaries, see §11):
+P8 backend+engine (main) + P9 frontend (worktree p2/content-prefs) → P10 ship round 2 (merge, batteries, push)
+P7 gains P10 as a second parent — deploy verification must include the §11 checks.
 ```
 
 Gates used everywhere: backend suite + ruff (backend/.venv); engine suite + ruff
@@ -145,4 +150,37 @@ key-never-stored test set from §4.
 
 P7 stays **unassigned** (parked) until the owner has redeployed with
 `ENGINE_MODE=1`; the phase-2 watch treats it as parked and still reports code
-completion when P1–P6 are done.
+completion when all other phase-2 cards are done.
+
+## 11. Content boundaries (the NSFW switch) — engine path
+
+Added 2026-09-14 (round 2). README: "Content boundaries: per-axis story limits
+plus a single **NSFW** switch — when enabled every limit is lifted (explicit adult
+content, no fade-to-black)." The legacy narrator honors it via
+`narrator/prefs.py::ContentPrefs.describe_for_prompt()`; the rebuilt engine had no
+content concept and the P1–P6 pilot dropped the player's boundaries entirely. Fix:
+
+- **Contract reuse**: `app/modules/narrator/prefs.py::ContentPrefs` (violence /
+  horror / romance / language = off|reduced|standard; `nsfw` master switch, default
+  False) is the single model — the engine path validates with it, no parallel
+  vocabulary.
+- **Wire format**: `X-Content-Prefs` JSON header on engine requests (same header
+  the legacy play path sends). Absent → defaults. Malformed → **defaults applied AND
+  a system note returned** — the legacy silent-drop bug is not repeated.
+- **Engine**: additive change (keyword-only, default empty) threading a code-owned
+  content-policy string into prompt assembly as its own always-present system line —
+  not merged into the static ruleset prefix (spec §4 caching) and not droppable by
+  budget/compaction. `describe_for_prompt()` verbatim; NSFW on includes the
+  uncensored directive and the standing hard exclusion (never sexual content
+  involving minors); NSFW off lists the per-axis caps + "no explicit sexual
+  content".
+- **Moods**: engine mood state is numeric only (valence/arousal; no free-text
+  column), so there is no word-vocabulary gate server-side — the directive is the
+  gate. The applied prefs (nsfw + per-axis) are echoed in the turn payload for UI.
+- **Frontend**: /chronicle sends the header from the existing store prefs and shows
+  a compact boundaries line (+ note when defaults were applied); Settings stays the
+  edit surface.
+- **Verification**: backend tests (directive reaches prompt; on/off text incl. hard
+  exclusion; malformed → defaults+note; echo); engine tests (policy in prompt,
+  survives a squeezed budget, empty ⇒ unchanged); P10 e2e; P7 live checks (NSFW off
+  normal; NSFW on flips tone; exclusion holds).
