@@ -4,7 +4,22 @@ Mood [-1, 1], relationship per-event (±40) and total (±100), hp (0..max_hp),
 and stat bounds (-10..30) are probed from inside, at, and beyond each edge.
 Each verdict must report the value actually applied (``clamped_to``), and the
 committed rows must hold the exact edge value — no overshoot, no drift.
+
+Relationship meters are read DECAYED (spec §3.5: current = anchor + Σ decayed
+deltas), so a meter driven to ±100 one turn earlier sits one decay step inside
+the edge when the follow-up probe arrives: the clamp is then the decayed slack,
+not 0.0 — and the meter still lands exactly on ±100. ``slow`` deltas decay
+0.01/turn (ARCHITECTURE), the paired probes are one turn apart, and
+``RelationshipLedger.currents`` rounds to 6 dp, hence the two constants below.
 """
+
+import math
+
+# Slack the decay opened at the ±100 edges one turn after the edge-driving
+# write (see the module docstring): 100 - round6(90 + 10*exp(-0.01)) and
+# -100 - round6(-95 - 5*exp(-0.01)).
+_TAM_SLACK = round(100 - round(90 + 10 * math.exp(-0.01), 6), 6)
+_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.01), 6), 6)
 
 SCENARIO = {
     "name": "boundary-clamps",
@@ -56,18 +71,26 @@ SCENARIO = {
         # relationship ceiling: 90 + 40 -> capped at +10, lands exactly on 100
         {"apply": [{"kind": "relationship", "target": "npc:1",
                     "data": {"category": "trust", "delta": 40, "reason": "kept the oath"}}],
+         "turn": 6,
          "expect": [{"kind": "clamped", "clamped_to": 10.0, "note_contains": "already at"}]},
-        # at the ceiling: nothing applies
+        # one decay step later only the decayed slack fits — the meter still
+        # lands exactly on 100.00, so the applied delta is the slack, not 0.0
         {"apply": [{"kind": "relationship", "target": "npc:1",
                     "data": {"category": "trust", "delta": 40, "reason": "again"}}],
-         "expect": [{"kind": "clamped", "clamped_to": 0.0}]},
+         "turn": 7,
+         "expect": [{"kind": "clamped", "clamped_to": _TAM_SLACK,
+                     "note_contains": "already at"}]},
         # relationship floor: -95 - 40 -> capped at -5, lands exactly on -100
         {"apply": [{"kind": "relationship", "target": "npc:2",
                     "data": {"category": "trust", "delta": -40, "reason": "betrayal"}}],
+         "turn": 8,
          "expect": [{"kind": "clamped", "clamped_to": -5.0, "note_contains": "already at"}]},
+        # the floor probe mirrors the ceiling: the decayed slack applies
         {"apply": [{"kind": "relationship", "target": "npc:2",
                     "data": {"category": "trust", "delta": -40, "reason": "again"}}],
-         "expect": [{"kind": "clamped", "clamped_to": 0.0}]},
+         "turn": 9,
+         "expect": [{"kind": "clamped", "clamped_to": _MARLA_SLACK,
+                     "note_contains": "already at"}]},
         # in-bounds relationship change is accepted
         {"apply": [{"kind": "relationship", "target": "npc:3",
                     "data": {"category": "trust", "delta": 12, "reason": "a favour"}}],
@@ -99,9 +122,11 @@ SCENARIO = {
         {"expr": "state['moods']['npc:2']['valence'] == -1.0",
          "msg": "mood floor is reached exactly"},
         {"expr": "state['moods']['npc:3']['valence'] == 0.7 and state['moods']['npc:3']['arousal'] == 0.2"},
-        {"expr": "[row.delta for row in ledger if row.npc_id == 'npc:1'] == [10.0, 0.0]",
-         "msg": "only the applied relationship delta is in the ledger"},
-        {"expr": "[row.delta for row in ledger if row.npc_id == 'npc:2'] == [-5.0, 0.0]"},
+        {"expr": (f"[row.delta for row in ledger if row.npc_id == 'npc:1']"
+                  f" == [10.0, {_TAM_SLACK!r}]"),
+         "msg": "only the applied relationship deltas are in the ledger — the second is decayed slack"},
+        {"expr": (f"[row.delta for row in ledger if row.npc_id == 'npc:2']"
+                  f" == [-5.0, {_MARLA_SLACK!r}]")},
         {"expr": "[row.delta for row in ledger if row.npc_id == 'npc:3'] == [12.0]"},
         {"expr": "[row.delta for row in ledger if row.npc_id == 'npc:4'] == [40.0]",
          "msg": "the per-event bound caps what is written"},

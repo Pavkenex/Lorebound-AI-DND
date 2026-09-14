@@ -7,6 +7,7 @@ scenario's real end state is asserted here from its JSON-safe snapshot
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from evals.harness import load_scenarios, run_all, run_scenarios
@@ -14,6 +15,14 @@ from evals.harness import load_scenarios, run_all, run_scenarios
 SCENARIOS_DIR = Path(__file__).resolve().parents[1] / "evals" / "scenarios"
 EXPECTED = ("boundary-clamps", "conservation", "contradiction-bait",
             "dead-npc-lock", "lead-gates")
+
+# boundary-clamps reads its relationship meters DECAYED (spec §3.5), so a meter
+# driven to ±100 one turn earlier sits one "slow" (0.01/turn) decay step inside
+# the edge: the follow-up probe clamps to the slack the decay opened, not 0.0 —
+# and the meter still lands exactly on ±100. The scenario file derives the same
+# constants beside the steps that pin their turns.
+_TAM_SLACK = round(100 - round(90 + 10 * math.exp(-0.01), 6), 6)
+_MARLA_SLACK = round(-100 - round(-95 - 5 * math.exp(-0.01), 6), 6)
 
 
 def _snapshot(name: str, report) -> dict:
@@ -190,7 +199,7 @@ def test_boundary_clamps_outcomes():
     ledger: dict[str, list[float]] = {}
     for row in _rows(snapshot, "relationship_ledger"):
         ledger.setdefault(row["npc_id"], []).append(row["delta"])
-    assert ledger == {"npc:1": [10.0, 0.0], "npc:2": [-5.0, 0.0],
+    assert ledger == {"npc:1": [10.0, _TAM_SLACK], "npc:2": [-5.0, _MARLA_SLACK],
                       "npc:3": [12.0], "npc:4": [40.0]}
     stats = json.loads(_rows(snapshot, "characters")[0]["stats"])
     assert stats["hp"] == 0 and stats["might"] == -10 and stats["currency"] == 10
@@ -201,7 +210,7 @@ def test_boundary_clamps_outcomes():
         {"valence_delta": 0.4, "arousal_delta": -0.5},
         {"valence_delta": -1.0, "arousal_delta": 0.0},
         {"valence_delta": 0.0, "arousal_delta": 0.0},
-        10.0, 0.0, -5.0, 0.0, 40.0,
+        10.0, _TAM_SLACK, -5.0, _MARLA_SLACK, 40.0,
         7.0, -10.0, 0.0,
         21.0, -40.0, 0.0,
     ]
