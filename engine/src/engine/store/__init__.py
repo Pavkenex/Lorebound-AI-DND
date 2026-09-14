@@ -19,7 +19,9 @@ Implementation contract (R1 card):
 
 Implementation notes (beyond the contract above):
 - The connection runs in autocommit mode (``isolation_level=None``); explicit
-  ``BEGIN``/``COMMIT``/``ROLLBACK`` are issued by ``transaction()``. SQLite does
+  ``BEGIN IMMEDIATE``/``COMMIT``/``ROLLBACK`` are issued by ``transaction()``
+  (write transactions — the write lock is taken up front so concurrent writers
+  wait on ``busy_timeout`` instead of failing a snapshot upgrade). SQLite does
   not nest transactions, so a ``transaction()`` opened while one is already
   active raises ``RuntimeError``; use a single flat transaction (the inner
   writes of a *body* exception roll back with it — no partial commits).
@@ -94,17 +96,20 @@ class Store:
         """Run a block in one SQLite transaction: commit on success, roll back on
         exception (including partial writes already made in the block).
 
-        Not re-entrant: a ``transaction()`` opened while one is already active
-        raises ``RuntimeError`` (SQLite has no nested transactions — savepoints
-        are out of scope for this layer). Writes made *outside* any transaction
-        auto-commit.
+        ``BEGIN IMMEDIATE`` — this is a *write* transaction: it takes the write
+        lock up front, so concurrent writers queue on ``busy_timeout`` instead of
+        failing a mid-transaction upgrade with SQLITE_BUSY_SNAPSHOT. Readers
+        need no transaction (WAL). Not re-entrant: a ``transaction()`` opened
+        while one is already active raises ``RuntimeError`` (SQLite has no nested
+        transactions — savepoints are out of scope for this layer). Writes made
+        *outside* any transaction auto-commit.
         """
         if self._conn.in_transaction:
             raise RuntimeError(
                 "transaction() is not re-entrant: a transaction is already open; "
                 "SQLite transactions do not nest — use one flat transaction"
             )
-        self._conn.execute("BEGIN")
+        self._conn.execute("BEGIN IMMEDIATE")
         try:
             yield
         except BaseException:
