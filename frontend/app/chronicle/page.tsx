@@ -18,6 +18,9 @@ import {
 import {
   ENGINE_DEFAULT_BASE_URL,
   ENGINE_DEFAULT_TIMEOUT_S,
+  appliedContent,
+  boundariesNotice,
+  boundariesSummary,
   capabilityChip,
   clearEngineKey,
   connectionLabel,
@@ -33,6 +36,7 @@ import {
   setEngineKey,
   turnEntries,
   turnSuggestions,
+  type AppliedContent,
   type EngineCapability,
   type EngineProviderChoice,
   type EngineState,
@@ -40,6 +44,7 @@ import {
   type ProbeVerdict,
   type TranscriptEntry,
 } from "../../lib/engine";
+import { useStore } from "../../lib/store";
 import { uiBlip } from "../../lib/audio";
 
 export default function ChroniclePage() {
@@ -79,6 +84,10 @@ function SignedOutCard() {
 }
 
 function EnginePilot() {
+  // Content boundaries are read from the store, LIVE: the header itself is
+  // read from the store's persisted slot at request time (lib/engine.ts), and
+  // this value only decides what the boundaries line claims pre-turn.
+  const { content: storedContent, hydrated } = useStore();
   // null = not yet read from localStorage (SSR render must not guess).
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
@@ -99,6 +108,11 @@ function EnginePilot() {
   const [snapshot, setSnapshot] = useState<EngineState | null>(null);
   const [stateError, setStateError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  /** Applied-boundaries echo of the last turn (§11); null until one arrives. */
+  const [applied, setApplied] = useState<AppliedContent | null>(null);
+  /** The turn's own "defaults were applied" note, when it sent one. */
+  const [boundariesNote, setBoundariesNote] = useState<string | null>(null);
 
   const [connection, setConnection] = useState<EngineConnection | null>(null);
   const [provider, setProvider] = useState<EngineProviderChoice>("stub");
@@ -140,6 +154,8 @@ function EnginePilot() {
     setError(null);
     setPreserved("");
     setInput("");
+    setApplied(null);
+    setBoundariesNote(null);
     void loadState(campaignId);
   }, [loadState]);
 
@@ -207,6 +223,13 @@ function EnginePilot() {
       setCapability(turn.capability ?? null);
       if (turn.state) setSnapshot(turn.state);
       setSuggestions(turnSuggestions(turn));
+      // §11: the payload echoes the boundaries that actually governed this
+      // turn (absent on a payload that predates the echo — keep the store's).
+      const echo = appliedContent(turn);
+      if (echo) {
+        setApplied(echo);
+        setBoundariesNote(boundariesNotice(turn));
+      }
       setCampaigns((c) => (c ?? []).map((x) => (
         x.id === selectedId ? { ...x, last_turn_at: new Date().toISOString() } : x
       )));
@@ -271,6 +294,10 @@ function EnginePilot() {
   const chip = capabilityChip(capability);
   const degraded = engineDegraded(capability);
   const sections = engineStateSections(snapshot);
+  // What governs the prose: the applied echo once a turn carries one (§11),
+  // else the player's stored boundaries. Gated on `hydrated` so the first
+  // client paint never claims defaults over stored values.
+  const shownContent = applied?.prefs ?? (hydrated ? storedContent : null);
 
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16 }}>
@@ -465,6 +492,25 @@ function EnginePilot() {
                     saved to your account so your phone and desktop agree — the key is not.
                   </p>
                 </div>
+              )}
+            </section>
+
+            <section className="parchment card" aria-label="Content boundaries">
+              <h2 style={{ marginTop: 0 }}>Story boundaries</h2>
+              {shownContent ? (
+                <p className="sys" style={{ margin: 0 }}>
+                  Content boundaries: <strong>{boundariesSummary(shownContent)}</strong>
+                  {applied ? " · applied to the last turn" : ""}
+                  {" — "}
+                  <Link href="/settings" prefetch>change in Settings</Link>
+                </p>
+              ) : (
+                <p className="sys" style={{ margin: 0 }}>Reading your boundaries…</p>
+              )}
+              {boundariesNote && (
+                <p className="sys" role="status" style={{ margin: "6px 0 0", color: "#e0b48f" }}>
+                  ⚠ {boundariesNote}
+                </p>
               )}
             </section>
 

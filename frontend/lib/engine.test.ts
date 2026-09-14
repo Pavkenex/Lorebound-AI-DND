@@ -6,12 +6,17 @@ import test from "node:test";
 import {
   ENGINE_CAMPAIGN_STORAGE,
   ENGINE_KEY_STORAGE,
+  appliedContent,
+  boundariesNotice,
+  boundariesSummary,
   capabilityChip,
   clearEngineKey,
   connectionLabel,
+  contentPrefsHeader,
   engineDegraded,
   engineErrorText,
   engineModeEnabled,
+  engineRequestHeaders,
   engineStateSections,
   formatWhen,
   getEngineCampaignId,
@@ -23,10 +28,13 @@ import {
   providerKeyHeader,
   setEngineCampaignId,
   setEngineKey,
+  storedContentPrefs,
   turnEntries,
   turnSuggestions,
   verdictChip,
+  type EngineTurn,
 } from "./engine.ts";
+import { PREFS_STORAGE, defaultPrefs } from "./store-types.ts";
 
 /** Minimal localStorage stand-in (node has none). */
 class MemoryStorage {
@@ -427,4 +435,158 @@ test("formatWhen stays readable for missing and broken timestamps", () => {
   assert.equal(formatWhen(""), "not played yet");
   assert.equal(formatWhen("not-a-date"), "not-a-date");
   assert.notEqual(formatWhen("2026-09-14T06:00:00Z"), "not played yet");
+});
+
+// --------------------------------------------------------------------------- //
+// Content boundaries (§11) — the request header + the applied echo
+// --------------------------------------------------------------------------- //
+
+/** A settings payload shaped the way lib/store.tsx persists it. */
+function storedPrefs(content: Record<string, unknown>): string {
+  return JSON.stringify({ fontSize: 16, highContrast: false, content });
+}
+
+test("contentPrefsHeader sends the canonical five-key JSON, normalized", () => {
+  assert.equal(
+    contentPrefsHeader({ violence: "reduced", horror: "off", romance: "off", language: "standard", nsfw: true })[
+      "X-Content-Prefs"
+    ],
+    JSON.stringify({ violence: "reduced", horror: "off", romance: "off", language: "standard", nsfw: true })
+  );
+  // legacy vocabulary normalizes on the way out — a "low" never reaches the wire
+  const legacy = { violence: "low" } as unknown as Parameters<typeof contentPrefsHeader>[0];
+  assert.equal(
+    contentPrefsHeader(legacy)["X-Content-Prefs"],
+    JSON.stringify({ ...defaultPrefs, violence: "reduced" })
+  );
+  // nothing given: the store's own defaults, still a full payload (not {}.)
+  assert.equal(contentPrefsHeader()["X-Content-Prefs"], JSON.stringify(defaultPrefs));
+});
+
+test("storedContentPrefs reads the store's slot at call time", () => {
+  withStorage((mem) => {
+    assert.deepEqual(storedContentPrefs(), defaultPrefs); // fresh browser
+    mem.setItem(
+      PREFS_STORAGE,
+      storedPrefs({ violence: "standard", horror: "off", romance: "standard", language: "off", nsfw: true })
+    );
+    assert.deepEqual(storedContentPrefs(), {
+      violence: "standard",
+      horror: "off",
+      romance: "standard",
+      language: "off",
+      nsfw: true,
+    });
+    // The toggle flipped a moment ago: the very next read sees it (the value is
+    // never captured once — that is the "NSFW toggle lies" failure mode).
+    mem.setItem(
+      PREFS_STORAGE,
+      storedPrefs({ violence: "standard", horror: "off", romance: "standard", language: "off", nsfw: false })
+    );
+    assert.equal(storedContentPrefs().nsfw, false);
+  });
+});
+
+test("storedContentPrefs degrades to defaults on partial or broken storage", () => {
+  withStorage((mem) => {
+    mem.setItem(PREFS_STORAGE, storedPrefs({ nsfw: true })); // partial content block
+    assert.deepEqual(storedContentPrefs(), { ...defaultPrefs, nsfw: true });
+    mem.setItem(PREFS_STORAGE, "{not json");
+    assert.deepEqual(storedContentPrefs(), defaultPrefs);
+    mem.setItem(PREFS_STORAGE, JSON.stringify({ fontSize: 18 })); // no content block at all
+    assert.deepEqual(storedContentPrefs(), defaultPrefs);
+  });
+});
+
+test("storedContentPrefs never throws when storage is blocked", () => {
+  const g = globalThis as Globals;
+  const had = Object.prototype.hasOwnProperty.call(g, "localStorage");
+  const before = g.localStorage;
+  const hostile = { getItem(): string | null { throw new Error("blocked"); } };
+  g.localStorage = hostile as unknown as Storage;
+  try {
+    assert.deepEqual(storedContentPrefs(), defaultPrefs);
+  } finally {
+    if (had) g.localStorage = before;
+    else delete (g as { localStorage?: Storage }).localStorage;
+  }
+});
+
+test("engineRequestHeaders attaches the key when set and always the boundaries", () => {
+  withStorage((mem) => {
+    const keyed = engineRequestHeaders(" sk-live ");
+    assert.deepEqual(Object.keys(keyed).sort(), ["X-Content-Prefs", "X-Provider-Key"]);
+    assert.equal(keyed["X-Provider-Key"], "sk-live");
+    assert.equal(keyed["X-Content-Prefs"], JSON.stringify(defaultPrefs));
+
+    // No key set: the boundaries still ride — they are not a secret, and the
+    // server applies them with or without a live model.
+    mem.setItem(PREFS_STORAGE, storedPrefs({ nsfw: true }));
+    const keyless = engineRequestHeaders();
+    assert.deepEqual(Object.keys(keyless), ["X-Content-Prefs"]);
+    assert.equal(JSON.parse(keyless["X-Content-Prefs"]).nsfw, true);
+    assert.equal(JSON.parse(keyless["X-Content-Prefs"]).romance, "off");
+  });
+});
+
+test("appliedContent reads the turn's echo and tolerates a payload without one", () => {
+  assert.equal(appliedContent(undefined), null);
+  assert.equal(appliedContent(null), null);
+  assert.equal(appliedContent({} as EngineTurn), null);
+  // an unrelated object under a candidate key is not the echo
+  assert.equal(appliedContent({ prefs: { theme: "dark" } } as unknown as EngineTurn), null);
+  assert.equal(appliedContent({ content: ["reduced"] } as unknown as EngineTurn), null);
+
+  const canonical = appliedContent({
+    content: { violence: "reduced", horror: "off", romance: "off", language: "reduced", nsfw: true },
+  } as EngineTurn);
+  assert.deepEqual(canonical, {
+    prefs: { violence: "reduced", horror: "off", romance: "off", language: "reduced", nsfw: true },
+    defaultsApplied: false,
+  });
+  // the echo's flag, under either spelling the router might pick
+  assert.equal(appliedContent({ content: { nsfw: false, defaults_applied: true } } as EngineTurn)?.defaultsApplied, true);
+  assert.equal(appliedContent({ content: { nsfw: false, defaultsApplied: true } } as EngineTurn)?.defaultsApplied, true);
+  // a partial echo normalizes the axes it does not carry
+  assert.deepEqual(appliedContent({ content: { nsfw: true } } as EngineTurn)?.prefs, { ...defaultPrefs, nsfw: true });
+  // a renamed container is still read (P8 owns the wire shape; the UI must not break)
+  assert.equal(appliedContent({ content_prefs: { nsfw: true } } as unknown as EngineTurn)?.prefs.nsfw, true);
+  assert.equal(appliedContent({ applied_prefs: { nsfw: true } } as unknown as EngineTurn)?.prefs.nsfw, true);
+});
+
+test("boundariesSummary is one readable line for the block", () => {
+  assert.equal(
+    boundariesSummary({ violence: "standard", horror: "standard", romance: "standard", language: "standard", nsfw: false }),
+    "standard · NSFW off"
+  );
+  assert.equal(
+    boundariesSummary(defaultPrefs),
+    "violence reduced · horror reduced · romance off · language reduced · NSFW off"
+  );
+  assert.equal(boundariesSummary({ ...defaultPrefs, nsfw: true }), "uncensored (every limit lifted) · NSFW on");
+});
+
+test("boundariesNotice surfaces the defaults-applied note and nothing else", () => {
+  assert.equal(boundariesNotice({} as EngineTurn), null);
+  assert.equal(boundariesNotice({ system_lines: ["The road runs north."] } as EngineTurn), null);
+  // a system line that merely says "default" about something else is not a note
+  assert.equal(boundariesNotice({ system_lines: ["By default, the ferry runs at dawn."] } as EngineTurn), null);
+  // the backend's own note (bridge.CONTENT_DEFAULTS_NOTE — §11's fallback)
+  const backendNote = "content: settings could not be read — standard boundaries applied";
+  assert.equal(
+    boundariesNotice({ system_lines: ["The rain keeps on.", backendNote] } as EngineTurn),
+    backendNote
+  );
+  // a note wording that says "defaults" without the backend's exact phrase
+  const note = "Content boundaries could not be read — defaults applied.";
+  assert.equal(boundariesNotice({ system_lines: [note] } as EngineTurn), note);
+  // a flag on the echo, without any note, still tells the player
+  const flagged = { content: { nsfw: false, defaults_applied: true }, system_lines: ["The rain keeps on."] } as EngineTurn;
+  assert.match(boundariesNotice(flagged) ?? "", /standard boundaries governed this turn/);
+  // with both, the server's own wording wins
+  const both = {
+    content: { nsfw: false, defaults_applied: true },
+    system_lines: ["Content prefs were malformed — defaults applied."],
+  } as EngineTurn;
+  assert.equal(boundariesNotice(both), "Content prefs were malformed — defaults applied.");
 });

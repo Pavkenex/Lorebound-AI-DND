@@ -1,7 +1,7 @@
 "use client";
 // Global game store: settings, a11y, audio, cost metering, tutorial (t_4f820f0d, t_eff821f1, t_d2dd38a0, t_32d887a4).
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { defaultPrefs, normalizeContentPrefs, type ContentPrefs } from "./store-types";
+import { PREFS_STORAGE, defaultPrefs, normalizeContentPrefs, type ContentPrefs } from "./store-types";
 import type { CostInfo } from "./api";
 
 export type Ambient = "off" | "tavern" | "rain" | "forest" | "combat";
@@ -31,7 +31,7 @@ interface Store extends Prefs {
 }
 
 const Ctx = createContext<Store | null>(null);
-const KEY = "lorebound-prefs-v1";
+const KEY = PREFS_STORAGE;
 
 const DEFAULTS: Prefs = {
   fontSize: 16, highContrast: false, reducedMotion: false,
