@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CONNECT_NOTICE,
   ENGINE_CAMPAIGN_STORAGE,
   ENGINE_KEY_STORAGE,
   appliedContent,
@@ -22,9 +23,12 @@ import {
   getEngineCampaignId,
   getEngineKey,
   hasEngineKey,
+  keyAfterConnectionSave,
   plainValue,
+  playGate,
   probeVerdictText,
   providerChoice,
+  providerConnected,
   providerKeyHeader,
   setEngineCampaignId,
   setEngineKey,
@@ -184,41 +188,53 @@ test("engineModeEnabled follows NEXT_PUBLIC_ENGINE_MODE exactly", () => {
   withEnv(undefined, () => assert.equal(engineModeEnabled(), false));
 });
 
-test("providerChoice maps the stored provider onto the panel's two choices", () => {
-  assert.equal(providerChoice("stub"), "stub");
-  assert.equal(providerChoice("STUB"), "stub");
-  assert.equal(providerChoice("  stub  "), "stub");
+test("providerChoice maps any stored provider onto the panel's one choice", () => {
+  // P11: the keyless/stub choice is gone — every stored provider (legacy
+  // "stub" rows included) reads back as the one live option the panel offers.
   assert.equal(providerChoice("openai-compatible"), "openai-compatible");
   assert.equal(providerChoice("openai_compatible"), "openai-compatible");
-  assert.equal(providerChoice("openai"), "openai-compatible"); // the live family collapses
+  assert.equal(providerChoice("openai"), "openai-compatible");
+  assert.equal(providerChoice("stub"), "openai-compatible");
   assert.equal(providerChoice(null), "openai-compatible");
   assert.equal(providerChoice(""), "openai-compatible");
 });
 
-test("capabilityChip names the model and the protocol it used", () => {
-  const stub = capabilityChip({ provider: "stub", model: "stub", mode: "stub", native_tools: false, degraded: false });
-  assert.equal(stub.tone, "stub");
-  assert.equal(stub.label, "stub");
-  assert.match(stub.title, /no key needed/);
-
-  const native = capabilityChip({ provider: "openai", model: "gpt-5-mini", mode: "live", native_tools: true, degraded: false });
-  assert.equal(native.tone, "live");
-  assert.equal(native.label, "gpt-5-mini");
-  assert.match(native.title, /native tool calls/);
-
-  const degraded = capabilityChip({ provider: "openai", model: "llama-3.3", mode: "live", native_tools: false, degraded: true });
-  assert.equal(degraded.tone, "degraded");
-  assert.match(degraded.label, /llama-3\.3 · compatibility/);
-  assert.match(degraded.title, /JSON fallback/);
-
-  // A missing capability renders as the stub default, never as an empty chip.
-  assert.equal(capabilityChip(null).tone, "stub");
-  assert.equal(capabilityChip(undefined).label, "stub");
+test("providerConnected: unset and the retired stub default are NOT connected", () => {
+  assert.equal(providerConnected("openai-compatible"), true);
+  assert.equal(providerConnected("openai"), true);
+  assert.equal(providerConnected("  OpenAI-Compatible "), true);
+  assert.equal(providerConnected(""), false);
+  assert.equal(providerConnected("   "), false);
+  assert.equal(providerConnected(null), false);
+  assert.equal(providerConnected(undefined), false);
+  assert.equal(providerConnected("stub"), false); // the legacy default row
+  assert.equal(providerConnected("STUB"), false);
 });
 
-test("engineDegraded is live-only: a stub turn is not a degraded model call", () => {
+test("capabilityChip names the model and the protocol it used", () => {
+  const native = capabilityChip({ provider: "openai", model: "gpt-5-mini", mode: "live", native_tools: true, degraded: false });
+  assert.equal(native?.tone, "live");
+  assert.equal(native?.label, "gpt-5-mini");
+  assert.match(native?.title ?? "", /native tool calls/);
+
+  const degraded = capabilityChip({ provider: "openai", model: "llama-3.3", mode: "live", native_tools: false, degraded: true });
+  assert.equal(degraded?.tone, "degraded");
+  assert.match(degraded?.label ?? "", /llama-3\.3 · compatibility/);
+  assert.match(degraded?.title ?? "", /JSON fallback/);
+
+  // No model name echoed: the provider or a plain "your model" still names it.
+  assert.equal(capabilityChip({ provider: "openai" })?.label, "openai");
+  assert.equal(capabilityChip({})?.label, "your model");
+
+  // Nothing played yet: no chip at all (there is no stub chip to fall back on,
+  // P11 — a player turn is always a model call).
+  assert.equal(capabilityChip(null), null);
+  assert.equal(capabilityChip(undefined), null);
+});
+
+test("engineDegraded is about the protocol, never a provider kind", () => {
   assert.equal(engineDegraded(null), false);
-  assert.equal(engineDegraded({ mode: "stub", native_tools: false, degraded: false }), false);
+  assert.equal(engineDegraded(undefined), false);
   assert.equal(engineDegraded({ mode: "live", native_tools: true, degraded: false }), false);
   assert.equal(engineDegraded({ mode: "live", native_tools: false, degraded: true }), true);
   // Either signal is enough: native_tools=false, or an explicit degraded flag.
@@ -386,31 +402,30 @@ test("plainValue formats scalars, lists and odd values", () => {
   assert.equal(plainValue({ gold: 3 }), '{"gold":3}');
 });
 
-test("connectionLabel summarises the stored prefs", () => {
-  assert.equal(connectionLabel(null), "stub — no model call");
-  assert.equal(connectionLabel({ provider: "", model: "" }), "stub — no model call");
+test("connectionLabel summarises the stored prefs — and reads a dead row as none", () => {
+  // P11: a connection that names no real provider IS "not connected" — the
+  // legacy "stub" default and a blank row both read that way, never as a
+  // playable keyless mode.
+  assert.equal(connectionLabel(null), "no model connected");
+  assert.equal(connectionLabel({ provider: "", model: "" }), "no model connected");
+  assert.equal(connectionLabel({ provider: "stub", model: "" }), "no model connected");
   assert.equal(connectionLabel({ provider: "openai-compatible", model: "" }), "openai-compatible");
   assert.equal(connectionLabel({ provider: "openai-compatible", model: "gpt-5-mini" }), "openai-compatible · gpt-5-mini");
 });
 
 test("probeVerdictText words the connection check's verdict", () => {
-  assert.equal(probeVerdictText(null, "stub").tone, "ok");
-  assert.match(probeVerdictText(null, "stub").text, /no model call/);
-  assert.equal(probeVerdictText(null, "openai-compatible").tone, "warn");
+  assert.equal(probeVerdictText(null).tone, "warn");
+  assert.match(probeVerdictText(null).text, /No verdict yet/);
 
-  const stub = probeVerdictText({ reachable: true, native_tools: false, detail: "stub provider — no model call needed" }, "stub");
-  assert.equal(stub.tone, "ok");
-  assert.match(stub.text, /no model call needed/);
-
-  const native = probeVerdictText({ reachable: true, native_tools: true, detail: "model reachable; native tool calls available" }, "openai-compatible");
+  const native = probeVerdictText({ reachable: true, native_tools: true, detail: "model reachable; native tool calls available" });
   assert.equal(native.tone, "ok");
   assert.match(native.text, /native tool calls available/);
 
-  const degraded = probeVerdictText({ reachable: true, native_tools: false, detail: "" }, "openai-compatible");
+  const degraded = probeVerdictText({ reachable: true, native_tools: false, detail: "" });
   assert.equal(degraded.tone, "warn");
   assert.match(degraded.text, /JSON fallback/);
 
-  const down = probeVerdictText({ reachable: false, native_tools: false, detail: "provider HTTP 401" }, "openai-compatible");
+  const down = probeVerdictText({ reachable: false, native_tools: false, detail: "provider HTTP 401" });
   assert.equal(down.tone, "err");
   assert.equal(down.text, "provider HTTP 401");
 });
@@ -421,13 +436,61 @@ test("probeVerdictText words the connection check's verdict", () => {
 
 test("engineErrorText maps the pilot's failure codes", () => {
   assert.match(engineErrorText("Not Found", 404), /switched off on the server/);
-  assert.match(engineErrorText("connect_your_ai", 400), /Connect your AI first/);
-  assert.match(engineErrorText("connect_your_ai", 400), /this browser/);
+  // P11: the server's own refusal reads as the SAME notice the play gate shows.
+  assert.equal(engineErrorText("connect_your_ai", 400), CONNECT_NOTICE);
   assert.match(engineErrorText("campaign not found", 404), /not on the shelf/);
   assert.match(engineErrorText(null, 401), /Sign in first/);
   assert.equal(engineErrorText("provider HTTP 401: invalid api key: Bearer ***", 502), "The provider answered with an error: provider HTTP 401: invalid api key: Bearer ***");
   assert.equal(engineErrorText("something else", 400), "something else");
   assert.equal(engineErrorText("", 0), "The chronicler did not answer.");
+});
+
+test("playGate: a key stored beside an unset connection is NOT playable (P11)", () => {
+  // The 2026-09-14 finding: a key kept in the browser + a connection that was
+  // never saved (or a legacy "stub" row) must not produce a silent stub turn.
+  const storedButUnset = playGate({ keyStored: true, provider: "" });
+  assert.equal(storedButUnset.blocked, true);
+  assert.equal(storedButUnset.notice, CONNECT_NOTICE);
+
+  const storedButStub = playGate({ keyStored: true, provider: "stub" });
+  assert.equal(storedButStub.blocked, true);
+  assert.equal(storedButStub.notice, CONNECT_NOTICE);
+
+  // A connection that has not been read yet is not a connection either: the
+  // gate stays closed until the server says a real provider is saved.
+  assert.equal(playGate({ keyStored: true }).blocked, true);
+  assert.equal(playGate({ keyStored: true, provider: null }).blocked, true);
+
+  // Both halves present: play opens, and there is no notice to show.
+  const open = playGate({ keyStored: true, provider: "openai-compatible" });
+  assert.equal(open.blocked, false);
+  assert.equal(open.notice, null);
+
+  // A provider without a key keeps the line closed too.
+  const noKey = playGate({ keyStored: false, provider: "openai-compatible" });
+  assert.equal(noKey.blocked, true);
+  assert.equal(noKey.notice, CONNECT_NOTICE);
+
+  // A server turn that just answered connect_your_ai closes it even when both
+  // halves look present (the notice was caused by something we cannot see).
+  const refused = playGate({ keyStored: true, provider: "openai-compatible", connectNeeded: true });
+  assert.equal(refused.blocked, true);
+  assert.equal(refused.notice, CONNECT_NOTICE);
+});
+
+test("keyAfterConnectionSave never wipes a stored key from an empty field", () => {
+  // The 2026-09-14 finding: Save with a blank key field is a prefs-only save,
+  // not a clear — forgetting a key is the explicit button's job.
+  assert.equal(keyAfterConnectionSave("", "sk-stored"), "sk-stored");
+  assert.equal(keyAfterConnectionSave("   ", "sk-stored"), "sk-stored");
+  assert.equal(keyAfterConnectionSave(null, "sk-stored"), "sk-stored");
+  assert.equal(keyAfterConnectionSave(undefined, "sk-stored"), "sk-stored");
+  // A typed key replaces the stored one (trimmed, like the store's own normalizer).
+  assert.equal(keyAfterConnectionSave("  sk-new  ", "sk-stored"), "sk-new");
+  assert.equal(keyAfterConnectionSave("sk-new", ""), "sk-new");
+  // Nothing anywhere stays nothing.
+  assert.equal(keyAfterConnectionSave("", ""), "");
+  assert.equal(keyAfterConnectionSave("", null), "");
 });
 
 test("formatWhen stays readable for missing and broken timestamps", () => {

@@ -2,7 +2,8 @@
 
 Status: **settled** (owner decisions 2026-09-14). This is the spec for the phase-2
 cards on kanban board `default` (`created_by='phase2'`, P1–P10 — round 2 added
-mid-flight, see §11). If a card body and
+mid-flight, see §11; P11 is the connected-AI amendment in the header above). If a
+card body and
 this file disagree, this file wins — note the discrepancy in the card's completion.
 
 Owner decisions (locked):
@@ -21,6 +22,19 @@ Owner decisions (locked):
    `app/modules/ai/providers.py` (plain text, no tools) is NOT on the engine path.
    No shared abstraction now — the contracts differ; unifying would touch the live
    game for zero pilot benefit. The legacy layer retires with the old narrator.
+
+**Amendment (2026-09-14, P11 — owner ruling):** *"the AI is there already, it
+shouldn't be playable without it. You can remove that."* Keyless/stub play is
+**removed from the player surface**: with no model connected (provider unset —
+including legacy rows created under the old `stub` default) a turn answers the
+EXISTING `400 {"detail":"connect_your_ai"}`, exactly like a live provider without
+a key; `POST /engine/connection/check` answers the same 400 (nothing to probe),
+`PUT /engine/connection` rejects `stub` (the stored list is `openai` /
+`openai-compatible`), and `GET /engine/connection` normalizes `stub`/unset to
+`""`. The engine package's own stub adapter stays as engine-internal dev/test
+machinery ONLY — nothing on the player path can reach it. This supersedes the
+stub-default language in decisions 3 above and in §5–§7 below; the history is
+kept so the amendment is legible.
 
 ## 1. Architecture (option b)
 
@@ -87,11 +101,15 @@ engine. The settings *panel* UX is the reusable part.
 - `GET  /engine/campaigns` → mine
 - `POST /engine/campaigns/{id}/turns` {text} (+ `X-Provider-Key`) → turn payload
 - `GET  /engine/campaigns/{id}/state` → snapshot
-- `GET/PUT /engine/connection` → non-secret prefs (no key field exists)
+- `GET/PUT /engine/connection` → non-secret prefs (no key field exists; PUT accepts
+  `openai`/`openai-compatible` only — `stub` is rejected, GET normalizes `stub`/unset
+  to `""`, P11)
 - `POST /engine/connection/check` (+ `X-Provider-Key`) → {reachable, native_tools, detail}
 - When `ENGINE_MODE` is off every `/engine/*` path returns 404.
-- Errors: 400 `{"detail":"connect_your_ai"}` when a live provider is selected but
-  no key is present; 502 with scrubbed provider errors otherwise.
+- Errors: 400 `{"detail":"connect_your_ai"}` when NO model is connected — provider
+  unset or the retired `stub` default (including legacy rows), and the live-provider-
+  without-key case (P11: one shape, no keyless play); 502 with scrubbed provider
+  errors otherwise.
 
 ## 6. Deploy (owner steps; no new container)
 
@@ -102,8 +120,9 @@ engine. The settings *panel* UX is the reusable part.
    context/base directory is the **repo root** with Dockerfile `backend/Dockerfile`;
    redeploy.
 3. Frontend service: set `NEXT_PUBLIC_ENGINE_MODE=1`; redeploy.
-4. Verify: `curl /health`; create a campaign; stub turn succeeds (no key needed —
-   stub provider is the default and needs no model call).
+4. Verify: `curl /health`; create a campaign; an unconnected turn answers
+   `400 {"detail":"connect_your_ai"}` (P11 — no keyless playthrough exists); then
+   connect a model in `/chronicle` and take a real turn.
 5. Rollback: unset `ENGINE_MODE` (and/or `NEXT_PUBLIC_ENGINE_MODE`); redeploy. The
    pilot is additive — the old game is untouched either way.
 
@@ -113,6 +132,15 @@ Connect panel (key → localStorage, "your key stays in this browser"; Save & te
 with capability verdict), campaign list, play view (input, narration, dialogue,
 verdict chip, suggestion chips), state panel (GET /state), degraded banner when
 `native_tools === false`. Existing screens untouched.
+
+P11 (2026-09-14): the play line is **gated** — the input + submit are disabled
+until a key is kept in this browser AND the account's saved connection names a
+real provider, with one inline notice ("Connect your AI to play — the chronicle
+narrates with your model.") pointing at the connect card; the server's 400
+`connect_your_ai` surfaces as that same notice, never a raw error. Browsing
+(campaign list, transcript, state panel, connect card) stays fully usable, and
+the capability chip only ever describes a live model — there is no stub chip,
+label or copy left on the page.
 
 ## 8. Out of scope (this phase)
 
@@ -141,11 +169,17 @@ P6 ship: merge P4, full batteries, push (main) ✅ → P7 parked: post-deploy li
 Round 2 (added 2026-09-14 mid-flight — content boundaries, see §11):
 P8 backend+engine (main) + P9 frontend (worktree p2/content-prefs) → P10 ship round 2 (merge, batteries, push)
 P7 gains P10 as a second parent — deploy verification must include the §11 checks.
+
+P11 (main, 2026-09-14): pilot requires a connected AI — keyless/stub play removed
+(the header amendment). P7's live verify now expects the unconnected
+`400 connect_your_ai` first, then a connected real turn.
 ```
 
 Gates used everywhere: backend suite + ruff (backend/.venv); engine suite + ruff
 (engine/.venv) must stay green whenever engine files are touched; frontend
-`npm run typecheck && npm run build` for P4/P6; stub-provider local e2e; the
+`npm run typecheck && npm run build` for P4/P6; unconnected-turn `400
+connect_your_ai` e2e over real HTTP + scripted-adapter coverage for the connected
+path (P11 — the stub playthrough no longer exists as a gate); the
 key-never-stored test set from §4.
 
 P7 stays **unassigned** (parked) until the owner has redeployed with

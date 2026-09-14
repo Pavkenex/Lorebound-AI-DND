@@ -651,9 +651,10 @@ export interface EngineConnection {
   updated_at: string | null;
 }
 
-/** Non-secret prefs only: there is no key field, by design (§4). */
+/** Non-secret prefs only: there is no key field, by design (§4). One live
+ *  provider kind is offered (P11 — the keyless/stub default is gone). */
 export interface EngineConnectionPayload {
-  provider?: "stub" | "openai-compatible";
+  provider?: "openai-compatible";
   base_url?: string;
   model?: string;
   timeout_s?: number;

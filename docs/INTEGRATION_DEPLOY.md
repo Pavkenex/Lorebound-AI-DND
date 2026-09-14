@@ -57,11 +57,15 @@ Two reminders before you start:
   service is therefore enough; no Dockerfile change is needed. The pilot's route/nav link
   simply does not exist in the bundle while the flag is absent.
 
-## 3. Verify (stub provider — no key, no model call)
+## 3. Verify (connected AI first — there is no keyless play)
 
-A fresh account's connection defaults to `stub`, so the whole loop below needs no
-provider key and no AI spend. Replace `<host>` with the live host (`130.61.50.108`
-today: backend `:8001`, frontend `:3000`, Coolify dashboard `:8000`).
+A fresh account's connection is **unconnected** (provider unset), so a turn without
+a connected model answers `400 {"detail":"connect_your_ai"}` (P11 — the old `stub`
+default is retired; nothing is playable without a model). The first steps below
+prove the flag, the API sweep and that refusal; the last two take a **real turn**
+after you connect a model in the pilot UI. Replace `<host>` with the live host
+(`130.61.50.108` today: backend `:8001`, frontend `:3000`, Coolify dashboard
+`:8000`).
 
 - [ ] **Backend health**
   ```bash
@@ -91,12 +95,23 @@ today: backend `:8001`, frontend `:3000`, Coolify dashboard `:8000`).
   # 201 {"id":"<uuid>","name":"Pilot check","world":"demo","last_turn_at":null}
   ID=<uuid>
   ```
-- [ ] **One stub turn** (no `X-Provider-Key` header — that is the point):
+- [ ] **An unconnected turn is refused** (no model connected yet — that is the point):
   ```bash
   curl -s -X POST http://<host>:8001/engine/campaigns/$ID/turns \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d '{"text":"I take stock of the road ahead."}'
-  # 200: {"turn":1,"narration":"…","dialogue":[…],"capability":{"mode":"stub",…},
+  # 400 {"detail":"connect_your_ai"}   (P11: no keyless/stub play exists)
+  ```
+- [ ] **Connect a model, then take a real turn** — in the pilot UI's connect card
+  (Save & test), or `PUT /engine/connection` with
+  `{"provider":"openai-compatible","base_url":"https://…/v1","model":"…"}` and the
+  key sent per request in the `X-Provider-Key` header. Then:
+  ```bash
+  curl -s -X POST http://<host>:8001/engine/campaigns/$ID/turns \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -H "X-Provider-Key: $PROVIDER_KEY" \
+    -d '{"text":"I take stock of the road ahead."}'
+  # 200: {"turn":1,"narration":"…","dialogue":[…],"capability":{"mode":"live",…},
   #       "state":{…},"mechanics":{…},"suggestions":[…],"system_lines":[…],
   #       "content":{"nsfw":false,"violence":"standard",…}}  # applied boundaries
   ```
@@ -109,8 +124,10 @@ today: backend `:8001`, frontend `:3000`, Coolify dashboard `:8000`).
   `/code/engine_data/$ID.db` (plus `-wal`/`-shm` siblings while playing).
 - [ ] **Frontend:** open the site, sign in — the pilot route (`/chronicle` and its nav
   link) is visible with `NEXT_PUBLIC_ENGINE_MODE=1`, and hidden without it. The connect
-  panel lives on that route; do not paste a real provider key until you are ready for the
-  P7 live-BYOK check (see `docs/INTEGRATION_NOTES.md` §"known gaps").
+  card lives on that route; the play line stays disabled with the "Connect your AI to
+  play" notice until a model is saved there (P11). Paste a real provider key only when
+  you are ready for the P7 live-BYOK check (see `docs/INTEGRATION_NOTES.md` §"known
+  gaps").
 
 ## 4. Rollback
 

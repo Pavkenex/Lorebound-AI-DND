@@ -6,7 +6,8 @@ wired into the live FastAPI + Next.js app **in-process**. The settled spec is
 Readers who only want to deploy can stop at the runbook.
 
 As-built status after the P6 ship (merge `b7806fe`) and the P10 round-2 ship (merge
-`89dd375`; battery results in §7, §10 and the finalize blocks below):
+`89dd375`; battery results in §7, §10 and the finalize blocks below). The P11
+connected-AI amendment is §11 (and the plan header):
 
 | Card | Scope | State |
 |---|---|---|
@@ -20,6 +21,7 @@ As-built status after the P6 ship (merge `b7806fe`) and the P10 round-2 ship (me
 | P8 | Content boundaries — `X-Content-Prefs` → engine prompt policy (plan §11) | landed `2d6c002` (see §10) |
 | P9 | Frontend boundaries line on `/chronicle` | landed `935a51e`, `32e0ba5`; merged `89dd375` (see §10) |
 | P10 | Ship round 2 — merge, batteries, push | merged `89dd375`; batteries + push in the P10 finalize block |
+| P11 | Pilot requires a connected AI — keyless/stub play removed | landed `719e77e` (server) + this commit (frontend/docs) — see §11 |
 
 ## 1. Decisions (settled in the plan — not revisited)
 
@@ -28,8 +30,9 @@ As-built status after the P6 ship (merge `b7806fe`) and the P10 round-2 ship (me
    service, no new Coolify resource.
 2. **BYOK keys are runtime-only, never persisted** — no DB column, no log line, no
    prompt, no cache key.
-3. **Providers: `openai-compatible` only** (plus the `stub` default). The engine's
-   Anthropic/Gemini adapters remain tested but are not app choices.
+3. **Providers: `openai-compatible` only.** The engine's
+   Anthropic/Gemini adapters remain tested but are not app choices. (P11: the old
+   `stub` default is retired as well — connected AI or nothing, see §11.)
 4. **Engine turns run through the engine's provider layer**, never `app/modules/ai`
    (which stores keys in Postgres and stays untouched for the legacy narrator).
 
@@ -57,6 +60,8 @@ Backend (`backend/`):
   `engine_campaigns` (campaign_id PK → `campaigns.id` CASCADE, world, engine_version,
   last_turn_at, created_at) and `engine_connection_settings` (user_id PK → `users.id`,
   provider, base_url, model, timeout_s, updated_at). **There is no key column, by design.**
+  P11: `provider`'s ORM default is `""` (unset) — the old `"stub"` default is retired,
+  and no migration is involved (a client-side default only).
 - `app/modules/engine/bridge.py` (436 lines) — campaign create/list row helpers, the
   per-campaign writer lock, connection prefs (partial update; no key parameter), the
   one-turn wrapper `take_turn(...)`, response shaping (turn payload), `get_state`.
@@ -84,8 +89,11 @@ Deploy artifacts:
   since the backend suite imports the engine.
 
 Tests: `backend/tests/test_engine_packaging.py` (71 lines, 5 tests), `test_engine_bridge.py`
-(603 lines, 17 tests), `test_engine_router.py` (839 lines, 35 tests — 57 phase-2 tests in
-total), and `test_ship.py` updated for the repo-root context.
+(677 lines, 18 tests), `test_engine_router.py` (985 lines, 37 tests), and
+`test_engine_content_prefs.py` (486 lines, 25 tests). P11 rewrote the stub-based
+turn-flow tests around a scripted fake adapter (`_ScriptedAdapter` + a live
+connection row) and left the key-hygiene assertions standing (`test_ship.py` had
+been updated earlier for the repo-root build context, P1).
 
 ## 3. One turn, end to end (as built)
 
@@ -96,7 +104,8 @@ pilot UI (P4)                                      + X-Provider-Key when a key i
   → router.content_prefs(header) → (ContentPrefs, readable)   [§10]
   → bridge.take_turn(db, user_id, campaign_id, text, provider_key=<header>,
                      content_prefs=<parsed>, content_prefs_invalid=<not readable>)
-      → connection prefs (non-secret) resolve provider (default "stub"; key required only when live)
+      → connection prefs resolve the provider (P11: unset or legacy "stub" ⇒ 400
+        connect_your_ai — there is no keyless path; a live provider needs the key)
       → per-campaign threading.Lock (single writer)
       → PlaySession.start(db_path=…/{campaign_id}.db, adapter=…, provider=…,
                           content_policy=prefs.describe_for_prompt())
@@ -119,8 +128,10 @@ calls for a live turn.
    `bridge.take_turn(..., provider_key=…)`. The router never logs request bodies or
    headers.
 3. `bridge._resolve_provider` hands it to `build_adapter(cfg, api_key=provider_key)`;
-   it lives in server memory for that call only. Stub needs no key; a live provider with
-   no key raises `connect_your_ai` (HTTP 400, exact detail string `connect_your_ai`).
+   it lives in server memory for that call only. P11: an unconnected account — provider
+   unset or the retired `stub` default — raises the same `connect_your_ai`
+   (HTTP 400, exact detail string `connect_your_ai`) as a live provider without a key;
+   there is no keyless case left.
 4. Provider failures surface as `EngineBridgeError("provider_error", detail=<engine-
    redacted text>)` → HTTP 502; `router._scrub` re-redacts the detail with the exact
    runtime key as defense in depth. The raw exception is never re-raised with the key.
@@ -141,10 +152,10 @@ calls for a live turn.
 |---|---|
 | `POST /engine/campaigns` `{name}` | 201 `{id,name,world,last_turn_at}`; creates the app row, side-row, seeded engine DB |
 | `GET /engine/campaigns` | caller's engine-only campaigns (`seed_key == "engine"` + side-row), played-first |
-| `POST /engine/campaigns/{id}/turns` `{text}` + optional `X-Provider-Key` | one turn, payload in §3 |
+| `POST /engine/campaigns/{id}/turns` `{text}` + optional `X-Provider-Key` | one turn, payload in §3; 400 `connect_your_ai` when no model is connected (P11 — provider unset, legacy `stub`, or a live provider without a key) |
 | `GET /engine/campaigns/{id}/state` | read-only snapshot; never creates or seeds a DB (a missing file is 404) |
-| `GET/PUT /engine/connection` | non-secret prefs, partial update, no key field |
-| `POST /engine/connection/check` + `X-Provider-Key` | `{reachable, native_tools, detail}`; always 200 for provider outcomes, 400 `connect_your_ai` without a key; deliberately does **not** cache a verdict (the first live turn does) |
+| `GET/PUT /engine/connection` | non-secret prefs, partial update, no key field; PUT accepts `openai`/`openai-compatible` only (P11: `stub` → `unsupported_provider`), GET normalizes `stub`/unset to `""` |
+| `POST /engine/connection/check` + `X-Provider-Key` | `{reachable, native_tools, detail}`; always 200 for provider outcomes; 400 `connect_your_ai` when nothing is connected — no key, unset provider or a legacy `stub` row (P11: there is nothing to probe); deliberately does **not** cache a verdict (the first live turn does) |
 
 Flag off: every `/engine/*` path answers the framework's own 404 (before auth, before
 body validation, identical for anonymous and signed-in callers), and `/openapi.json`
@@ -227,7 +238,9 @@ for `no_campaign` / `not_an_engine_campaign` (never reveals foreign ids); 502 sc
 
 ## 9. Post-deploy checklist
 
-1. Follow `docs/INTEGRATION_DEPLOY.md` (flags + volume + redeploy + the stub verify).
+1. Follow `docs/INTEGRATION_DEPLOY.md` (flags + volume + redeploy + the
+   connect-and-play verify; P11: an unconnected turn must answer 400
+   `connect_your_ai` before anything else).
 2. Prove the landing with the chunk-hash poller (`coolify-deploys` skill) rather than
    eyeballing; hard-refresh before judging the frontend.
 3. Then un-park **P7**: one live BYOK turn (cheap model) + the degraded-banner check.
@@ -382,3 +395,104 @@ tolerant echo read and the note wording/paths.
 - Push: this ship commit (round-2 tip; `git log -1 --format=%H`). `git push
   origin main` advanced `origin/main` from `4e738b3` to it, and
   `git log origin/main..HEAD` is empty after the push.
+
+---
+
+## 11. Connected AI required (P11) — as-built
+
+Owner ruling 2026-09-14 (verbatim): *"the AI is there already, it shouldn't be
+playable without it. You can remove that."* Keyless/stub play is gone from the
+player surface; the engine package's own `stub` adapter survives as
+engine-internal dev/test machinery only and is unreachable from the app. The
+plan carries the dated amendment in its header.
+
+Server — `backend/app/modules/engine/`:
+
+- `bridge._resolve_provider` (the single resolution point) treats unset **and** a
+  legacy `"stub"` row exactly like a live provider without a key →
+  `EngineBridgeError("connect_your_ai")` → 400 `{"detail":"connect_your_ai"}`.
+  Fresh rows read unset (`models.EngineConnectionRow.provider` ORM default `""`
+  — a client-side default only, no migration) and `connection_view` normalizes
+  `stub`/unset to `""` in GET responses. `POST /engine/connection/check` with
+  nothing connected answers the same 400 (nothing to probe);
+  `PUT /engine/connection` rejects `stub` through the existing
+  `unsupported_provider` path. `SUPPORTED_PROVIDERS` stays `("openai",
+  "openai-compatible")`. The internal `live` flag is gone from the turn
+  payload/capability — every player turn is live, so `capability.mode` is always
+  `"live"` and the degraded banner keys off `native_tools`/`degraded` alone.
+- Runtime-key rules are untouched (§4): no key column, no key in errors/logs, and
+  the key still travels only in `X-Provider-Key`.
+
+Frontend — `/chronicle` (`frontend/lib/engine.ts`, `app/chronicle/page.tsx`):
+
+- `ENGINE_PROVIDERS = ["openai-compatible"]`; the "Stub — no model call (free)"
+  option, the `provider !== "stub"` form gate, the stub capability-chip
+  tone/title/label, the "Stub by default…" header line and the old
+  `connectionLabel` stub branch are all gone. `capabilityChip()` returns `null`
+  before the first turn and otherwise only ever describes a live model.
+- `playGate({keyStored, provider, connectNeeded})` closes the play line (input +
+  submit disabled) until a key is kept in this browser AND the account's saved
+  connection names a real provider; one inline notice — "Connect your AI to play
+  — the chronicle narrates with your model." — with a button into the connect
+  card. The server's 400 `connect_your_ai` surfaces as that same notice (never a
+  raw error) and withdraws the echoed action; browsing (list, transcript, state
+  panel, connect card) stays usable. This is the 2026-09-14 live finding's fix: a
+  key stored beside an unset/legacy-`stub` connection can no longer silently
+  write stub turns — the gate blocks and the card shows the not-connected state.
+- `keyAfterConnectionSave(typed, stored)`: Save with an empty key field KEEPS the
+  stored key (the other half of the finding) — only the explicit Clear button
+  forgets it. "Your key stays in this browser only." copy unchanged.
+
+Tests / evidence:
+
+- Backend, `test_engine_router.py`: `test_turns_without_a_connected_model_are_refused`
+  (fresh row + legacy `"stub"` row + a runtime key → 400, empty detail),
+  `test_connection_check_without_a_connected_model_asks_to_connect` (both row
+  shapes, nothing probed), `_store_provider` seeds legacy rows past the PUT
+  validation; `test_engine_bridge.py::test_unconnected_and_stub_rows_cannot_play`
+  at the bridge level; the scripted-adapter suites keep full create→turn→state
+  coverage (`test_three_live_turns_advance_the_campaign`, suggestions, lock,
+  heal); `test_engine_content_prefs.py::test_an_unconnected_turn_is_refused_before_any_content_work`
+  proves the refusal precedes any content work (no prompt, no note, no echo).
+- Frontend, `lib/engine.test.ts`: `playGate` (incl. key stored + provider unset /
+  `"stub"` → blocked + notice), `keyAfterConnectionSave`, `providerConnected`,
+  `capabilityChip` nullability, `connectionLabel` "no model connected",
+  `probeVerdictText` without the stub branches.
+- Counts and live over-HTTP evidence: recorded in the P11 finalize block below.
+
+---
+
+### P11 finalize block (connected-AI amendment, filled during the card)
+
+- Backend: `pytest tests` (backend venv, `-o addopts=""`) → **530 passed**, 30.7s;
+  `ruff check backend` → All checks passed. Engine package UNTOUCHED (`git status`
+  shows only `backend/`, `frontend/`, `docs/`): engine suite **799 passed**;
+  `python -m evals --suite all` → core **5/5** + e2e **5/5**, `RESULT: OK`.
+- Frontend: `npm test` → **75 pass** (engine module 36), `npm run typecheck`
+  clean, `npm run build` clean **flag-off** (27.5s) and **flag-on** (27.5s).
+- Live over-HTTP e2e (real `uvicorn` from this tree, `ENGINE_MODE=1`, scratch app
+  DB + fresh engine dir, local fake OpenAI-compatible endpoint): **17/17 legs
+  passed** — register → create → unconnected turn **400 `connect_your_ai`** →
+  unconnected check 400 → `PUT provider=stub` rejected
+  (`provider 'stub' is not available; supported: openai, openai-compatible`) →
+  legacy-`stub` row seeded → GET normalizes to `""` → legacy turn **still 400** →
+  connect (`openai-compatible` + fake base URL) → check **200 reachable** → turn
+  **200** with `capability.mode == "live"`, `native_tools: true` → connected but
+  keyless turn 400 again → key hygiene: key present in the fake's log
+  (it DID travel, via `Authorization`) and absent from the app DB, the engine
+  data dir and the server log. Driver `/opt/data/scratch/p11/p11_live_e2e.py`;
+  transcript `/opt/data/scratch/p11/p11_live_e2e.txt`.
+- Browser probe (production build, flag-on, real backend + fake provider; DOM
+  asserts + screenshots in `/opt/data/kanban-evidence/`):
+  `p11-1-not-ready.png` — key stored, provider unset: input and `Act ↵` disabled,
+  the connect notice on the play line, card reads "no model connected · a key is
+  kept in this browser" plus the "No provider is saved for your account yet"
+  warning; `p11-2-connected.png` — Save with the key field EMPTY kept the stored
+  key (`localStorage['lorebound.engine.key']` unchanged before/after) and opened
+  the gate ("Saved — openai-compatible · p11-fake.", notice gone, input enabled);
+  `p11-3-turn.png` — a real turn rendered the fake provider's prose with the
+  `◈ p11-fake` capability chip and no error banner; `p11-4-mobile-notready.png` —
+  "Clear key" is the only explicit forget (gate returns), shot at 390×844.
+- Commits/push: `719e77e` (server) + the frontend/docs commit at the tip; pushed
+  to `origin/main`; `git log origin/main..HEAD` empty afterwards. Owner redeploys
+  manually (Coolify) — the runbook's §3 now verifies the 400 first.

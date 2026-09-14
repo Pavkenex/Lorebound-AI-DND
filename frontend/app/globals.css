@@ -323,7 +323,6 @@ textarea:focus-visible, [tabindex]:focus-visible {
 @media (max-width: 900px) { .engine-grid { grid-template-columns: 1fr; } }
 .verdict-chip { font-variant: small-caps; letter-spacing: 0.04em; }
 /* the capability chip: what the last turn ran on */
-.verdict-stub { border-color: var(--parch-dim); color: var(--parch-1); }
 .verdict-live { border-color: #4c5f39; color: #b9c79a; }
 .verdict-degraded { border-color: #a5643f; color: #e0b48f; }
 /* the per-turn verdict: the engine's outcome bands */

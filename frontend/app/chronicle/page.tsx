@@ -16,6 +16,7 @@ import {
   type EngineProbe,
 } from "../../lib/api";
 import {
+  CONNECT_NOTICE,
   ENGINE_DEFAULT_BASE_URL,
   ENGINE_DEFAULT_TIMEOUT_S,
   appliedContent,
@@ -30,8 +31,11 @@ import {
   formatWhen,
   getEngineCampaignId,
   getEngineKey,
+  keyAfterConnectionSave,
+  playGate,
   probeVerdictText,
   providerChoice,
+  providerConnected,
   setEngineCampaignId,
   setEngineKey,
   turnEntries,
@@ -115,12 +119,15 @@ function EnginePilot() {
   const [boundariesNote, setBoundariesNote] = useState<string | null>(null);
 
   const [connection, setConnection] = useState<EngineConnection | null>(null);
-  const [provider, setProvider] = useState<EngineProviderChoice>("stub");
+  const [provider, setProvider] = useState<EngineProviderChoice>("openai-compatible");
   const [baseUrl, setBaseUrl] = useState(ENGINE_DEFAULT_BASE_URL);
   const [model, setModel] = useState("");
   const [timeoutS, setTimeoutS] = useState(ENGINE_DEFAULT_TIMEOUT_S);
   const [keyInput, setKeyInput] = useState("");
   const [keyStored, setKeyStored] = useState(false);
+  /** A server turn answered `connect_your_ai`: the gate stays closed until a
+   *  connection is saved (P11 — never a silent keyless turn). */
+  const [connectNeeded, setConnectNeeded] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [connBusy, setConnBusy] = useState(false);
   const [connStatus, setConnStatus] = useState<ProbeVerdict | null>(null);
@@ -213,9 +220,18 @@ function EnginePilot() {
     try {
       const r = await engineApi.takeTurn(selectedId, text);
       if (!r.ok) {
+        if (r.code === "connect_your_ai") {
+          // Not a stumble of the tale: no model is connected. Withdraw the
+          // echoed action, keep the player's words in the line, and show the
+          // ONE connect notice — the same wording the gate uses (P11).
+          setTranscript((t) => t.filter((e) => e.id !== `t${seq}:action`));
+          setInput(text);
+          setConnectNeeded(true);
+          openConnectPanel();
+          return;
+        }
         setError(r.error);
         setPreserved(text);
-        if (r.code === "connect_your_ai") openConnectPanel();
         return;
       }
       const turn = r.data as EngineTurn;
@@ -243,10 +259,15 @@ function EnginePilot() {
     void send();
   }
 
-  /** Persist non-secret prefs; a typed key goes to this browser, never the server. */
+  /** Persist non-secret prefs; a typed key goes to this browser, never the
+   *  server. An EMPTY key field keeps the stored key — Save is not a clear
+   *  (the 2026-09-14 finding: a key must survive a prefs-only save). */
   async function saveConnectionPrefs(): Promise<EngineConnection | null> {
     const typed = keyInput.trim();
-    if (typed) { setEngineKey(typed); setKeyInput(""); setKeyStored(true); }
+    const key = keyAfterConnectionSave(typed, getEngineKey());
+    setEngineKey(key); // no-op when both are empty; keeps the stored key otherwise
+    setKeyStored(!!key);
+    if (typed) setKeyInput("");
     const r = await engineApi.saveConnection({
       provider,
       base_url: baseUrl.trim(),
@@ -255,6 +276,7 @@ function EnginePilot() {
     });
     if (!r.ok) { setConnStatus({ tone: "err", text: r.error }); return null; }
     setConnection(r.data);
+    setConnectNeeded(false); // a saved real provider reopens the play gate
     return r.data;
   }
 
@@ -277,12 +299,15 @@ function EnginePilot() {
     const r = await engineApi.probeConnection(key || null);
     setConnBusy(false);
     if (!r.ok) {
-      setConnStatus({ tone: "err", text: r.error });
+      // The same one notice for "nothing is connected" — never a raw error.
+      setConnStatus(
+        r.code === "connect_your_ai" ? { tone: "warn", text: CONNECT_NOTICE } : { tone: "err", text: r.error },
+      );
       if (r.code === "connect_your_ai") openConnectPanel();
       return;
     }
     setProbe(r.data);
-    setConnStatus(probeVerdictText(r.data, provider));
+    setConnStatus(probeVerdictText(r.data));
   }
 
   function clearKey() {
@@ -293,6 +318,10 @@ function EnginePilot() {
 
   const chip = capabilityChip(capability);
   const degraded = engineDegraded(capability);
+  // The play gate (P11): a key kept in this browser AND a real provider saved
+  // on the account. Without both, the play line stays closed — the pilot is
+  // never playable keyless, and never a silent stub turn.
+  const gate = playGate({ keyStored, provider: connection?.provider, connectNeeded });
   const sections = engineStateSections(snapshot);
   // What governs the prose: the applied echo once a turn carries one (§11),
   // else the player's stored boundaries. Gated on `hydrated` so the first
@@ -303,8 +332,8 @@ function EnginePilot() {
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: 16 }}>
       <h1>Chronicle <span className="sys">· engine pilot</span></h1>
       <p className="sys">
-        The rebuilt engine, running inside the chronicler. Stub by default —
-        connect your own OpenAI-compatible endpoint to be narrated by a live model.
+        The rebuilt engine, running inside the chronicler. The tale is narrated
+        by the model you connect — the chronicle does not write itself.
       </p>
 
       {signedIn === null && <p className="sys" aria-busy="true">Opening the pilot…</p>}
@@ -315,10 +344,10 @@ function EnginePilot() {
           {/* PLAY */}
           <section aria-label="Chronicle" className="engine-transcript">
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {capability !== null && (
+              {chip && (
                 <span className={`tag verdict-chip verdict-${chip.tone}`} title={chip.title}>◈ {chip.label}</span>
               )}
-              {capability === null && selectedId !== null && <span className="sys">No turn played in this session yet.</span>}
+              {chip === null && selectedId !== null && <span className="sys">No turn played in this session yet.</span>}
               {selectedId === null && <span className="sys">No chronicle open yet.</span>}
             </div>
             {degraded && (
@@ -380,6 +409,14 @@ function EnginePilot() {
             )}
 
             <form onSubmit={onSubmit} style={{ marginTop: 12 }}>
+              {gate.blocked && gate.notice && (
+                <div className="engine-banner warn" role="status" style={{ marginBottom: 8 }}>
+                  🔑 {gate.notice}{" "}
+                  <button className="btn btn-ghost" type="button" onClick={openConnectPanel}>
+                    Connect your AI
+                  </button>
+                </div>
+              )}
               <label className="sr-only" htmlFor="engine-act">What do you do?</label>
               <input
                 id="engine-act"
@@ -388,15 +425,19 @@ function EnginePilot() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Attempt anything — look around, ask after the road, draw your blade…"
                 aria-label="action input"
-                disabled={pending}
+                disabled={pending || gate.blocked}
                 maxLength={2000}
                 autoComplete="off"
               />
               <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <button className="btn" type="submit" disabled={pending || !input.trim() || !selectedId}>
+                <button className="btn" type="submit" disabled={pending || !input.trim() || !selectedId || gate.blocked}>
                   {pending ? "The quill moves…" : "Act ↵"}
                 </button>
-                <span className="sys">Enter sends · suggestion chips fill the line.</span>
+                <span className="sys">
+                  {gate.blocked
+                    ? "Browsing stays open anywhere — only the play line waits for a model."
+                    : "Enter sends · suggestion chips fill the line."}
+                </span>
               </div>
             </form>
             <div ref={bottomRef} />
@@ -410,6 +451,12 @@ function EnginePilot() {
                 Now: <strong>{connectionLabel(connection)}</strong>
                 {keyStored ? " · a key is kept in this browser" : " · no key in this browser"}
               </p>
+              {connection !== null && !providerConnected(connection.provider) && (
+                <p className="sys" role="status" style={{ margin: "4px 0 0" }}>
+                  ⚠ No provider is saved for your account yet — choose one below and press
+                  Save. Play stays closed until a model is connected.
+                </p>
+              )}
               <button className="btn btn-ghost" onClick={() => (connectOpen ? setConnectOpen(false) : openConnectPanel())} aria-expanded={connectOpen}>
                 {connectOpen ? "Hide the key panel" : "Connect your AI"}
               </button>
@@ -423,45 +470,40 @@ function EnginePilot() {
                       value={provider}
                       onChange={(e) => setProvider(e.target.value as EngineProviderChoice)}
                     >
-                      <option value="stub">Stub — no model call (free)</option>
                       <option value="openai-compatible">OpenAI-compatible endpoint</option>
                     </select>
                   </label>
-                  {provider !== "stub" && (
-                    <>
-                      <label htmlFor="engine-base">Base URL
-                        <input
-                          id="engine-base"
-                          className="input-parch"
-                          value={baseUrl}
-                          onChange={(e) => setBaseUrl(e.target.value)}
-                          placeholder={ENGINE_DEFAULT_BASE_URL}
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label htmlFor="engine-model">Model
-                        <input
-                          id="engine-model"
-                          className="input-parch"
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          placeholder="gpt-5-mini, llama-3.3-70b, …"
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label htmlFor="engine-key">API key
-                        <input
-                          id="engine-key"
-                          className="input-parch"
-                          type="password"
-                          value={keyInput}
-                          onChange={(e) => setKeyInput(e.target.value)}
-                          autoComplete="new-password"
-                          placeholder={keyStored ? "•••• kept in this browser — type to replace" : "sk-… (blank for a keyless local server)"}
-                        />
-                      </label>
-                    </>
-                  )}
+                  <label htmlFor="engine-base">Base URL
+                    <input
+                      id="engine-base"
+                      className="input-parch"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder={ENGINE_DEFAULT_BASE_URL}
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label htmlFor="engine-model">Model
+                    <input
+                      id="engine-model"
+                      className="input-parch"
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="gpt-5-mini, llama-3.3-70b, …"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label htmlFor="engine-key">API key
+                    <input
+                      id="engine-key"
+                      className="input-parch"
+                      type="password"
+                      value={keyInput}
+                      onChange={(e) => setKeyInput(e.target.value)}
+                      autoComplete="new-password"
+                      placeholder={keyStored ? "•••• kept in this browser — type to replace" : "sk-… kept in this browser, never on the server"}
+                    />
+                  </label>
                   <label htmlFor="engine-timeout">Timeout (seconds)
                     <input
                       id="engine-timeout"

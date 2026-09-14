@@ -18,8 +18,9 @@ export const ENGINE_CAMPAIGN_STORAGE = "lorebound.engine.campaign";
 
 export const ENGINE_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const ENGINE_DEFAULT_TIMEOUT_S = 30;
-/** Providers the app exposes (plan decision 3: openai-compatible only). */
-export const ENGINE_PROVIDERS = ["stub", "openai-compatible"] as const;
+/** Providers the connect panel offers (plan decision 3; P11: openai-compatible
+ *  only — the keyless/stub default is gone, the pilot needs a real model). */
+export const ENGINE_PROVIDERS = ["openai-compatible"] as const;
 export type EngineProviderChoice = (typeof ENGINE_PROVIDERS)[number];
 
 /** Longest turn the client will wait for: the server's own provider timeout
@@ -31,11 +32,59 @@ export function engineModeEnabled(): boolean {
   return process.env.NEXT_PUBLIC_ENGINE_MODE === "1";
 }
 
-/** The stored provider as a connect-panel choice (the panel offers exactly two;
- *  anything live — "openai" included — is the openai-compatible endpoint). */
+/** The stored provider as a connect-panel choice. The panel offers exactly one
+ *  today; anything live — "openai" included — is the openai-compatible
+ *  endpoint, and a legacy "stub" row is no connection at all (P11). */
 export function providerChoice(provider?: string | null): EngineProviderChoice {
+  void provider;
+  return "openai-compatible";
+}
+
+/** Whether a stored provider names a real model (P11). Unset — and the retired
+ *  "stub" default legacy rows carry — mean NOT connected: no keyless play. */
+export function providerConnected(provider?: string | null): boolean {
   const mode = (provider ?? "").trim().toLowerCase().replace("_", "-");
-  return mode === "stub" ? "stub" : "openai-compatible";
+  return mode !== "" && mode !== "stub";
+}
+
+/** The one notice for "no model is connected in this browser": it closes the
+ *  play line, and the server's own 400 `connect_your_ai` surfaces as this SAME
+ *  wording — never a raw error (§7, P11). */
+export const CONNECT_NOTICE =
+  "Connect your AI to play — the chronicle narrates with your model.";
+
+export interface PlayGate {
+  /** The play input and its submit are disabled. */
+  blocked: boolean;
+  /** The one notice a blocked player sees; null when play is open. */
+  notice: string | null;
+}
+
+/** The play gate (P11): take a turn only when a key is kept in THIS browser AND
+ *  the account's saved connection names a real provider. A key kept beside an
+ *  unset connection must never silently write stub turns (the 2026-09-14
+ *  finding). `connectNeeded` flips when the server itself answered
+ *  `connect_your_ai`. Browsing is never gated — the shelf, the transcript, the
+ *  state panel and the connect card stay usable. */
+export function playGate(opts: {
+  keyStored: boolean;
+  provider?: string | null;
+  connectNeeded?: boolean;
+}): PlayGate {
+  const blocked =
+    opts.connectNeeded === true || !opts.keyStored || !providerConnected(opts.provider);
+  return { blocked, notice: blocked ? CONNECT_NOTICE : null };
+}
+
+/** The key store after one Save on the connect card (2026-09-14 finding): a
+ *  typed value replaces the stored key, an EMPTY field keeps it — Save is not a
+ *  clear, forgetting is the explicit button's job. */
+export function keyAfterConnectionSave(
+  typed?: string | null,
+  stored?: string | null,
+): string {
+  const next = normalizeKey(typed);
+  return next || normalizeKey(stored);
 }
 
 // --------------------------------------------------------------------------- //
@@ -219,7 +268,7 @@ export function boundariesNotice(turn?: EngineTurn | null): string | null {
 export interface EngineCapability {
   provider?: string;
   model?: string;
-  /** "stub" (no model call) or "live" (a real provider answered). */
+  /** Always "live" on the player path (P11: keyless/stub turns no longer exist). */
   mode?: string;
   native_tools?: boolean;
   degraded?: boolean;
@@ -297,26 +346,23 @@ export interface EngineTurn {
 
 export interface CapabilityChip {
   label: string;
-  tone: "stub" | "live" | "degraded";
+  tone: "live" | "degraded";
   title: string;
 }
 
 /** A live turn that ran without native tool calls (the JSON fallback). */
 export function engineDegraded(cap?: EngineCapability | null): boolean {
-  if (!cap || cap.mode === "stub") return false;
+  if (!cap) return false;
   return cap.degraded === true || cap.native_tools === false;
 }
 
-export function capabilityChip(cap?: EngineCapability | null): CapabilityChip {
-  const model = (cap?.model ?? "").trim();
-  if (!cap || cap.mode === "stub") {
-    return {
-      label: "stub",
-      tone: "stub",
-      title: "The built-in stub wrote this turn — no model call, no key needed.",
-    };
-  }
-  const named = model || (cap.provider ?? "").trim() || "live model";
+/** The chip for one turn's capability — null when there is nothing to describe
+ *  (no turn played yet). Every player turn runs on the player's own model
+ *  (P11), so the chip either names it or says the engine fell back to plain
+ *  JSON; a chip is never a stub. */
+export function capabilityChip(cap?: EngineCapability | null): CapabilityChip | null {
+  if (!cap) return null;
+  const named = (cap.model ?? "").trim() || (cap.provider ?? "").trim() || "your model";
   if (engineDegraded(cap)) {
     return {
       label: `${named} · compatibility`,
@@ -573,10 +619,12 @@ export function engineStateSections(state?: unknown): StateSection[] {
   ];
 }
 
-/** One-line summary of the stored connection (the connect panel's header). */
+/** One-line summary of the stored connection (the connect panel's header). A
+ *  connection that names no real provider — unset, or the retired "stub"
+ *  default — reads as not connected (P11). */
 export function connectionLabel(conn?: { provider?: string | null; model?: string | null } | null): string {
-  const provider = (conn?.provider ?? "").trim() || "stub";
-  if (provider === "stub") return "stub — no model call";
+  const provider = (conn?.provider ?? "").trim();
+  if (!providerConnected(provider)) return "no model connected";
   const model = (conn?.model ?? "").trim();
   return model ? `${provider} · ${model}` : provider;
 }
@@ -589,17 +637,10 @@ export interface ProbeVerdict {
 /** The connection check's verdict, worded for the panel. */
 export function probeVerdictText(
   check?: { reachable?: boolean; native_tools?: boolean; detail?: string } | null,
-  provider?: string | null,
 ): ProbeVerdict {
-  const mode = (provider ?? "").trim().toLowerCase().replace("_", "-");
   const detail = (check?.detail ?? "").trim();
   if (!check) {
-    return mode === "stub"
-      ? { tone: "ok", text: "Stub provider — no model call needed; every turn is free." }
-      : { tone: "warn", text: "No verdict yet — press Test." };
-  }
-  if (mode === "stub") {
-    return { tone: "ok", text: detail || "Stub provider — no model call needed." };
+    return { tone: "warn", text: "No verdict yet — press Test." };
   }
   if (check.reachable === false) {
     return { tone: "err", text: detail || "The endpoint did not answer." };
@@ -620,7 +661,9 @@ export function engineErrorText(code?: string | null, status?: number): string {
     return "The chronicle pilot is switched off on the server (ENGINE_MODE is not set).";
   }
   if (c === "connect_your_ai") {
-    return "Connect your AI first — this provider needs a key, and the key comes from this browser.";
+    // The server's own refusal surfaces as the same notice the gate shows —
+    // never a raw error (P11).
+    return CONNECT_NOTICE;
   }
   if (c === "campaign not found" || status === 404) {
     return "That chronicle is not on the shelf — it may have been removed.";
