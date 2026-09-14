@@ -1,0 +1,123 @@
+{
+  "name": "conservation",
+  "description": "spending or removing more than the player has is refused outright; a refused delta never changes the balance",
+  "world": {
+    "characters": [
+      {
+        "name": "Player",
+        "ref": "player",
+        "location_id": "yard",
+        "stats": {"hp": 10, "max_hp": 10, "currency": 25},
+        "inventory": [
+          {"item_id": "rope", "qty": 2, "flags": {"hemp": true}},
+          {"item_id": "torch", "qty": 1, "flags": {}}
+        ]
+      }
+    ]
+  },
+  "options": {"seed": 11},
+  "steps": [
+    {
+      "validate": [{"kind": "currency", "data": {"amount": -30}}],
+      "expect": [{"kind": "rejected", "note_contains": "conservation"}],
+      "note": "over-spend by 5"
+    },
+    {
+      "check": {
+        "expr": "state['character'].stats['currency'] == 25",
+        "msg": "a rejected spend leaves the balance alone"
+      }
+    },
+    {
+      "validate": [
+        {"kind": "currency", "data": {"amount": -15}},
+        {"kind": "currency", "data": {"amount": -15}}
+      ],
+      "expect": ["accepted", "rejected"],
+      "note": "in one turn, the second spend is checked against the running balance"
+    },
+    {
+      "check": {
+        "expr": "state['character'].stats['currency'] == 25",
+        "msg": "validate writes nothing, accepted or not"
+      }
+    },
+    {
+      "apply": [{"kind": "currency", "data": {"amount": -30}}],
+      "expect": [{"kind": "rejected", "note_contains": "conservation"}],
+      "note": "a refused spend is never applied at commit time"
+    },
+    {
+      "check": {
+        "expr": "state['character'].stats['currency'] == 25",
+        "msg": "committing a rejected delta writes nothing"
+      }
+    },
+    {
+      "validate": [{"kind": "inventory_remove", "target": "rope", "data": {"qty": 3}}],
+      "expect": [{"kind": "rejected", "note_contains": "conservation"}],
+      "note": "removing 3 ropes while holding 2"
+    },
+    {
+      "check": {
+        "expr": "state['inventory'] == [{'item_id': 'rope', 'qty': 2, 'flags': {'hemp': True}}, {'item_id': 'torch', 'qty': 1, 'flags': {}}]",
+        "msg": "over-removal leaves the inventory intact"
+      }
+    },
+    {
+      "apply": [{"kind": "inventory_remove", "target": "rope", "data": {"qty": 2}}],
+      "expect": ["accepted"],
+      "note": "the exact removal commits"
+    },
+    {
+      "check": {
+        "expr": "all(entry['item_id'] != 'rope' for entry in state['inventory'])",
+        "msg": "removing everything drops the entry"
+      }
+    },
+    {
+      "apply": [{"kind": "inventory_remove", "target": "rope", "data": {"qty": 1}}],
+      "expect": [{"kind": "rejected", "note_contains": "conservation"}],
+      "note": "no rope left to remove"
+    },
+    {
+      "apply": [{"kind": "inventory_remove", "target": "torch", "data": {"qty": 2}}],
+      "expect": [{"kind": "rejected", "note_contains": "conservation"}],
+      "note": "removing 2 torches while holding 1"
+    },
+    {
+      "check": {
+        "expr": "state['inventory'] == [{'item_id': 'torch', 'qty': 1, 'flags': {}}]",
+        "msg": "the rejected torch removal changed nothing"
+      }
+    },
+    {
+      "apply": [{"kind": "currency", "data": {"amount": -25}}],
+      "expect": ["accepted"],
+      "note": "the exact spend commits"
+    },
+    {
+      "check": {
+        "expr": "state['character'].stats['currency'] == 0",
+        "msg": "balance reaches exactly zero"
+      }
+    },
+    {
+      "apply": [{"kind": "inventory_remove", "target": "torch", "data": {"qty": 1}}],
+      "expect": ["accepted"]
+    },
+    {
+      "check": {
+        "expr": "state['inventory'] == []",
+        "msg": "the last item is gone"
+      }
+    }
+  ],
+  "checks": [
+    {"expr": "state['character'].stats['currency'] == 0", "msg": "final balance is 0, never negative"},
+    {"expr": "state['inventory'] == []", "msg": "final inventory is empty"},
+    {"expr": "verdict_count('rejected') == 6", "msg": "six conservation refusals"},
+    {"expr": "verdict_count('accepted') == 4", "msg": "four lawful changes"},
+    {"expr": "verdict_count('clamped') == 0", "msg": "conservation rejects, it never partial-applies"}
+  ]
+}
