@@ -62,9 +62,11 @@ from .config import EngineConfig
 from .models import (
     AssembledPrompt,
     Intent,
+    Lead,
     LeadStage,
     MechanicalOutcome,
     SagaRow,
+    from_row,
 )
 from .similarity import LexicalSimilarity, Similarity, best_context_score
 
@@ -427,11 +429,13 @@ class ContextAssembler:
             self.components = MemoryBundle.build(self.store, self.config, self.sim)
         return self.components
 
-    def _lead_rows(self) -> list[dict]:
+    def _lead_rows(self) -> list[Lead]:
+        """Leads from the state store, decoded via ``models.from_row`` (the raw
+        rows carry ``related_npc_ids`` / ``stage_history`` as JSON text)."""
         store = self.store
         if store is None or not callable(getattr(store, "find", None)):
             return []
-        return [row for row in store.find("leads") if isinstance(row, dict)]
+        return [from_row(Lead, row) for row in store.find("leads") if isinstance(row, dict)]
 
     # -- section builders --------------------------------------------------- #
 
@@ -652,26 +656,26 @@ class ContextAssembler:
     def _lead_items(self, scene: dict, scene_context: list[str]) -> list[tuple[str, float]]:
         present = {self._npc_key(npc) for npc in self._present_npcs(scene)} - {""}
         gate = self.config.memory.min_pin_relevance
-        scored: list[tuple[float, int, dict, set[str]]] = []
-        for row in self._lead_rows():
-            stage = str(row.get("stage") or "")
+        scored: list[tuple[float, int, Lead, set[str]]] = []
+        for lead in self._lead_rows():
+            stage = str(lead.stage or "")
             if stage == LeadStage.UNHEARD.value:
                 continue  # the player has not heard of it — never leak it
-            title = str(row.get("title") or "")
+            title = str(lead.title or "")
             if not title:
                 continue
-            related = {str(entry) for entry in (row.get("related_npc_ids") or [])} & present
+            related = {str(entry) for entry in (lead.related_npc_ids or [])} & present
             relevance = 1.0 if related else best_context_score(title, scene_context, self.sim)
             if relevance < gate:
                 continue
-            scored.append((relevance, int(row.get("id") or 0), row, related))
+            scored.append((relevance, int(lead.id or 0), lead, related))
         scored.sort(key=lambda item: (-item[0], item[1]))
         items: list[tuple[str, float]] = []
-        for position, (_, _, row, related) in enumerate(scored):
-            text = f"- {row.get('title')} — stage: {row.get('stage')}"
+        for position, (_, _, lead, related) in enumerate(scored):
+            text = f"- {lead.title} — stage: {lead.stage}"
             if related:
                 text += f" (related: {', '.join(sorted(related))})"
-            history = row.get("stage_history") or []
+            history = lead.stage_history or []
             if history and isinstance(history[-1], dict) and history[-1].get("trigger"):
                 text += f"; latest: {history[-1]['trigger']}"
             items.append((text, float(-position)))
