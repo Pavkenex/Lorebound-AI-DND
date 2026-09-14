@@ -4,6 +4,8 @@ Every rule gets deny cases + boundary cases; ``validate`` must write nothing.
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 from doubles import (
     FakeStore,
@@ -150,7 +152,12 @@ def test_relationship_total_clamp_uses_store_state() -> None:
         turn=2,
     ))
     assert verdict.kind == VerdictKind.CLAMPED.value
-    assert verdict.clamped_to == 10.0
+    # R3's decayed ledger math is live now (validate.py prefers it over its
+    # undecayed fallback): the stored +90 with decay_class "slow" (0.01/turn)
+    # has decayed one turn to 90*exp(-0.01) = 89.104485, so only the remainder
+    # 10.895515 of the proposed +20 fits under ±100. Pre-R3 this expectation
+    # was the fallback's flat 10.0.
+    assert verdict.clamped_to == pytest.approx(100 - 90 * math.exp(-0.01), abs=1e-6)
     assert "±100" in verdict.note
 
 
