@@ -4,7 +4,7 @@
 import { fixtures } from "./fixtures";
 import type { ContentPrefs } from "./store-types";
 import { normalizeApiBase } from "./api-base";
-import { engineErrorText, getEngineKey, providerKeyHeader } from "./engine";
+import { engineErrorText, engineRequestHeaders, getEngineKey, contentPrefsHeader } from "./engine";
 import type { EngineState, EngineTurn } from "./engine";
 
 /** Fallback when no explicit URL is configured: same host as the page, backend port 8001.
@@ -52,9 +52,11 @@ function readCost(res: Response | null): CostInfo {
   };
 }
 
+/** The boundaries header for the legacy action path (same serializer as the
+ *  engine path — `contentPrefsHeader`). */
 function prefsHeaders(p?: ContentPrefs): Record<string, string> {
   if (!p) return {};
-  return { "X-Content-Prefs": JSON.stringify(p) };
+  return contentPrefsHeader(p);
 }
 
 function authHeaders(): Record<string, string> {
@@ -686,8 +688,9 @@ async function engineFetch<T>(
       headers: {
         "Content-Type": "application/json",
         ...authHeaders(),
-        // The key rides this one request, and only when one is set.
-        ...providerKeyHeader(providerKey),
+        // The runtime key (when one is set) and the player's content boundaries,
+        // both read from THIS browser at request time (§4, §11).
+        ...engineRequestHeaders(providerKey),
         ...(rest.headers ?? {}),
       },
     });

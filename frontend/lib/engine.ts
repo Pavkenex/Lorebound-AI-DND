@@ -1,10 +1,15 @@
 // Engine pilot helpers (phase 2 — docs/INTEGRATION_PLAN.md §7).
 //
-// Dependency-free on purpose: `node --test lib/*.test.ts` loads this module
-// directly (node strips the types), so every piece of pilot logic the UI leans
-// on stays testable without a DOM. The runtime-key rule (§4) lives here too:
-// the BYOK key is kept in THIS browser's localStorage, read per request, and
-// sent only as the X-Provider-Key header — never stored, echoed, or logged.
+// Loaded directly by `node --test lib/*.test.ts` (node strips the types), so
+// every piece of pilot logic the UI leans on stays testable without a DOM —
+// the only import is `store-types`, plain vocabulary with no DOM or React. The
+// runtime-key rule (§4) lives here too: the BYOK key is kept in THIS browser's
+// localStorage, read per request, and sent only as the X-Provider-Key header —
+// never stored, echoed, or logged. The content-boundaries rule (§11) rides
+// beside it: the X-Content-Prefs header, read at request time from the store's
+// own persisted slot.
+
+import { PREFS_STORAGE, defaultPrefs, normalizeContentPrefs, type ContentPrefs } from "./store-types.ts";
 
 /** localStorage slot for the engine's BYOK key — the only place it is kept. */
 export const ENGINE_KEY_STORAGE = "lorebound.engine.key";
@@ -110,6 +115,104 @@ export function providerKeyHeader(key?: string | null): Record<string, string> {
 }
 
 // --------------------------------------------------------------------------- //
+// Content boundaries (docs/INTEGRATION_PLAN.md §11)
+// --------------------------------------------------------------------------- //
+
+/** Everything an engine request carries besides auth: the runtime key when one
+ *  is set, and the player's content boundaries. Both are read at REQUEST time —
+ *  never captured in a closure, which would send whichever NSFW value the
+ *  toggle had when the page mounted (the store's own comment warns it lies). */
+export function engineRequestHeaders(providerKey?: string | null): Record<string, string> {
+  return { ...providerKeyHeader(providerKey), ...contentPrefsHeader(storedContentPrefs()) };
+}
+
+/** The `X-Content-Prefs` header for one request — the same JSON the legacy play
+ *  path sends (lib/api.ts serializes through here too, one implementation).
+ *  Values are normalized first, so the wire vocabulary is always canonical. */
+export function contentPrefsHeader(prefs?: Partial<ContentPrefs> | null): Record<string, string> {
+  return { "X-Content-Prefs": JSON.stringify(normalizeContentPrefs(prefs ?? null)) };
+}
+
+/** The player's boundaries exactly as the app store persists them, read NOW.
+ *  Nothing stored yet (a fresh browser) reads as the store's own defaults — the
+ *  same values Settings shows and the legacy action path sends. Malformed data
+ *  degrades to those defaults, never to a crash. */
+export function storedContentPrefs(): ContentPrefs {
+  try {
+    const raw = storage()?.getItem(PREFS_STORAGE);
+    if (!raw) return normalizeContentPrefs(null);
+    const parsed = JSON.parse(raw) as { content?: Partial<ContentPrefs> | null } | null;
+    return normalizeContentPrefs(parsed?.content ?? null);
+  } catch {
+    return normalizeContentPrefs(null);
+  }
+}
+
+/** The boundaries that actually governed a turn, when the payload echoes them
+ *  (§11). P8 owns the server shape; this reader is deliberately tolerant — it
+ *  renders both today's payloads (no echo at all) and the echoed object, and it
+ *  normalizes whatever it finds through the store's own vocabulary. */
+export interface AppliedContent {
+  prefs: ContentPrefs;
+  /** The turn fell back to the chronicler's defaults (a malformed header). */
+  defaultsApplied: boolean;
+}
+
+/** Object keys the echo has been/should be sent under — `content` is canonical. */
+const CONTENT_ECHO_KEYS = ["content", "content_prefs", "applied_prefs", "prefs"] as const;
+const BOUNDARY_KEYS = ["nsfw", "violence", "horror", "romance", "language"] as const;
+
+export function appliedContent(turn?: EngineTurn | null): AppliedContent | null {
+  if (!turn || typeof turn !== "object") return null;
+  const source = turn as Record<string, unknown>;
+  for (const key of CONTENT_ECHO_KEYS) {
+    const raw = source[key];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    // Only an object carrying boundary vocabulary counts as the echo — an
+    // unrelated `prefs` shape must not beat the values the player can see.
+    if (!BOUNDARY_KEYS.some((k) => k in row)) continue;
+    return {
+      prefs: normalizeContentPrefs(row),
+      defaultsApplied: row.defaults_applied === true || row.defaultsApplied === true,
+    };
+  }
+  return null;
+}
+
+/** One compact, readable line for the pilot's boundaries block. A uniform cap
+ *  reads as the single word Settings uses ("standard"); mixed caps list each
+ *  axis, because the player set them one by one. */
+export function boundariesSummary(prefs: ContentPrefs): string {
+  if (prefs.nsfw) return "uncensored (every limit lifted) · NSFW on";
+  const axes = [prefs.violence, prefs.horror, prefs.romance, prefs.language];
+  const caps = axes.every((level) => level === axes[0])
+    ? axes[0]
+    : `violence ${prefs.violence} · horror ${prefs.horror} · romance ${prefs.romance} · language ${prefs.language}`;
+  return `${caps} · NSFW off`;
+}
+
+/** The "defaults were applied" note for one turn, when its payload says so.
+ *  §11: an unreadable X-Content-Prefs falls back to the standard boundaries AND
+ *  the turn says so in its system lines (`bridge.CONTENT_DEFAULTS_NOTE`:
+ *  "content: settings could not be read — standard boundaries applied"). The
+ *  note is the contract; a flag on the echo (`defaults_applied`) is honoured
+ *  too if a payload ever carries one. Returns null when nothing said so. */
+export function boundariesNotice(turn?: EngineTurn | null): string | null {
+  const lines = (turn?.system_lines ?? [])
+    .map((line) => String(line ?? "").trim())
+    .filter(Boolean);
+  const said = lines.find(
+    (line) => /boundar|content|pref|settings/i.test(line) && /could not be read|\bdefaults?\b/i.test(line)
+  );
+  if (said) return said;
+  if (appliedContent(turn)?.defaultsApplied === true) {
+    return "Your saved content boundaries could not be read — the chronicler's standard boundaries governed this turn.";
+  }
+  return null;
+}
+
+// --------------------------------------------------------------------------- //
 // Turn payload vocabulary (shapes from backend/app/modules/engine/bridge.py)
 // --------------------------------------------------------------------------- //
 
@@ -183,6 +286,9 @@ export interface EngineTurn {
   capability?: EngineCapability;
   state?: EngineState;
   system_lines?: string[];
+  /** Applied-boundaries echo when the router sends one (§11) — read it through
+   *  `appliedContent()`, which tolerates absent or renamed echo objects. */
+  content?: unknown;
 }
 
 // --------------------------------------------------------------------------- //

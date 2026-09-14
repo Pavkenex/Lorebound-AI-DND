@@ -1,5 +1,9 @@
 // Shared setting types (imported by api.ts to avoid a store cycle).
 
+/** localStorage slot the app store persists its settings (content prefs
+ *  included) to — the single source the request path reads at send time. */
+export const PREFS_STORAGE = "lorebound-prefs-v1";
+
 /** Canonical level vocabulary — must match the backend's ContentPrefs exactly. */
 export const LEVELS = ["off", "reduced", "standard"] as const;
 export type Level = (typeof LEVELS)[number];
