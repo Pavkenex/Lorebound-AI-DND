@@ -135,3 +135,104 @@ your completion notes): `models.py`, `config.py`, `similarity.py`,
 Focused test module(s) first, then the FULL engine suite green; ruff clean.
 Evidence = exact commands run + observed results + commit hashes in the
 completion result. A result without real command output is not accepted.
+
+---
+
+## As-built notes (R9, 2026-09-14)
+
+Everything in "Locked layout", "Frozen contracts" and "Decisions" above was
+delivered as written; no declared module, class or method was dropped. This
+section records what the as-built code added *on top of* the scaffold stubs
+(commit `534c43e`, whose bodies raised `NotImplementedError("RN card implements
+…")` behind the declared signatures), so a reader can separate the intended
+contract from the delivered surface. Evidence for each item is a signature
+comparison of `534c43e` vs this tree.
+
+### Deviations from the scaffold stubs (explicit list)
+
+1. `play.PlaySession.start(*, db_path, world, config, narrator)` → adds
+   `rng, adapter, provider, auto_seed, probe` (live BYOK narrator, resume an
+   existing campaign, test injection).
+2. `play.StubNarrator` — the stub had only `narrate`; as-built adds
+   `__init__(script=…)`, `calls`, `last_notes`, `stats()` and a prompt-reading
+   template narrator with turn-indexed phrasing. `demo_world()` moved its
+   content to `fixtures/demo_world.py` (the stub docstring anticipated this)
+   and `seed_world()` was added next to it. The narrator still emits no deltas
+   by default and invents no dialogue.
+3. `pipeline.Orchestrator.__init__` → adds `components, assembler, adapter,
+   provider, context_window, effect_rules, ruleset, dc, now` (eval/test
+   injection seams, live-adapter wiring, injectable clock).
+4. `pipeline.Orchestrator.consistency_check(*, turn, narration, report)` → adds
+   `dialogue=`: Pass D scans NPC dialogue as well as prose (the
+   dead-NPC-speech contradiction class).
+5. `pipeline` gains `LiveNarrator` + `narrator_from_adapter()` — the adapter →
+   `NarratorRunner` bridge (prompt/telemetry plumbing, probe once per session).
+6. `context.ContextAssembler.__init__` → adds `components=` (accept a
+   `MemoryBundle` instead of always building one). Section list, priority
+   order, drop-from-the-bottom and drop accounting are as contracted.
+7. `resolve.resolve_check(req, *, rng)` → adds `modifier=`;
+   `resolve.resolve_action(intent, *, rng, store, turn)` → adds `dc=` and
+   `effect_rules=` (per-intent effect hooks). Outcome bands are unchanged.
+8. `memory.MemoryBundle` — the R1/I1 `context↔memory` seam shipped as a stub
+   (`b2be4a8`); the as-built `MemoryBundle.build(store, config, sim)` is real,
+   and `ContextAssembler` consumes exactly that surface.
+   `MoodTracker.ensure()` takes `None` baselines (derive from personality)
+   instead of `0.0`.
+9. `validate.Validator.__init__(store, config)` → adds `sim=`, `stat_bounds=`,
+   `policy=`; contradiction inspection is exposed as
+   `Validator.contradiction_details()` rather than only being used inside
+   `commit()`.
+10. `providers/jsonproto.proposals_from_tool_calls(tool_calls)` → takes
+    optional `narration=` / `notes=`; adds `proposals_from_payload()`,
+    `parse_with_repair()` and `should_regenerate()` (the bounded repair step).
+    `providers/registry.build_adapter()` is joined by the canary schema and the
+    caps-cache read/write helpers.
+11. `evals.harness.run_e2e` — the scaffold stub ("implemented by R8") is now a
+    real delegation to `evals/e2e.py` with the same parameters as
+    `run_scenarios` (`paths, root, seed, db_dir, narrator`); `run_scenarios`
+    gains `root=`. `run_all()` discovery is untouched (5 core scenarios).
+12. `cli.py` — the scaffold's single-def stub is the full `play`/`state`/`evals`
+    CLI with exit codes 0/1/2 and key hygiene; R9 added the per-turn
+    `(verdict: …)` line (the code-owned mechanics statement) to the play render.
+13. `store` — the public row API is unchanged; internals were added
+    (`_quote`, `_require_id_column`, prepared-parameter binding) and
+    `transaction()` now uses `BEGIN IMMEDIATE` (`648f407`).
+14. `schema.sql` (frozen) — one line changed: `saga_levels."references"` is
+    quoted (`e13ec08`). No table, column or type was added, removed or retyped.
+15. `models.py`, `config.py`, `similarity.py`, `pyproject.toml` — **no changes
+    since the scaffold** (verified by an empty
+    `git diff 534c43e..HEAD -- engine/src/engine/{models,config,similarity}.py
+    engine/pyproject.toml`).
+
+### Final module inventory
+
+Source (stdlib-only, `src/engine/`, 8,259 lines incl. schema):
+
+| module | lines | role | spec |
+|---|---|---|---|
+| `models.py` | 467 | cross-module dataclasses/enums (frozen) | §2,§5 |
+| `config.py` | 69 | `EngineConfig`/`BudgetConfig`/`SalienceWeights`/`MemoryConfig` | §3,§4 |
+| `similarity.py` | 66 | `Similarity` protocol, lexical + embedding impls | §3.1 |
+| `store/__init__.py` + `schema.sql` | 385 + 155 | SQLite access, migrations, 15 tables, generic row API | §2 |
+| `resolve.py` | 413 | Pass A: dice expressions, checks, bands, eligibility | §5A,§6 |
+| `validate.py` | 1210 | Pass C: clamps, legality, conservation, contradiction, commit | §6 |
+| `memory.py` | 1132 | NPC memory + salience, chronicle, saga, leads, ledger, moods, facts, `MemoryBundle` | §3 |
+| `providers/` (8 modules) | 1522 | transport policy, OpenAI/Anthropic/Gemini adapters, registry + canary probe, JSON codec | §7 |
+| `context.py` | 718 | context assembly, priority order, budget controller, drop accounting | §4 |
+| `pipeline.py` | 1172 | turn orchestrator, Pass B/C/D, consistency + regeneration/patch | §1,§5 |
+| `play.py` | 339 | `PlaySession`, stub narrator, demo world accessors | §1,§10.1 |
+| `cli.py` + `__main__.py` | 244 | `python -m engine play/state/evals` | §10.1 |
+| `fixtures/` | 360 | demo world + fixture seeding (same row shape as the eval fixtures) | §10 |
+
+Evals (`evals/`, 4,616 lines): `harness.py` (core DSL/runner), `e2e.py`
+(pipeline-level runner: scripted transports, snapshots, bait/catch-rate,
+matrix), `__main__.py` (suite CLI), 5 core scenarios + 5 e2e scenarios, and
+`artifacts/` (checked-in stub-play transcript).
+
+Tests (`tests/`, 10,431 lines across 34 files — 33 test modules plus
+`doubles.py`; `test_providers_server.py` is the stdlib fake HTTP provider
+server): 782 tests, all passing, none skipped.
+
+For gate numbers, eval counts, per-mechanism evidence and known gaps see
+`../docs/REBUILD_NOTES.md`; the clean-clone verification is
+`../docs/REBUILD_VERIFICATION.md`.
