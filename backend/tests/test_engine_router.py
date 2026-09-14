@@ -332,6 +332,24 @@ def test_unknown_or_legacy_campaigns_are_404(client: TestClient):
     assert client.get(f"/engine/campaigns/{legacy_id}/state", headers=headers).status_code == 404
 
 
+def test_state_is_read_only_and_never_creates_a_missing_campaign_db(client: TestClient):
+    headers = _register(client, "router-state-read@example.com")
+    campaign_id = _create(client, headers)["id"]
+
+    fresh = client.get(f"/engine/campaigns/{campaign_id}/state", headers=headers)
+    assert fresh.status_code == 200  # created-but-unplayed: the seeded snapshot
+    assert fresh.json()["turn"] == 0
+
+    # A missing campaign DB is a 404 and stays missing: a read never seeds.
+    db_path = paths.campaign_db_path(campaign_id)
+    assert db_path.is_file()
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+    assert client.get(f"/engine/campaigns/{campaign_id}/state", headers=headers).status_code == 404
+    assert not db_path.exists()
+
+
 def test_body_limits_are_enforced(client: TestClient):
     headers = _register(client, "router-limits@example.com")
     campaign_id = _create(client, headers)["id"]
