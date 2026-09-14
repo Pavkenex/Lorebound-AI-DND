@@ -156,7 +156,7 @@ class StubNarrator:
 
         opener_bits: list[str] = []
         if location:
-            opener_bits.append(_OPENERS[turn % len(_OPENERS)].format(location=location))
+            opener_bits.append(_OPENERS[(turn - 1) % len(_OPENERS)].format(location=location))
         for name in living:
             opener_bits.append(f"{name} is here with you.")
         for name in dead:
@@ -167,7 +167,7 @@ class StubNarrator:
             # A correction round gets the corrected facts and nothing else:
             # fewer sentences means fewer chances to repeat the mistake.
             return f"{opener}\n\n{first}".strip()
-        closer = _CLOSERS[turn % len(_CLOSERS)]
+        closer = _CLOSERS[(turn - 1) % len(_CLOSERS)]
         return f"{opener}\n\n{first}\n\n{closer}".strip()
 
 
