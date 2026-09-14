@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS saga_levels (
   scope_id TEXT NOT NULL DEFAULT '',
   text TEXT NOT NULL DEFAULT '',
   created_turn INTEGER NOT NULL DEFAULT 0,
-  references TEXT NOT NULL DEFAULT '[]'
+  "references" TEXT NOT NULL DEFAULT '[]'  -- quoted: REFERENCES is a SQLite keyword
 );
 
 CREATE TABLE IF NOT EXISTS telemetry (
