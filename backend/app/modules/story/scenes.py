@@ -45,8 +45,13 @@ SCENE_STATES: tuple[str, ...] = (ACTIVE, TRANSITIONING, RESOLVED)
 EXHAUSTED_AFTER = 4
 #: Times one action may be repeated here before replies start diminishing.
 REPEAT_DIMINISH_AFTER = 3
-#: Consecutive beats without progress before replies start diminishing.
-IDLE_DIMINISH_AFTER = 4
+#: The idle gate (P13): a scene that has lingered this long answers even a
+#: *second* attempt at one action with the shorter reply. Raised from 4 and
+#: narrowed to familiar ground on purpose — the idle arm once diminished
+#: every action in the room, including text the player had never tried, which
+#: read to the table as "I always get the same answer". Novel attempts are
+#: never guarded, so one fresh try brings real narration back immediately.
+IDLE_DIMINISH_AFTER = 6
 
 #: The slice's micro-scene: Marla's room above the inn's common room (§7).
 UPSTAIRS = "lantern-inn:upstairs-room"
@@ -231,6 +236,8 @@ class Scene:
     state: str = ACTIVE
     #: Action fingerprint -> times taken here (the anti-loop's repeat counter).
     actions: dict[str, int] = field(default_factory=dict)
+    #: Diminishing replies already given here — rotates their wording (§7/P13).
+    diminished: int = 0
 
     # ------------------------------------------------------------------ api
     def to_dict(self) -> dict[str, Any]:
@@ -244,6 +251,7 @@ class Scene:
             "last_progress": int(self.last_progress),
             "state": self.state if self.state in SCENE_STATES else ACTIVE,
             "actions": {str(k): int(v) for k, v in self.actions.items()},
+            "diminished": int(self.diminished),
         }
 
     @classmethod
@@ -262,6 +270,7 @@ class Scene:
         actions = raw.get("actions")
         if isinstance(actions, dict):
             scene.actions = {str(k): int(v) for k, v in actions.items() if isinstance(v, (int, float))}
+        scene.diminished = max(0, int(raw.get("diminished", 0) or 0))
         return scene
 
     # --------------------------------------------------------------- derived
@@ -277,6 +286,18 @@ class Scene:
 
     def repeats(self, key: str) -> int:
         return int(self.actions.get(str(key), 0))
+
+    def seen(self, beat: str) -> int:
+        """How many times this beat family already resolved here.
+
+        All actions sharing a beat prefix count together — two phrasings of
+        "I look at the hearth" are two looks at the same hearth — so authored
+        prose can rotate, and two looks never hand back one identical
+        paragraph (P13). The anti-loop's repeat guard counts per exact key;
+        see :meth:`SceneDirector.diminishing`.
+        """
+        prefix = f"{str(beat).strip()}:"
+        return sum(int(v) for k, v in self.actions.items() if str(k).startswith(prefix))
 
 
 @dataclass
@@ -464,16 +485,34 @@ class SceneDirector:
     def diminishing(self, key: str) -> bool:
         """True when the anti-loop guard should shorten this reply (§7).
 
-        A repeated action or a run of idle beats in one scene gets a
-        diminishing response that points at what is still possible. The guard
-        only shapes prose — it never blocks a transition, and beats that made
-        progress are never touched.
+        The guard exists to stop droning on ground the player has already
+        walked — it must never wall a scene off from narration (P13):
+
+        - a genuinely new attempt (first time this action is taken here) always
+          narrates: model or authored beat, never a diminishing line, and one
+          fresh try is all it takes for real prose to come back;
+        - the third identical attempt shortens, whatever the scene's mood;
+        - in a scene that has lingered (``IDLE_DIMINISH_AFTER`` beats without
+          progress) even a *second* attempt shortens.
+
+        Progress re-marks the scene (``last_progress``) and resets the idle
+        streak. The guard only shapes prose — it never blocks a transition.
         """
         scene = self.current()
-        return (
-            scene.repeats(key) >= REPEAT_DIMINISH_AFTER
-            or scene.idle >= IDLE_DIMINISH_AFTER
-        )
+        repeats = scene.repeats(key)  # counts the beat being resolved right now
+        if repeats < 2:
+            return False
+        if repeats >= REPEAT_DIMINISH_AFTER:
+            return True
+        return scene.idle >= IDLE_DIMINISH_AFTER
+
+    def note_diminished(self) -> int:
+        """Count one diminishing reply; returns its rotation index (0-based)."""
+        scene = self.ensure()
+        index = max(0, int(scene.diminished))
+        scene.diminished = index + 1
+        self.save(scene)
+        return index
 
     def scene_block(self) -> dict[str, Any]:
         """The player-visible read of the current scene (GET /state)."""

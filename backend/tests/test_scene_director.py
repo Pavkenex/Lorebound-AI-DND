@@ -10,6 +10,8 @@ scene-transition autosave, and scene state surviving save/load.
 """
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -312,10 +314,15 @@ def test_repeated_actions_diminish_and_point_at_what_is_still_possible():
     first, _ = engine_obj.act("I inspect the hearth")
     second, _ = engine_obj.act("I inspect the hearth")
     third, _ = engine_obj.act("I inspect the hearth")
-    assert second["narration"] == first["narration"]  # the guard is not hair-triggered
-    assert third["narration"] != first["narration"]
+    # The guard is not hair-triggered, and a second look gets its own words
+    # (P13): the room must not hand back one identical paragraph.
+    assert "the hearth" in first["narration"] and "the hearth" in second["narration"]
+    assert second["narration"] != first["narration"]
+    assert third["narration"] != second["narration"]
     assert len(third["narration"]) < len(first["narration"])
     assert "Still open:" in third["narration"]
+    # The line quotes the player's own attempt back at them.
+    assert "I inspect the hearth" in third["narration"]
     labels = [s["label"] for s in third["suggestions"]]
     assert "Read the notice board" in labels
     assert "Take the stairs with Marla" not in labels  # unheard: her stair is not on offer
@@ -323,20 +330,64 @@ def test_repeated_actions_diminish_and_point_at_what_is_still_possible():
     assert engine_obj.state.feed[-1]["text"] == third["narration"]
 
 
-def test_a_run_of_idle_beats_also_diminishes():
+def test_the_anti_loop_fires_later_than_it_used_to():
+    """P13 tuning: the idle arm fires at 6 beats, not 4 — and repeats at 3."""
+    from app.modules.story import scenes
+
+    assert scenes.REPEAT_DIMINISH_AFTER == 3  # stop droning on literal repeats
+    assert scenes.IDLE_DIMINISH_AFTER == 6  # fire later: room to breathe
+
+
+def test_idle_beats_diminish_a_repeat_but_never_wall_off_new_ground():
+    """P13: distinct attempts keep narrating; only walked ground answers short."""
     engine_obj = _engine_in_inn("scene-linger")
-    beats = [
+    fresh = [
         "I inspect the hearth",
         "I inspect the hearth once more",
         "I inspect the hearth in detail",
         "I inspect the hearth very carefully",
+        "I inspect the hearth from the door",
+        "I inspect the hearth in the firelight",
+        "I inspect the hearth a final time",
     ]
-    outs = [engine_obj.act(t)[0] for t in beats]
-    assert "Still open:" not in outs[2]["narration"]  # three idle beats: still the room
-    fifth = engine_obj.act("I inspect the hearth from the door")[0]
-    assert "Still open:" in fifth["narration"]
+    outs = [engine_obj.act(t)[0] for t in fresh]
     scene = _scene(engine_obj.state)
-    assert scene.idle >= 4 and scene.exhausted is True
+    assert scene.idle >= 6 and scene.exhausted is True
+    # Seven distinct attempts, seven answers: the wall never settles over the
+    # room (before P13 every one of these was the same canned line).
+    for out in outs:
+        assert "Still open:" not in out["narration"]
+    assert all(
+        outs[i]["narration"] != outs[i - 1]["narration"] for i in range(1, len(outs))
+    )
+    # A genuine repeat on already-walked ground now answers shorter...
+    repeat = engine_obj.act("I inspect the hearth")[0]
+    assert "Still open:" in repeat["narration"]
+    assert "I inspect the hearth" in repeat["narration"]
+    # ...and a novel attempt still narrates: the guard is per-action, not a wall.
+    novel = engine_obj.act("I inspect the window frames")[0]
+    assert "Still open:" not in novel["narration"]
+    assert novel["narration"] != repeat["narration"]
+    # Progress also clears the clock outright.
+    assert _scene(engine_obj.state).idle < 6
+
+
+def test_diminishing_replies_never_repeat_the_identical_string():
+    """P13: two diminishing replies in a row are never the same words."""
+    engine_obj = _engine_in_inn("scene-rotate")
+    for _ in range(4):
+        engine_obj.act("I inspect the hearth")  # walk the ground out
+    outs = [engine_obj.act("I inspect the hearth")[0] for _ in range(5)]
+    acks = [o["ack"] for o in outs]
+    narrations = [o["narration"] for o in outs]
+    assert all("Still open:" in n for n in narrations)
+    assert all("I inspect the hearth" in n for n in narrations)
+    assert all(a != b for a, b in pairwise(acks))
+    assert all(a != b for a, b in pairwise(narrations))
+    # The feed carries the rotating line, not a repeated constant (the first
+    # four legs hit the guard too: the last five feed lines are these five).
+    diminishing_feed = [e["text"] for e in engine_obj.state.feed if "Still open:" in e["text"]]
+    assert diminishing_feed[-5:] == narrations
 
 
 def test_possible_moves_follow_the_story_and_the_scene():

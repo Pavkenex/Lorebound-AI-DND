@@ -115,6 +115,13 @@ TALK_REPEAT = (
     "nods at the ledger under the bar — whatever you need to know, it will "
     "answer to paper sooner than to words."
 )
+TALK_REPEAT_AGAIN = (
+    "Marla does not bother with the cup this time. \"The road has not changed "
+    "since you last asked,\" she says, and the tired look she gives you is not "
+    "unkind. Her knuckles tap the counter above the ledger — the same answer, "
+    "offered in fewer words."
+)
+TALK_REPEAT_VARIANTS = (TALK_REPEAT, TALK_REPEAT_AGAIN)
 TALK_INVESTIGATING = (
     "Marla tops the cup without being asked. \"Word travels ahead of you,\" she "
     "says. \"Half the market has seen you asking after carts and lanterns.\" She "
@@ -138,12 +145,83 @@ BOARD_REPEAT = (
     "road, no answers. Somebody has since pinned a charcoal sketch of the "
     "missing wagon below it."
 )
+BOARD_REPEAT_AGAIN = (
+    "The plea is where you left it: two names, one road, and the charcoal wagon "
+    "sketch nobody has thought to take down. The rain has turned its corners "
+    "soft, and the names have not changed at all."
+)
+BOARD_REPEAT_VARIANTS = (BOARD_REPEAT, BOARD_REPEAT_AGAIN)
 
 LEDGER_NARRATION = (
     "Behind the bar the guest ledger lies open where Marla left it — she counts "
     "her stock nightly, and tonight it has been counted twice. You turn the "
     "pages before the damp can."
 )
+LEDGER_NARRATION_AGAIN = (
+    "The ledger waits under the bar where it always waits, damp at the edges "
+    "and patient as a creditor. You turn back to the pages you have already "
+    "bothered once — the damp has not moved, and neither have the names."
+)
+LEDGER_NARRATION_VARIANTS = (LEDGER_NARRATION, LEDGER_NARRATION_AGAIN)
+
+#: The room's own once-over: a second look gets its own account (P13).
+INSPECT_VARIANTS = (
+    (
+        "You give {seen} the traveler's once-over — useful habits, nothing "
+        "the room is ready to surrender yet. The rain keeps its own counsel "
+        "outside; inside, only the fire and Marla's patience move."
+    ),
+    (
+        "You take {seen} in again with the eye you brought in from the road: "
+        "same wear, same dust, same patience. If the room is holding anything "
+        "back, it is holding it well."
+    ),
+    (
+        "A second accounting of {seen} pays out what the first one did — the "
+        "room stands as it stood, and no readier to explain itself."
+    ),
+)
+
+#: The cellar door, told in stages and twice over (P13): the same stage
+#: read twice must not be the same paragraph twice.
+CELLAR_FREED = (
+    "The cellar door stands open now, hooked back against the wall. Cold "
+    "air climbs the steps from the inn's deep stores — barrels, salt, and "
+    "the shape of the story that used to live down here."
+)
+CELLAR_FREED_AGAIN = (
+    "The cellar mouth is still open, and the inn keeps its patience about "
+    "it: barrels, salt, and the cold coming up the steps like a debt "
+    "already paid. Nobody down there is waiting on you anymore."
+)
+CELLAR_BARRED = (
+    "The cellar door is barred as always — but the bar has been lifted "
+    "recently: the dust on its bracket is disturbed, and a thin woman's "
+    "scarf is caught on the latch. Behind the inn's own stores, the "
+    "passage keeps going down. You would not want to be found opening "
+    "this without a reason Marla would accept."
+)
+CELLAR_BARRED_AGAIN = (
+    "Barred — and not as well as it pretends: the dust on the bracket "
+    "sits wrong, and a woman's scarf, thin and grey and not Marla's, is "
+    "caught in the latch. The passage behind the inn's stores does not "
+    "stop at the stores. Whatever reason you bring Marla, bring a good one."
+)
+CELLAR_SHUT = (
+    "The cellar door is shut fast, barred and padlocked, the way it has "
+    "been since you were a child small enough to be scared of it. One "
+    "step past the stores, and the Lantern becomes a warren. That is "
+    "what the old gripes say, anyway."
+)
+CELLAR_SHUT_AGAIN = (
+    "Shut, barred, padlocked — the cellar door has kept its counsel "
+    "since you were small enough to be frightened of it. Past the inn's "
+    "stores the warren begins, or so the old gripes claim; the door "
+    "itself has never once confirmed it."
+)
+CELLAR_FREED_VARIANTS = (CELLAR_FREED, CELLAR_FREED_AGAIN)
+CELLAR_BARRED_VARIANTS = (CELLAR_BARRED, CELLAR_BARRED_AGAIN)
+CELLAR_SHUT_VARIANTS = (CELLAR_SHUT, CELLAR_SHUT_AGAIN)
 LEDGER_SUCCESS = (
     "There: two signatures for the Old Monastery road, three nights apart — and "
     "no line drawn through either. They never signed out. In the margin, one "
@@ -482,7 +560,9 @@ INN_WELCOME_LINE = (
 )
 
 #: The prologue's own moves — authored, so the guided buttons always land in
-#: prose worth the tap, and none of them moves the player (§intro).
+#: prose worth the tap, and none of them moves the player (§intro). A second
+#: look or listen gets its own words (P13): tapping the same guided move twice
+#: must not hand back the same paragraph.
 PROLOGUE_TOWN_VIEW = (
     "Ravenford from the ridge, in the rain: rooftops descending to the river like "
     "ledger columns, the old bridge holding its arch against the current, and a "
@@ -490,12 +570,27 @@ PROLOGUE_TOWN_VIEW = (
     "last houses the Northern Road runs out into the dark; whatever waits on it "
     "can wait until morning."
 )
+PROLOGUE_TOWN_VIEW_AGAIN = (
+    "The valley keeps its weather and its silence: rooftops, road, the river's "
+    "cold working at the bridge — and the inn's one lamp still burning its "
+    "patient coin against the dark. Nothing below has changed for your looking "
+    "at it, and the road out waits past the last house like a debt not yet "
+    "called in."
+)
+PROLOGUE_VIEW_VARIANTS = (PROLOGUE_TOWN_VIEW, PROLOGUE_TOWN_VIEW_AGAIN)
 PROLOGUE_LISTEN = (
     "You stand still a moment and let the night say what it has: rain on hedge and "
     "slate, the river's low argument under the bridge, a shutter working loose "
     "somewhere below — and under all of it, faint as coin under cloth, the murmur "
     "of the inn's common room. A fire. Voices. A door worth opening."
 )
+PROLOGUE_LISTEN_AGAIN = (
+    "You give the night a second hearing: rain on slate and hedge, the river "
+    "arguing under the bridge, a shutter keeping time like a slow hand on a "
+    "ledger — and the inn's murmur underneath it all, closer now than it was, "
+    "or you nearer to it. A door worth opening does not need saying twice."
+)
+PROLOGUE_LISTEN_VARIANTS = (PROLOGUE_LISTEN, PROLOGUE_LISTEN_AGAIN)
 PROLOGUE_NORTH = (
     "You walk on past the last lamp, and Ravenford gathers itself behind you — "
     "roofs, warmth, the inn's one light — the way a decision does once it is made. "
@@ -503,13 +598,30 @@ PROLOGUE_NORTH = (
     "taking things quietly."
 )
 
-#: The anti-loop reply (§7): a repeated or idle action gets a shorter answer
-#: that points at what is still possible instead of re-narrating the room.
-DIMINISH_LINE = (
-    "You have been over that ground already, and nothing here says it twice. "
-    "Still open: {options}."
+#: The anti-loop reply (§7): ground the player has already walked gets a
+#: shorter answer that points at what is still possible. The wording rotates
+#: per diminishing reply and quotes the player's own attempt back at them —
+#: two different actions, or the same one twice running, must never get one
+#: identical line (P13: the wall is not allowed to be a same-forever wall).
+DIMINISH_ACKS = (
+    "You linger a moment; the room has nothing new to give it.",
+    "The room has heard that one already.",
+    "Familiar ground — it answers no better than it did.",
 )
-DIMINISH_ACK = "You linger a moment; the room has nothing new to give it."
+DIMINISH_LINES = (
+    (
+        "You have been over “{action}” already, and nothing here says it "
+        "twice. Still open: {options}."
+    ),
+    (
+        "“{action}” — the room gives back the same answer it gave the first "
+        "time, and the moment does not widen. Still open: {options}."
+    ),
+    (
+        "Nothing comes of “{action}” that did not come of it before. Still "
+        "open: {options}."
+    ),
+)
 
 #: A scene transition reads as a scene change, not a new map pin (§7). The
 #: glyph is its own: ❧ marks clues/echoes, ❖ the relationship meter.
@@ -693,6 +805,19 @@ def _action_key(beat: str, text: str) -> str:
     return f"{beat}:{norm[:60]}"
 
 
+def _rotation(variants: tuple[str, ...], index: int) -> str:
+    """One of a small authored set, picked by repeat index (never random)."""
+    return variants[int(index) % len(variants)]
+
+
+def _action_echo(text: str, limit: int = 60) -> str:
+    """The player's own words, shortened — a repeat reply quotes them back."""
+    spoken = " ".join(str(text or "").split()).strip("“”\"'")
+    if len(spoken) > limit:
+        spoken = spoken[: limit - 1].rstrip() + "…"
+    return spoken or "that"
+
+
 def route(text: str) -> str:
     """Classify player text to a beat name (or ``pipeline`` fallback)."""
     t = text.strip()
@@ -784,6 +909,15 @@ class ActEngine:
         attr = SKILL_ATTRIBUTE.get(skill, "Wits")
         value = int(self.state.pc.get("attributes", {}).get(attr, 10))
         return (value - 10) // 2, TRAINED_BONUS
+
+    def _seen(self, beat: str) -> int:
+        """How many times this beat family already resolved in this scene.
+
+        Read *before* the beat is noted (0 on the first try), so an authored
+        beat can rotate its prose by it: two looks at the same room never hand
+        back one identical paragraph (P13).
+        """
+        return SceneDirector(self.state).current().seen(beat)
 
     def _check_spec(self, skill: str, attr_mod: int, skill_mod: int,
                     dc: int, difficulty: str, label: str, *,
@@ -1095,18 +1229,22 @@ class ActEngine:
             kind="",
         )
 
-    def _diminish(self, outcome: BeatOutcome) -> None:
+    def _diminish(self, outcome: BeatOutcome, text: str, index: int) -> None:
         """Replace a looping reply with a shorter one that points forward (§7).
 
-        A repeated or idle action gets a diminishing answer naming what is
-        still possible — never the same prose again, and never the scene's
-        opening. Everything the beat actually did to the state stands: only
-        the room's voice changes.
+        Ground already walked gets a diminishing answer naming what is still
+        possible — never the same prose again, never the scene's opening, and
+        never the same diminishing line twice in a row (P13): the wording
+        rotates per diminishing reply and quotes the player's own attempt
+        back at them. Everything the beat actually did to the state stands:
+        only the room's voice changes.
         """
         options = possible_moves(self.state)
         names = " · ".join(m["label"] for m in options[:3]) or "the road ahead"
-        outcome.ack = DIMINISH_ACK
-        outcome.narration = DIMINISH_LINE.format(options=names)
+        outcome.ack = DIMINISH_ACKS[index % len(DIMINISH_ACKS)]
+        outcome.narration = DIMINISH_LINES[index % len(DIMINISH_LINES)].format(
+            action=_action_echo(text), options=names
+        )
         outcome.dialogue = []
         outcome.suggestions = options
 
@@ -1198,10 +1336,12 @@ class ActEngine:
         key = _action_key(beat, t)
         director.note_beat(key=key, progress=progress)
         if not progress and not transitioned and director.diminishing(key):
-            # Repeated or idle: the room answers shorter and points forward.
-            # A live transition is never guarded — the fiction opened a door
-            # and the engine takes it (user ruling, §7).
-            self._diminish(outcome)
+            # Ground already walked: the room answers shorter, in rotating
+            # words, and points forward. A live transition is never guarded —
+            # the fiction opened a door and the engine takes it (user ruling,
+            # §7) — and neither is new ground: a genuinely fresh attempt must
+            # narrate, so the wall can never settle over the whole room (P13).
+            self._diminish(outcome, t, director.note_diminished())
         if self.state.lead_stage != lead_before:
             # A story-beat boundary moves the scene's aim — never the player.
             director.story_boundary()
@@ -1253,7 +1393,11 @@ class ActEngine:
         st = self.state
         st.note("talked:travelers")
         st.advance_minutes(5)
-        out = BeatOutcome(ack="Marla sets the cup down.", narration=TALK_REPEAT, kind="talk")
+        out = BeatOutcome(
+            ack="Marla sets the cup down.",
+            narration=_rotation(TALK_REPEAT_VARIANTS, self._seen("talk")),
+            kind="talk",
+        )
         if st.lead_stage == "unheard":
             out.narration = TALK_FIRST
             out.dialogue = [{"speaker": "Marla Voss", "line": TALK_LINE_FIRST}]
@@ -1382,7 +1526,9 @@ class ActEngine:
         first = st.lead_stage == "unheard"
         out = BeatOutcome(
             ack="You read the notice board.",
-            narration=BOARD_FIRST if first else BOARD_REPEAT,
+            narration=BOARD_FIRST if first else _rotation(
+                BOARD_REPEAT_VARIANTS, self._seen("inspect_board")
+            ),
             kind="inspect",
         )
         self._discover_lead(out)
@@ -1393,8 +1539,9 @@ class ActEngine:
         st.note("inspected:marlas-ledger")
         st.advance_minutes(10)
         mech, result = self._check("investigation", "Moderate", "Investigation — Marla's guest ledger")
+        opening = _rotation(LEDGER_NARRATION_VARIANTS, self._seen("inspect_ledger"))
         out = BeatOutcome(
-            ack="You turn the ledger pages.", narration=LEDGER_NARRATION, kind="inspect", mechanics=mech
+            ack="You turn the ledger pages.", narration=opening, kind="inspect", mechanics=mech
         )
         self._remember(
             "marla", "went through her guest ledger page by page",
@@ -1407,11 +1554,11 @@ class ActEngine:
                 self._feed("system", text="❧ Clue found — the ledger's unsigned guests.")
             self._discover_lead(out)
             self._advance_to("investigating")
-            out.narration = LEDGER_NARRATION + " " + LEDGER_SUCCESS
+            out.narration = opening + " " + LEDGER_SUCCESS
         else:
-            out.narration = LEDGER_NARRATION + " " + LEDGER_FAIL
+            out.narration = opening + " " + LEDGER_FAIL
             if result.outcome == Outcome.SuccessWithCost:
-                out.narration = LEDGER_NARRATION + " " + LEDGER_SUCCESS
+                out.narration = opening + " " + LEDGER_SUCCESS
         return out
 
     def _beat_inspect_cellar(self, text: str) -> BeatOutcome:
@@ -1426,26 +1573,11 @@ class ActEngine:
             )
             self._mood("marla", "suspicious", 0.5)
         if st.travelers_freed:
-            body = (
-                "The cellar door stands open now, hooked back against the wall. Cold "
-                "air climbs the steps from the inn's deep stores — barrels, salt, and "
-                "the shape of the story that used to live down here."
-            )
+            body = _rotation(CELLAR_FREED_VARIANTS, self._seen("inspect_cellar"))
         elif st.lead_stage in ("accepted", "investigating"):
-            body = (
-                "The cellar door is barred as always — but the bar has been lifted "
-                "recently: the dust on its bracket is disturbed, and a thin woman's "
-                "scarf is caught on the latch. Behind the inn's own stores, the "
-                "passage keeps going down. You would not want to be found opening "
-                "this without a reason Marla would accept."
-            )
+            body = _rotation(CELLAR_BARRED_VARIANTS, self._seen("inspect_cellar"))
         else:
-            body = (
-                "The cellar door is shut fast, barred and padlocked, the way it has "
-                "been since you were a child small enough to be scared of it. One "
-                "step past the stores, and the Lantern becomes a warren. That is "
-                "what the old gripes say, anyway."
-            )
+            body = _rotation(CELLAR_SHUT_VARIANTS, self._seen("inspect_cellar"))
         return BeatOutcome(ack="You consider the cellar door.", narration=body, kind="inspect")
 
     def _beat_inspect(self, text: str) -> BeatOutcome:
@@ -1458,11 +1590,7 @@ class ActEngine:
         st.note(f"inspected:{target}")
         st.advance_minutes(5)
         seen = target if target.startswith("the ") else f"the {target}"
-        body = (
-            f"You give {seen} the traveler's once-over — useful habits, nothing "
-            "the room is ready to surrender yet. The rain keeps its own counsel "
-            "outside; inside, only the fire and Marla's patience move."
-        )
+        body = _rotation(INSPECT_VARIANTS, self._seen("inspect")).format(seen=seen)
         return BeatOutcome(ack="You look closer.", narration=body, kind="inspect")
 
     def _beat_steal(self, text: str) -> BeatOutcome:
@@ -1638,7 +1766,7 @@ class ActEngine:
         self.state.advance_minutes(2)
         return BeatOutcome(
             ack="You look out over the valley.",
-            narration=PROLOGUE_TOWN_VIEW,
+            narration=_rotation(PROLOGUE_VIEW_VARIANTS, self._seen("prologue_look")),
             kind="",
             suggestions=possible_moves(self.state),
         )
@@ -1648,7 +1776,7 @@ class ActEngine:
         self.state.advance_minutes(2)
         return BeatOutcome(
             ack="You hold still and listen.",
-            narration=PROLOGUE_LISTEN,
+            narration=_rotation(PROLOGUE_LISTEN_VARIANTS, self._seen("prologue_listen")),
             kind="",
             suggestions=possible_moves(self.state),
         )
