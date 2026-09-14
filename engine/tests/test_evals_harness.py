@@ -337,9 +337,14 @@ def test_turns_require_the_pipeline_runner(tmp_path):
     assert any("run_e2e" in failure for failure in report.results[0].failures)
 
 
-def test_run_e2e_is_still_the_r8_stub():
-    with pytest.raises(NotImplementedError, match="R8"):
-        run_e2e()
+def test_run_e2e_delegates_to_the_pipeline_suite():
+    # R8 replaced the stub with the pipeline-level suite (evals/e2e.py); the
+    # core runner still refuses `turns` (previous test) and the facade reports
+    # the e2e kind, so callers can tell the suites apart.
+    report = run_e2e()
+    assert report.ok, report.failure_lines()
+    assert report.kind == "e2e"
+    assert report.total == 5
 
 
 # --------------------------------------------------------------------------- #
