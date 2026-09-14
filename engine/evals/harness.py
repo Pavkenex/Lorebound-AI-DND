@@ -541,10 +541,19 @@ def run_all(*, root: str | None = None, **kwargs: Any) -> EvalReport:
     return run_scenarios(None, root=root, **kwargs)
 
 
-def run_e2e(*, root: str | None = None, **kwargs: Any) -> EvalReport:
-    """Pipeline-level end-to-end suites (implemented by R8)."""
-    _ = root, kwargs
-    raise NotImplementedError("R8 card implements run_e2e (pipeline-level suites)")
+def run_e2e(paths: list[str] | None = None, *, root: str | None = None,
+            seed: Any = None, db_dir: str | None = None,
+            narrator: Any = None) -> EvalReport:
+    """Pipeline-level end-to-end suites (R8): fake narrators through ``take_turn``.
+
+    Lives in :mod:`engine.evals.e2e`; scenarios are the ``E2E`` dicts under
+    ``evals/scenarios/e2e/``. ``narrator`` is unused (each session scripts its
+    own model); it is accepted so suite callers share one call shape.
+    """
+    _ = narrator
+    from .e2e import run_e2e_suite
+
+    return run_e2e_suite(paths, root=root, seed=seed, db_dir=db_dir)
 
 
 def _slug(name: str) -> str:
