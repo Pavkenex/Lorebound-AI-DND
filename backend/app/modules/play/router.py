@@ -9,6 +9,11 @@
   409 ``check_expired``.
 - Idempotency-Key replays return the stored response without re-applying effects.
 - X-Content-Prefs (JSON) bounds narration tone (violence/horror/romance/nsfw).
+- No connected model = not playable (owner ruling 2026-09-14, P12): the turn is
+  refused up front with ``400 {"detail": "connect_your_ai"}``. A model call
+  that fails mid-turn answers ``502 {"detail": {"code": "provider_failed",
+  "message": …, "retryable": true}}`` — never in-world cover prose — and
+  persists nothing, so the same action (same key) can be sent again.
 """
 from __future__ import annotations
 
@@ -26,7 +31,7 @@ from app.modules.campaign.models import Campaign
 from app.modules.character import prebuilt
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.play import creation, screens
-from app.modules.play.engine import ActEngine, PendingCheckStale
+from app.modules.play.engine import ActEngine, ActFailure, PendingCheckStale
 from app.modules.play.session import PlaySession
 from app.modules.play.view import game_state_payload, npcs_present
 
@@ -85,6 +90,22 @@ def _parse_prefs(raw: str | None) -> ContentPrefs | None:
         return ContentPrefs(**data)
     except Exception:  # noqa: BLE001 - malformed prefs fall back to defaults
         return None
+
+
+def _act_failure_http(exc: ActFailure) -> HTTPException:
+    """Map a failed turn onto its HTTP shape — machine-readable, never prose.
+
+    No model connected answers the P11 contract verbatim
+    (``400 {"detail": "connect_your_ai"}``); any other failure answers
+    ``502 {"detail": {"code": …, "message": …, "retryable": true}}``, the
+    same ``{code, message}`` shape ``409 check_expired`` already uses.
+    """
+    if exc.code == "connect_your_ai":
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="connect_your_ai")
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail={"code": exc.code, "message": exc.detail, "retryable": True},
+    )
 
 
 @router.get("/state")
@@ -320,10 +341,21 @@ def act(
         response.headers["x-cache"] = "hit"
         return cached
 
+    # The story game is not playable without a connected model (owner ruling
+    # 2026-09-14, extended to this path by P12 — the same contract as the
+    # pilot): an unset/retired-"stub" provider, an incomplete endpoint row or
+    # a broken env config all refuse here, before the engine. Nothing is
+    # persisted, so connecting a model and sending the action again is clean.
+    provider = resolve_provider(db, user.id)
+    if provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="connect_your_ai"
+        )
+
     engine = ActEngine(
         session,
         prefs=_parse_prefs(request.headers.get("X-Content-Prefs")),
-        provider=resolve_provider(db, user.id),
+        provider=provider,
     )
     try:
         payload, checkpoint = engine.act(
@@ -343,6 +375,12 @@ def act(
             detail={"code": "check_expired",
                     "message": "the board has moved since the check was called — call it again"},
         )
+    except ActFailure as exc:
+        # A failed turn never answers in-world cover prose (P12) and never
+        # persists: the engine raised before any checkpoint, so this response
+        # is the whole story. Re-sending the same words (same idempotency key
+        # included — the failure consumed none) is a clean retry.
+        raise _act_failure_http(exc) from exc
 
     # Live AI-cost truth (stub costs nothing, but the call count is real).
     report = engine.meter.report(campaign.id)

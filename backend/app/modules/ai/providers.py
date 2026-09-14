@@ -3,6 +3,13 @@
 The pipeline only talks to the ``Provider`` protocol, so roles can start as
 separate prompts on one model and be split across models later without
 changing callers (t_9f1f24aa).
+
+The story game is not playable without a connected model (owner ruling
+2026-09-14, extended by P12): :class:`StubProvider` is INTERNAL TEST PLUMBING
+— it is injected by tests and by engine/dev tooling, and no player surface may
+resolve to it. ``app.modules.ai.settings_store.resolve`` is the one place that
+decides "is a model connected?"; callers that get ``None`` refuse the turn
+instead of narrating a placeholder.
 """
 from __future__ import annotations
 
@@ -173,6 +180,8 @@ def get_provider() -> Provider:
     """Select a provider from the environment.
 
     - ``AI_PROVIDER`` unset/empty/``stub`` -> :class:`StubProvider`
+      (test/dev plumbing — a player surface must never reach this branch;
+      ``settings_store.env_connection()`` treats it as NOT CONNECTED)
     - ``AI_PROVIDER=openai-compatible`` -> :class:`OpenAICompatibleProvider`
       using ``OPENAI_COMPAT_BASE_URL`` (required),
       ``OPENAI_COMPAT_MODEL`` (required),

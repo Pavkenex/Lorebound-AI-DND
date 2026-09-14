@@ -1,18 +1,30 @@
 """Actions router (Stream B)."""
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 
 from app.modules.actions.pipeline import ActionInput, Pipeline
 from app.modules.actions.suggest import SceneContext
+from app.modules.ai.settings_store import env_connection
 
 router = APIRouter(prefix="/actions", tags=["actions"])
-_pipeline = Pipeline()
 
 
 @router.post("/submit")
 def submit_action(action: ActionInput) -> dict:
-    result = _pipeline.orchestrate(action)
+    """Run one pipeline turn on the environment's provider.
+
+    This surface has no account, so the environment configuration is the only
+    connection it can use — and ``/actions`` never narrates with the built-in
+    stub (P12): an unset/``stub``/misconfigured environment answers the same
+    ``400 {"detail": "connect_your_ai"}`` every other player path does.
+    """
+    conn = env_connection()
+    if not conn.connected:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="connect_your_ai"
+        )
+    result = Pipeline(provider=conn.provider).orchestrate(action)
     return result.model_dump()
 
 

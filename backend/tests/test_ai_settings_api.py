@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.main import app
 from app.modules.ai import settings_store as store
-from app.modules.ai.providers import OpenAICompatibleProvider, StubProvider
+from app.modules.ai.providers import OpenAICompatibleProvider
 from app.modules.auth.models import User
 from app.modules.campaign import models as _cm  # noqa: F401
 from app.modules.campaign import npc as _npc  # noqa: F401
@@ -126,7 +126,8 @@ def _register(client: TestClient, email: str | None = None) -> dict:
     return {"Authorization": f"Bearer {r.json()['token']['access_token']}"}
 
 
-def test_default_doc_is_stub_unconfigured(client):
+def test_unconfigured_doc_reports_not_connected(client):
+    """No row, no env: the doc says NOT CONNECTED — there is no stub to claim (P12)."""
     headers = _register(client)
     r = client.get("/ai/settings", headers=headers)
     assert r.status_code == 200, r.text
@@ -134,9 +135,12 @@ def test_default_doc_is_stub_unconfigured(client):
     assert doc["provider"] is None
     assert doc["configured"] is False
     assert doc["has_key"] is False
-    assert doc["active_provider"] == "stub"
+    assert doc["connected"] is False
+    assert doc["active_provider"] == ""
     assert doc["active_source"] == "default"
-    assert doc["env_provider"] == "stub"
+    assert doc["active_reason"] == "unset"
+    assert doc["env_provider"] == ""
+    assert doc["providers"] == ["openai-compatible"]
 
 
 def test_save_and_read_back_never_echoes_key(client):
@@ -263,7 +267,26 @@ def test_test_endpoint_reports_provider_error(client):
         fake._server.shutdown()
 
 
-def test_resolution_precedence(client, fake_openai, monkeypatch):
+def _assert_doc_matches_runtime(db, user) -> None:
+    """The panel's claim IS the play path's provider — both directions (P12)."""
+    conn = store.resolve(db, user.id)
+    runtime = store.resolve_provider(db, user.id)
+    doc = store.settings_doc(db, user.id)
+    assert conn.connected == (runtime is not None)
+    assert (conn.provider is None) == (runtime is None)
+    assert doc["connected"] is conn.connected
+    assert doc["active_provider"] == conn.name
+    assert doc["active_source"] == conn.source
+    assert doc["active_reason"] == conn.reason
+    if conn.connected:
+        assert doc["active_provider"] != ""
+        assert doc["active_model"] == conn.model
+    else:
+        assert doc["active_provider"] == ""
+        assert "stub" not in doc["active_provider"]
+
+
+def test_resolution_is_one_truth_across_surfaces(client, fake_openai, monkeypatch):
     db = TestingSession()
     try:
         user = User(
@@ -272,18 +295,34 @@ def test_resolution_precedence(client, fake_openai, monkeypatch):
         db.add(user)
         db.commit()
 
-        # No row, no env -> stub.
-        assert isinstance(store.resolve_provider(db, user.id), StubProvider)
+        # 1. Nothing anywhere -> not connected, and the panel says so.
+        assert store.resolve_provider(db, user.id) is None
+        assert store.settings_doc(db, user.id)["active_reason"] == "unset"
+        _assert_doc_matches_runtime(db, user)
 
-        # No row, env openai-compatible -> env provider wins.
+        # 2. Env openai-compatible -> connected from the environment.
         monkeypatch.setenv("AI_PROVIDER", "openai-compatible")
         monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "https://env.example/v1")
         monkeypatch.setenv("OPENAI_COMPAT_MODEL", "env-model")
         prov = store.resolve_provider(db, user.id)
         assert isinstance(prov, OpenAICompatibleProvider)
         assert prov.model_name == "env-model"
+        doc = store.settings_doc(db, user.id)
+        assert doc["connected"] is True and doc["active_source"] == "env"
+        assert doc["active_model"] == "env-model"
+        _assert_doc_matches_runtime(db, user)
 
-        # Saved custom row beats env.
+        # 3. A broken env config is NOT silently swapped for the stub: it reads
+        #    as not connected, with the reason named.
+        monkeypatch.delenv("OPENAI_COMPAT_MODEL")
+        assert store.resolve_provider(db, user.id) is None
+        doc = store.settings_doc(db, user.id)
+        assert doc["connected"] is False and doc["active_reason"] == "misconfigured"
+        _assert_doc_matches_runtime(db, user)
+        monkeypatch.setenv("OPENAI_COMPAT_MODEL", "env-model")
+
+        # 4. A saved row with a complete endpoint beats the env, and the panel
+        #    names the saved endpoint — not the environment's.
         store.save_settings(
             db, user.id,
             provider="openai-compatible", base_url=fake_openai.base_url, model="saved",
@@ -293,13 +332,29 @@ def test_resolution_precedence(client, fake_openai, monkeypatch):
         assert isinstance(prov, OpenAICompatibleProvider)
         assert prov.model_name == "saved"
         assert prov.base_url == fake_openai.base_url
-
-        # Saved stub row beats env too (explicit choice).
-        store.save_settings(db, user.id, provider="stub")
-        assert isinstance(store.resolve_provider(db, user.id), StubProvider)
         doc = store.settings_doc(db, user.id)
-        assert doc["active_provider"] == "stub"
-        assert doc["active_source"] == "settings"
+        assert doc["active_source"] == "settings" and doc["active_model"] == "saved"
+        _assert_doc_matches_runtime(db, user)
+
+        # 5. A saved-but-incomplete endpoint reads as NOT CONNECTED. The old
+        #    code narrated with the stub here while the panel still claimed
+        #    the saved endpoint — exactly the disagreement P12 removes.
+        store.save_settings(
+            db, user.id, provider="openai-compatible", base_url=fake_openai.base_url, model=""
+        )
+        assert store.resolve_provider(db, user.id) is None
+        assert store.settings_doc(db, user.id)["active_reason"] == "incomplete"
+        _assert_doc_matches_runtime(db, user)
+
+        # 6. A legacy "stub" row (the retired default) reads as not connected
+        #    even with a configured environment: it is the player's saved
+        #    choice, and that choice is now empty-handed, never the stub.
+        store.save_settings(db, user.id, provider="stub")
+        assert store.resolve_provider(db, user.id) is None
+        doc = store.settings_doc(db, user.id)
+        assert doc["provider"] == "stub" and doc["connected"] is False
+        assert doc["active_reason"] == "stub"
+        _assert_doc_matches_runtime(db, user)
     finally:
         db.close()
 
@@ -308,13 +363,6 @@ def test_act_uses_saved_custom_provider(client, fake_openai):
     headers = _register(client, email="act@example.com")
     c = client.post("/campaigns", headers=headers, json={})
     assert c.status_code == 201, c.text
-
-    # The chronicle opens on the prologue's road (§intro); walk in so the
-    # tuned provider narrates an in-tavern act.
-    walk = client.post(
-        "/act", headers=headers, json={"text": "I head down to the inn and step inside"}
-    )
-    assert walk.status_code == 200, walk.text
 
     saved = client.put(
         "/ai/settings",
@@ -327,6 +375,19 @@ def test_act_uses_saved_custom_provider(client, fake_openai):
         },
     )
     assert saved.status_code == 200, saved.text
+    # The panel's claim and the play path agree the moment it is saved (P12).
+    doc = saved.json()
+    assert doc["connected"] is True
+    assert doc["active_provider"] == "openai-compatible"
+    assert doc["active_source"] == "settings"
+    assert doc["active_model"] == "story-model"
+
+    # The chronicle opens on the prologue's road (§intro); walk in so the
+    # tuned provider narrates an in-tavern act.
+    walk = client.post(
+        "/act", headers=headers, json={"text": "I head down to the inn and step inside"}
+    )
+    assert walk.status_code == 200, walk.text
 
     # The narrator expects a JSON NarratorOutput; serve one.
     fake_openai.reply = json.dumps(
@@ -346,3 +407,151 @@ def test_act_uses_saved_custom_provider(client, fake_openai):
     req = fake_openai.requests[0]
     assert req["authorization"] == "Bearer act-key"
     assert req["body"]["model"] == "story-model"
+
+
+def test_put_rejects_the_builtin_storyteller(client):
+    """The built-in storyteller is not a play mode: saving it is refused (P12)."""
+    headers = _register(client)
+    r = client.put(
+        "/ai/settings", headers=headers, json={"provider": "stub", "model": "whatever"}
+    )
+    assert r.status_code == 400, r.text
+    assert "openai-compatible" in str(r.json()["detail"])
+    # Nothing was saved — the failed PUT is not half-applied.
+    doc = client.get("/ai/settings", headers=headers).json()
+    assert doc["configured"] is False and doc["connected"] is False
+    assert doc["providers"] == ["openai-compatible"]
+
+
+def test_act_refuses_without_a_connected_model(client):
+    """Unset AI -> the turn is refused, not narrated (P12; P11's contract)."""
+    headers = _register(client)
+    assert client.post("/campaigns", headers=headers, json={}).status_code == 201
+
+    before = client.get("/state", headers=headers).json()
+
+    actions = (
+        "I head down to the inn and step inside",  # authored beat (no model)
+        "I hum a quiet tune to the rafters",  # model-dependent beat
+    )
+    for i, text in enumerate(actions):
+        r = client.post(
+            "/act",
+            headers={**headers, "Idempotency-Key": f"unconnected-{i}"},
+            json={"text": text},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json() == {"detail": "connect_your_ai"}
+        assert "holds its breath" not in r.text  # no stub prose
+        assert "quill falters" not in r.text  # no cover prose
+
+    after = client.get("/state", headers=headers).json()
+    assert after == before, "a refused turn must persist nothing"
+
+
+def test_act_with_legacy_stub_row_refuses(client):
+    """A legacy "stub" row is a saved choice for nobody: it is not connected."""
+    email = f"legacy{next(_EMAIL_SEQ)}@example.com"
+    headers = _register(client, email=email)
+    assert client.post("/campaigns", headers=headers, json={}).status_code == 201
+
+    db = TestingSession()
+    try:
+        user = db.query(User).filter(User.email == email).one()
+        store.save_settings(db, user.id, provider="stub")  # retired value, direct write
+    finally:
+        db.close()
+
+    doc = client.get("/ai/settings", headers=headers).json()
+    assert doc["provider"] == "stub"  # the panel shows what is stored...
+    assert doc["connected"] is False  # ...and that it will not narrate
+    assert doc["active_provider"] == ""
+    assert doc["active_reason"] == "stub"
+
+    r = client.post("/act", headers=headers, json={"text": "I hum a quiet tune to the rafters"})
+    assert r.status_code == 400, r.text
+    assert r.json() == {"detail": "connect_your_ai"}
+
+
+def test_model_failure_is_machine_readable_and_retry_safe(client, fake_openai):
+    """A failing model call answers with a code, not with fiction (P12)."""
+    email = f"fail{next(_EMAIL_SEQ)}@example.com"
+    headers = _register(client, email=email)
+    assert client.post("/campaigns", headers=headers, json={}).status_code == 201
+
+    saved = client.put(
+        "/ai/settings",
+        headers=headers,
+        json={
+            "provider": "openai-compatible",
+            "base_url": fake_openai.base_url,
+            "model": "story-model",
+            "api_key": "sk-live-SECRETKEY12345",
+        },
+    )
+    assert saved.status_code == 200 and saved.json()["connected"] is True
+
+    fake_openai.reply = json.dumps({"narration": "The hearth answers with a slow crackle."})
+    walk = client.post(
+        "/act",
+        headers={**headers, "Idempotency-Key": "mf-1"},
+        json={"text": "I head down to the inn and step inside"},
+    )
+    assert walk.status_code == 200, walk.text
+
+    before = client.get("/state", headers=headers).json()
+    fake_openai.status = 500
+
+    r = client.post(
+        "/act",
+        headers={**headers, "Idempotency-Key": "mf-2"},
+        json={"text": "I hum a quiet tune to the rafters"},
+    )
+    assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "provider_failed"
+    assert detail["retryable"] is True
+    assert detail["message"]
+    assert "SECRETKEY" not in r.text  # the key never rides a failure detail
+    assert "quill falters" not in r.text  # and no in-world cover prose
+    assert "holds its breath" not in r.text
+    assert client.get("/state", headers=headers).json() == before  # nothing applied
+
+    # Retry-safe: the failure consumed nothing, so the same action with the
+    # same idempotency key lands cleanly once the model is back.
+    fake_openai.status = 200
+    fake_openai.reply = json.dumps({"narration": "The rafters keep their secrets now."})
+    retry = client.post(
+        "/act",
+        headers={**headers, "Idempotency-Key": "mf-2"},
+        json={"text": "I hum a quiet tune to the rafters"},
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["narration"] == "The rafters keep their secrets now."
+
+
+def test_provider_error_scrub_strips_key_shaped_material():
+    """The player-visible failure detail is key-free and bounded."""
+    from app.modules.play.engine import _scrub_provider_error
+
+    text = _scrub_provider_error("HTTP 401: Bearer sk-live-abcdef123456 rejected")
+    assert "sk-live-abcdef123456" not in text
+    assert "Bearer" not in text
+    assert "[redacted]" in text
+    assert _scrub_provider_error("") == "the model call failed"
+    assert len(_scrub_provider_error("x" * 500)) == 200
+
+
+def test_actions_submit_refuses_without_an_env_provider(client, fake_openai, monkeypatch):
+    """The env-only pipeline surface never narrates with the built-in stub (P12)."""
+    r = client.post("/actions/submit", json={"text": "look around"})
+    assert r.status_code == 400, r.text
+    assert r.json() == {"detail": "connect_your_ai"}
+
+    monkeypatch.setenv("AI_PROVIDER", "openai-compatible")
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", fake_openai.base_url)
+    monkeypatch.setenv("OPENAI_COMPAT_MODEL", "env-model")
+    fake_openai.reply = json.dumps({"narration": "The dust settles."})
+    ok = client.post("/actions/submit", json={"text": "look around"})
+    assert ok.status_code == 200, ok.text
+    assert fake_openai.requests, "the env provider was never called"

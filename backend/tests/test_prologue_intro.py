@@ -34,6 +34,8 @@ from app.modules.play.state import (
 )
 from app.modules.story.scenes import PROLOGUE, PROLOGUE_GOAL, PROLOGUE_LABEL
 
+pytestmark = pytest.mark.usefixtures("stub_play_provider")
+
 engine = create_engine(
     "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
 )

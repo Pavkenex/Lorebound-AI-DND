@@ -28,6 +28,8 @@ from app.modules.play import models as pm
 from app.modules.play.engine import INSPIRATION_MAX
 from app.modules.rules.checks import CheckRequest, Outcome, roll_check
 
+pytestmark = pytest.mark.usefixtures("stub_play_provider")
+
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base.metadata.create_all(bind=engine)

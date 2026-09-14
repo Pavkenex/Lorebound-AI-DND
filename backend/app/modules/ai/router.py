@@ -3,11 +3,16 @@
 Bring-your-own OpenAI-compatible endpoint, per user. The key is write-only:
 it can be set or cleared, never read back. ``/ai/settings/test`` lets the
 client verify a configuration (draft or saved) before relying on it.
+
+The panel never lies about play (P12): ``connected``/``active_*`` in the GET
+doc are the SAME resolution ``/act`` uses (``settings_store.resolve``), so a
+saved-but-incomplete endpoint or a retired ``"stub"`` row reads as not
+connected instead of claiming a provider that will not narrate.
 """
 from __future__ import annotations
 
 import time
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -25,9 +30,14 @@ TEST_PROMPT = "Connection test. Reply with the single word: pong."
 
 
 class SettingsIn(BaseModel):
-    """PUT body. ``api_key=None`` keeps the stored key; ``clear_key`` drops it."""
+    """PUT body. ``api_key=None`` keeps the stored key; ``clear_key`` drops it.
 
-    provider: Literal["stub", "openai-compatible"]
+    ``provider`` is validated against the offered set in the handler (not a
+    Literal) so a retired value — ``"stub"`` — answers the 400 contract with a
+    readable message instead of a pydantic 422.
+    """
+
+    provider: str = Field(max_length=32)
     base_url: str = Field(default="", max_length=500)
     model: str = Field(default="", max_length=200)
     api_key: str | None = Field(default=None, max_length=500)
@@ -65,7 +75,19 @@ def put_settings(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    if body.provider == "openai-compatible":
+    mode = (body.provider or "").strip().lower()
+    if mode not in store.PROVIDERS:
+        # P12 (owner ruling extended to the story game): the built-in
+        # storyteller is not a play mode — saving it is not offered and not
+        # accepted. Legacy rows carrying it read as NOT CONNECTED.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"provider {mode!r} is not available; "
+                f"supported: {', '.join(store.PROVIDERS)}"
+            ),
+        )
+    if mode == "openai-compatible":
         base_url = _require_http_url(body.base_url)
         if not body.model.strip():
             raise HTTPException(
@@ -77,7 +99,7 @@ def put_settings(
     store.save_settings(
         db,
         user.id,
-        provider=body.provider,
+        provider=mode,
         base_url=base_url,
         model=body.model,
         api_key=body.api_key,

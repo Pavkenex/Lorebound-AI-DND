@@ -23,6 +23,8 @@ from app.modules.character import models as _char  # noqa: F401
 from app.modules.inventory import models as _inv  # noqa: F401
 from app.modules.play import models as pm  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("stub_play_provider")
+
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base.metadata.create_all(bind=engine)

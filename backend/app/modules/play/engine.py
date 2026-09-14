@@ -19,7 +19,7 @@ from typing import Any
 from app.modules.actions.pipeline import ActionInput, Pipeline
 from app.modules.actions.suggest import SceneContext
 from app.modules.ai.metering import MeterRegistry
-from app.modules.ai.providers import Provider
+from app.modules.ai.providers import Provider, ProviderError
 from app.modules.memory.npc_memory import display_name, named_npc, npc_slug
 from app.modules.narrator.prefs import ContentPrefs
 from app.modules.npc.mood import DEFAULT_MOOD, surfaced_mood
@@ -539,6 +539,43 @@ class BeatOutcome:
 
 class PendingCheckStale(Exception):
     """The board moved between calling a check and throwing the die."""
+
+
+class ActFailure(Exception):
+    """A turn that could not be narrated honestly (P12 — never cover prose).
+
+    Raised instead of returning in-world text when
+
+    - ``connect_your_ai``: no model is connected (the HTTP surface refuses
+      these before the engine; this is the engine's own backstop, so no
+      caller can reach the built-in stub), or
+    - ``provider_failed`` / ``turn_failed``: the model call failed mid-turn.
+      ``detail`` is the scrubbed, player-visible message.
+
+    A failed turn persists nothing (the checkpoint happens only after ``act``
+    returns), so the same action can be sent again cleanly — with the same
+    idempotency key, which the failure never consumed.
+    """
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(code)
+        self.code = code
+        self.detail = detail
+
+
+#: Anything key-shaped or token-shaped that must never ride a failure detail.
+_TOKEN_LIKE_RE = re.compile(r"(Bearer\s+\S+|sk-[A-Za-z0-9_\-]{6,})", re.IGNORECASE)
+
+
+def _scrub_provider_error(message: str) -> str:
+    """Strip key-shaped material from a provider failure, then cap the length.
+
+    The transport's own message is already key-free; a failure detail is
+    player-visible, so this is belt and braces.
+    """
+    text = _TOKEN_LIKE_RE.sub("[redacted]", str(message or ""))
+    text = " ".join(text.split())
+    return text[:200] or "the model call failed"
 
 
 # ---------------------------------------------------------------------------
@@ -2125,8 +2162,17 @@ class ActEngine:
 
     # -- pipeline fallback ---------------------------------------------------
     def _beat_pipeline(self, text: str) -> tuple[BeatOutcome, str | None]:
-        """Unrecognised action: interpreter -> checks -> narrator (stub-friendly)."""
+        """Unrecognised action: interpreter -> checks -> narrator (model-dependent).
+
+        This is the ONLY model-dependent beat: the authored beats narrate their
+        own curated prose. Without a connected model the turn is refused
+        (P12 — the built-in stub is never reachable from here), and a model
+        call that fails mid-turn raises :class:`ActFailure` with a scrubbed,
+        machine-readable reason instead of in-world cover prose.
+        """
         st = self.state
+        if self.provider is None:
+            raise ActFailure("connect_your_ai", "no model connected")
         st.advance_minutes(5)
         pipeline = Pipeline(provider=self.provider, meter=self.meter)
         action = ActionInput(
@@ -2152,16 +2198,14 @@ class ActEngine:
             )
         except CheckSuspension:
             raise  # two-phase throw: the player's die resolves this check
-        except Exception:  # noqa: BLE001 - provider failure never loses the turn
-            out = BeatOutcome(
-                ack="The chronicler's quill falters.",
-                narration=(
-                    "The moment hangs unfinished — the sending failed before the "
-                    "chronicler could answer. Nothing was lost; try the words again."
-                ),
-                kind="",
-            )
-            return out, None
+        except ProviderError as exc:
+            # A failed model call never reads as fiction: the turn fails
+            # machine-readably, persists nothing, and can be sent again.
+            raise ActFailure("provider_failed", _scrub_provider_error(str(exc))) from exc
+        except Exception as exc:  # an unexpected error is still not cover prose
+            raise ActFailure(
+                "turn_failed", _scrub_provider_error(f"{type(exc).__name__}: {exc}")
+            ) from exc
 
         mechanics = None
         for check in result.checks:

@@ -46,6 +46,8 @@ from app.modules.story.scenes import (
     possible_moves,
 )
 
+pytestmark = pytest.mark.usefixtures("stub_play_provider")
+
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base.metadata.create_all(bind=engine)
