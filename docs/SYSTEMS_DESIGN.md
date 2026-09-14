@@ -138,6 +138,15 @@ Each NPC recalls *their* slice; a character who wasn't there doesn't know.
   narration never pulls the player back into a scene they've left. The
   guard never blocks a live transition — when the fiction opens a door (an
   NPC says "come upstairs"), the engine takes it.
+  - As-built (P13): the guard exists to stop *droning on literal repeats*,
+    never to wall a scene off. A first-time action (any text, any beat)
+    always narrates — model or authored beat — and one fresh try is enough
+    for real prose to come back. The third identical action shortens
+    whatever the mood; in a scene that has gone 6 beats without progress
+    (`IDLE_DIMINISH_AFTER`; was 4), a second one does too. Every diminishing
+    reply rotates its wording and quotes the player's own action, so two
+    diminishing replies in a row are never the same string. Progress clears
+    the clock immediately.
 - **Transition triggers:** (a) the player moves; (b) the scene goal
   resolves or is clearly exhausted; (c) a story beat/chapter boundary;
   (d) a narrative invitation or agreement — NPC or player proposes the
